@@ -80,3 +80,9 @@
 - 测试阶段必须使用 SQLCMD 检查数据库结构完整性（涉及功能的表/字段/索引）；若发现结构不匹配，需先修复数据库结构再结束任务。
 - For AI chart overlays, only render numeric support/resistance values and provide deterministic fallback precedence (commander recommendation first, then trend forecast extremes) to prevent runtime chart errors.
 - 对 AI 图表叠加线，仅渲染数值型支撑/突破价，并使用确定性的回退优先级（先 commander 建议，再 trend 预测极值），避免图表运行时错误。
+- For local startup stability, keep `appsettings.Development.json` SQL `ConnectionStrings:Default` pointed to a verified reachable instance (e.g., `Server=.`), and verify with SQLCMD before launch.
+- 为保证本地启动稳定，`appsettings.Development.json` 的 SQL `ConnectionStrings:Default` 必须指向已验证可连接的实例（如 `Server=.`），并在启动前用 SQLCMD 验证连通性。
+- For news-driven agent outputs, enforce a strict recency window with explicit source + published timestamp on every key evidence item; if timestamps are missing, downgrade the conclusion to neutral/insufficient-data.
+- 对新闻驱动的 Agent 输出，必须强制时效窗口，并为每条关键证据给出来源与发布时间；若时间戳缺失，结论降级为中性/信息不足。
+- For multi-agent news context assembly, default to a 72-hour trusted-source window and allow 7-day fallback only when evidence count is insufficient, while marking the expansion explicitly in output.
+- 对多Agent资讯上下文组装，默认使用72小时可信来源窗口，仅在证据条数不足时扩窗到7天，并在输出中明确标注扩窗。

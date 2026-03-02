@@ -51,4 +51,54 @@ public sealed class StockAgentResultNormalizerTests
         Assert.True(normalized.TryGetProperty("evidence", out var evidence));
         Assert.Equal(JsonValueKind.Array, evidence.ValueKind);
     }
+
+    [Fact]
+    public void Normalize_StockNewsWithoutUsableEvidence_DowngradesToNeutralWatch()
+    {
+        using var input = JsonDocument.Parse("""
+        {
+          "agent": "stock_news",
+          "summary": "看多",
+          "confidence": 88,
+          "evidence": [
+            {
+              "point": "消息",
+              "source": "",
+              "publishedAt": null
+            }
+          ]
+        }
+        """);
+
+        var normalized = StockAgentResultNormalizer.Normalize(StockAgentKind.StockNews, input.RootElement);
+
+        Assert.Equal("信息不足：缺少可验证来源或发布时间，建议观望。", normalized.GetProperty("summary").GetString());
+        Assert.Equal(20, normalized.GetProperty("confidence").GetInt32());
+        Assert.Contains("观望", normalized.GetProperty("signals")[0].GetString());
+    }
+
+    [Fact]
+    public void Normalize_SectorNewsWithoutUsableEvidence_DowngradesToNeutralWatch()
+    {
+        using var input = JsonDocument.Parse("""
+        {
+          "agent": "sector_news",
+          "summary": "偏多",
+          "confidence": 75,
+          "evidence": [
+            {
+              "point": "板块热度",
+              "source": "未知",
+              "publishedAt": "not-a-time"
+            }
+          ]
+        }
+        """);
+
+        var normalized = StockAgentResultNormalizer.Normalize(StockAgentKind.SectorNews, input.RootElement);
+
+        Assert.Equal("信息不足：缺少可验证来源或发布时间，建议观望。", normalized.GetProperty("summary").GetString());
+        Assert.Equal(20, normalized.GetProperty("confidence").GetInt32());
+        Assert.Contains("观望", normalized.GetProperty("signals")[0].GetString());
+    }
 }

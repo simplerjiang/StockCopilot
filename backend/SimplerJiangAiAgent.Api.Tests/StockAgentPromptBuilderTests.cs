@@ -33,4 +33,30 @@ public sealed class StockAgentPromptBuilderTests
         Assert.Contains("\"invalidations\"", prompt);
         Assert.Contains("\"riskLimits\"", prompt);
     }
+
+    [Fact]
+    public void BuildPrompt_StockNewsContainsFreshnessAndEvidenceConstraints()
+    {
+        var prompt = StockAgentPromptBuilder.BuildPrompt(
+            StockAgentKind.StockNews,
+            "{}",
+            Array.Empty<StockAgentResultDto>());
+
+        Assert.Contains("最近72小时", prompt);
+        Assert.Contains("扩窗到7天", prompt);
+        Assert.Contains("\"crawledAt\"", prompt);
+    }
+
+    [Fact]
+    public void BuildPrompt_SectorNewsContainsFreshnessAndEvidenceConstraints()
+    {
+        var prompt = StockAgentPromptBuilder.BuildPrompt(
+            StockAgentKind.SectorNews,
+            "{}",
+            Array.Empty<StockAgentResultDto>());
+
+        Assert.Contains("最近72小时", prompt);
+        Assert.Contains("扩窗到7天", prompt);
+        Assert.Contains("\"crawledAt\"", prompt);
+    }
 }

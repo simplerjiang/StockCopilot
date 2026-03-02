@@ -100,6 +100,17 @@
                       "notes":  "已完成：后端运行时标准化并强制补齐结构化字段（证据/置信度/触发/失效/风险上限/目标动作）；前端现有面板完成可读性增强；K线/分时图新增 AI 突破线与支撑线叠加（优先 commander 目标/止损，回退 trend 预测区间）；新增与更新前端/后端单测；Edge 交互脚本已验证点击与等待流程，并检查前端控制台与后端日志无运行时崩溃"
                   },
                   {
+                      "id":  "ISSUE-20260302",
+                      "title":  "Fix stale news and contradictory analysis",
+                      "status":  "todo",
+                      "stages":  {
+                                     "plan":  "done",
+                                     "dev":  "todo",
+                                     "test":  "todo"
+                                 },
+                      "notes":  "已完成问题拆解与分阶段方案；Phase 1（问题1）已完成开发与后端单测：资讯Agent Prompt 增加72h/7d硬约束与证据字段要求，后端加入72h优先+7d扩窗、来源可信度与相关性综合排序，证据缺失时自动降级为观望；Phase 2（问题2）待实施"
+                  },
+                  {
                       "id":  "GOAL-008",
                       "title":  "Trading plan engine",
                       "status":  "todo",

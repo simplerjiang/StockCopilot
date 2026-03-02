@@ -21,6 +21,7 @@
 - /api/stocks/news/impact 资讯影响评估（公告/研报/新闻分级、来源可信度、同主题合并去重）
 - /api/stocks/signals 事件驱动信号（证据/反证、历史对齐）
 - /api/stocks/position-guidance 个性化风险与仓位建议
+- /api/stocks/agents 多Agent分析（问题1已增强：资讯默认72h时效窗口、证据不足自动扩窗7d并标注、证据缺失时降级观望）
 - /api/admin/login 管理员登录
 - /api/admin/llm/settings/{provider} LLM 配置读取/更新（需管理员 token）
 - /api/admin/llm/test/{provider} LLM 调用测试（需管理员 token）

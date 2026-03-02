@@ -115,12 +115,14 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         var kLines = await _dataService.GetKLineAsync(symbol, interval, count, source);
         var minuteLines = await _dataService.GetMinuteLineAsync(symbol, source);
         var messages = await _dataService.GetIntradayMessagesAsync(symbol, source);
+        var newsContext = StockAgentNewsContextPolicy.Apply(messages, DateTime.Now);
 
         return new StockAgentContextDto(
             quote,
             kLines.OrderBy(item => item.Date).TakeLast(60).ToArray(),
             minuteLines.OrderBy(item => item.Date).ThenBy(item => item.Time).TakeLast(120).ToArray(),
-            messages.OrderByDescending(item => item.PublishedAt).Take(20).ToArray(),
+            newsContext.Messages,
+            newsContext.Policy,
             DateTime.Now);
     }
 
@@ -184,6 +186,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IReadOnlyList<KLinePointDto> KLines,
         IReadOnlyList<MinuteLinePointDto> MinuteLines,
         IReadOnlyList<IntradayMessageDto> Messages,
+        StockAgentNewsPolicyDto NewsPolicy,
         DateTime RequestTime
     );
 
@@ -197,6 +200,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         var slimContext = new StockAgentSlimContextDto(
             context.Quote,
             context.Messages,
+            context.NewsPolicy,
             context.RequestTime);
 
         return JsonSerializer.Serialize(slimContext, JsonOptions);
@@ -205,8 +209,154 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
     private sealed record StockAgentSlimContextDto(
         StockQuoteDto Quote,
         IReadOnlyList<IntradayMessageDto> Messages,
+        StockAgentNewsPolicyDto NewsPolicy,
         DateTime RequestTime
     );
+}
+
+internal sealed record StockAgentNewsPolicyDto(
+    int PreferredLookbackHours,
+    int ActualLookbackHours,
+    bool ExpandedWindow,
+    int CandidateCount,
+    int SelectedCount
+);
+
+internal static class StockAgentNewsContextPolicy
+{
+    private static readonly string[] TrustedSourceKeywords =
+    {
+        "交易所", "证监", "公告", "新华社", "证券", "新浪", "东方财富", "腾讯", "财联社", "上交所", "深交所"
+    };
+
+    private static readonly string[] RelevanceKeywords =
+    {
+        "公告", "业绩", "增持", "减持", "回购", "中标", "签约", "诉讼", "被罚", "停牌", "复牌", "订单", "评级", "研报"
+    };
+
+    private const int PreferredLookbackHours = 72;
+    private const int ExtendedLookbackHours = 168;
+    private const int MinPreferredMessageCount = 6;
+    private const int MaxSelectedMessages = 20;
+
+    public static (IReadOnlyList<IntradayMessageDto> Messages, StockAgentNewsPolicyDto Policy) Apply(
+        IReadOnlyList<IntradayMessageDto> messages,
+        DateTime requestTime)
+    {
+        var normalized = messages
+            .Where(item => item is not null)
+            .Where(item => !string.IsNullOrWhiteSpace(item.Title))
+            .ToList();
+
+        var preferredCutoff = requestTime.AddHours(-PreferredLookbackHours);
+        var preferredWindow = normalized
+            .Where(item => item.PublishedAt >= preferredCutoff && item.PublishedAt <= requestTime)
+            .ToList();
+
+        var useExtended = preferredWindow.Count < MinPreferredMessageCount;
+        var actualLookbackHours = useExtended ? ExtendedLookbackHours : PreferredLookbackHours;
+        var actualCutoff = requestTime.AddHours(-actualLookbackHours);
+
+        var candidates = normalized
+            .Where(item => item.PublishedAt >= actualCutoff && item.PublishedAt <= requestTime)
+            .ToList();
+
+        var trustedCandidates = candidates.Where(item => IsTrustedSource(item.Source)).ToList();
+        var candidatesToRank = trustedCandidates.Count > 0 ? trustedCandidates : candidates;
+
+        var ranked = candidatesToRank
+            .Select(item => new
+            {
+                Item = item,
+                Score = ComputeScore(item, requestTime)
+            })
+            .OrderByDescending(item => item.Score)
+            .ThenByDescending(item => item.Item.PublishedAt)
+            .Take(MaxSelectedMessages)
+            .Select(item => item.Item)
+            .ToArray();
+
+        var policy = new StockAgentNewsPolicyDto(
+            PreferredLookbackHours,
+            actualLookbackHours,
+            useExtended,
+            candidates.Count,
+            ranked.Length);
+
+        return (ranked, policy);
+    }
+
+    private static decimal ComputeScore(IntradayMessageDto item, DateTime requestTime)
+    {
+        var recencyScore = ComputeRecencyScore(item.PublishedAt, requestTime);
+        var sourceScore = ComputeSourceScore(item.Source);
+        var relevanceScore = ComputeRelevanceScore(item.Title);
+        return recencyScore * 0.55m + sourceScore * 0.30m + relevanceScore * 0.15m;
+    }
+
+    private static decimal ComputeRecencyScore(DateTime publishedAt, DateTime requestTime)
+    {
+        var ageHours = Math.Max(0, (requestTime - publishedAt).TotalHours);
+        if (ageHours <= 6)
+        {
+            return 1.0m;
+        }
+
+        if (ageHours <= 24)
+        {
+            return 0.85m;
+        }
+
+        if (ageHours <= 72)
+        {
+            return 0.65m;
+        }
+
+        return 0.35m;
+    }
+
+    private static decimal ComputeSourceScore(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return 0.2m;
+        }
+
+        if (source.Contains("交易所", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("证监", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("公告", StringComparison.OrdinalIgnoreCase))
+        {
+            return 1.0m;
+        }
+
+        if (IsTrustedSource(source))
+        {
+            return 0.8m;
+        }
+
+        return 0.45m;
+    }
+
+    private static decimal ComputeRelevanceScore(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return 0.2m;
+        }
+
+        var hits = RelevanceKeywords.Count(keyword => title.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        return Math.Clamp(0.3m + hits * 0.15m, 0.3m, 1.0m);
+    }
+
+    private static bool IsTrustedSource(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return false;
+        }
+
+        return TrustedSourceKeywords.Any(keyword => source.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 internal enum StockAgentKind
@@ -352,7 +502,10 @@ internal static class StockAgentPromptBuilder
             "要求：\n" +
             "1. 必须输出严格JSON，不要Markdown，不要代码块，不要多余文字。\n" +
             "2. 所有字段必须存在；没有数据用null或空数组。\n" +
-            "3. 百分比字段用数值，不带%符号。\n\n" +
+            "3. 百分比字段用数值，不带%符号。\n" +
+            "4. 证据默认只允许最近72小时；若有效证据不足可扩窗到7天，并在summary中明确标注“扩窗到7天”。\n" +
+            "5. 禁止将无来源或无发布时间（publishedAt）的内容作为核心证据。\n" +
+            "6. evidence中每条都必须包含source、publishedAt、crawledAt（抓取时间）。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"stock_news\",\n" +
@@ -379,6 +532,7 @@ internal static class StockAgentPromptBuilder
             "      \"point\": \"string\",\n" +
             "      \"source\": \"string\",\n" +
             "      \"publishedAt\": \"YYYY-MM-DD HH:mm|null\",\n" +
+            "      \"crawledAt\": \"YYYY-MM-DD HH:mm\",\n" +
             "      \"url\": \"string|null\"\n" +
             "    }\n" +
             "  ],\n" +
@@ -401,7 +555,10 @@ internal static class StockAgentPromptBuilder
             "要求：\n" +
             "1. 必须输出严格JSON，不要Markdown，不要代码块，不要多余文字。\n" +
             "2. 所有字段必须存在；没有数据用null或空数组。\n" +
-            "3. 百分比字段用数值，不带%符号。\n\n" +
+            "3. 百分比字段用数值，不带%符号。\n" +
+            "4. 证据默认只允许最近72小时；若有效证据不足可扩窗到7天，并在summary中明确标注“扩窗到7天”。\n" +
+            "5. 禁止将无来源或无发布时间（publishedAt）的内容作为核心证据。\n" +
+            "6. evidence中每条都必须包含source、publishedAt、crawledAt（抓取时间）。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"sector_news\",\n" +
@@ -422,6 +579,7 @@ internal static class StockAgentPromptBuilder
             "      \"point\": \"string\",\n" +
             "      \"source\": \"string\",\n" +
             "      \"publishedAt\": \"YYYY-MM-DD HH:mm|null\",\n" +
+            "      \"crawledAt\": \"YYYY-MM-DD HH:mm\",\n" +
             "      \"url\": \"string|null\"\n" +
             "    }\n" +
             "  ],\n" +
@@ -613,6 +771,7 @@ internal static class StockAgentPromptBuilder
                 "      \"point\": \"string\",\n" +
                 "      \"source\": \"string\",\n" +
                 "      \"publishedAt\": \"YYYY-MM-DD HH:mm|null\",\n" +
+                "      \"crawledAt\": \"YYYY-MM-DD HH:mm\",\n" +
                 "      \"url\": \"string|null\"\n" +
                 "    }\n" +
                 "  ],\n" +
@@ -643,6 +802,7 @@ internal static class StockAgentPromptBuilder
                 "      \"point\": \"string\",\n" +
                 "      \"source\": \"string\",\n" +
                 "      \"publishedAt\": \"YYYY-MM-DD HH:mm|null\",\n" +
+                "      \"crawledAt\": \"YYYY-MM-DD HH:mm\",\n" +
                 "      \"url\": \"string|null\"\n" +
                 "    }\n" +
                 "  ],\n" +
@@ -927,6 +1087,7 @@ internal static class StockAgentResultNormalizer
         EnsureProperty(sentiment, "overall", null);
 
         EnsureArray(root, "events");
+        EnforceNewsEvidenceGuardrail(root);
     }
 
     private static void NormalizeSectorNews(JsonObject root)
@@ -935,6 +1096,7 @@ internal static class StockAgentResultNormalizer
         EnsureProperty(root, "confidence", null);
         EnsureProperty(root, "sectorChangePercent", null);
         EnsureArray(root, "topMovers");
+        EnforceNewsEvidenceGuardrail(root);
     }
 
     private static void NormalizeFinancial(JsonObject root)
@@ -973,8 +1135,77 @@ internal static class StockAgentResultNormalizer
             EnsureProperty(item, "point", null);
             EnsureProperty(item, "source", null);
             EnsureProperty(item, "publishedAt", null);
+            EnsureProperty(item, "crawledAt", null);
             EnsureProperty(item, "url", null);
         }
+    }
+
+    private static void EnforceNewsEvidenceGuardrail(JsonObject root)
+    {
+        if (HasUsableEvidence(root))
+        {
+            return;
+        }
+
+        root["summary"] = "信息不足：缺少可验证来源或发布时间，建议观望。";
+        root["confidence"] = 20;
+        root["signals"] = new JsonArray("观望，等待高质量新证据");
+        root["triggers"] = new JsonArray("补充最近72小时且来源可追溯的证据>=3条");
+        root["invalidations"] = new JsonArray("当前证据缺少来源或发布时间");
+        root["riskLimits"] = new JsonArray("证据缺失时不依据该结论执行买卖");
+
+        if (root["sentiment"] is JsonObject sentiment)
+        {
+            sentiment["positive"] = 0;
+            sentiment["neutral"] = 0;
+            sentiment["negative"] = 0;
+            sentiment["overall"] = "中性";
+        }
+    }
+
+    private static bool HasUsableEvidence(JsonObject root)
+    {
+        if (root["evidence"] is not JsonArray evidence || evidence.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var node in evidence)
+        {
+            if (node is not JsonObject item)
+            {
+                continue;
+            }
+
+            if (!TryReadString(item, "source", out var source) || string.IsNullOrWhiteSpace(source))
+            {
+                continue;
+            }
+
+            if (!TryReadString(item, "publishedAt", out var publishedText) || string.IsNullOrWhiteSpace(publishedText))
+            {
+                continue;
+            }
+
+            if (DateTime.TryParse(publishedText, out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryReadString(JsonObject item, string key, out string? value)
+    {
+        value = null;
+        if (item[key] is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var text))
+        {
+            return false;
+        }
+
+        value = text;
+        return true;
     }
 
     private static JsonObject EnsureObject(JsonObject root, string key)
