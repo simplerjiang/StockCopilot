@@ -55,35 +55,19 @@
 
 ---
 
-## ❌ Reviewer 打回指令: Step 1 返工 (2026-03-12)
+## 🟢 Reviewer 验收指令: Step 1 通过 & 启动 Step 2 (2026-03-12)
 
 > **致 ChatGPT-5.4**:
-> 用户和我已经 Review 了你的 Step 1 提测内容。左右布局方向正确，但**拒绝通过**，原因如下：
-> **错误点**：“标的查询”模块目前占据了过大的纵向空间，没有为“专业看盘”让出足够的大屏视野。
+> 你的 Step 1.1 返工代码已由架构师 Review 验收通过！前端 UI 的物理隔离（看盘终端与 AI 侧栏分离）以及顶部工具栏的紧凑化彻底释放了K线图的视野，满足了 GOAL-012 的要求。
 > 
-> **你的返工任务 (Step 1.1)**:
-> 1. 前往 `frontend/src` (如 `StockInfoTab.vue` 或 `TerminalView.vue`) 修改页面布局。
-> 2. 将“标的查询 (Search Bar / Header)” 组件改为 **前端页面顶部悬浮固定 (Fixed 或 Sticky)** 或通过极简内联模式重构高度。
-> 3. 必须确保下方 K线图与分时图区域能够完全贯穿屏幕垂直剩余高度，做到空间利用率最大化。
-> 4. 完成修改并确保前端单测/编译正常后，**清空下方你的旧回执**，编写新的 `Step 1.1 返工完成回执` 返回给用户与我进行复核。
-> 
-> *(收到此指令后，请立即开始修复代码！)*
-
----
-
-~~## ✅ Step 1 开发回执 (2026-03-12)~~ [已打回待修复]
-
-### 已完成内容
-- 已在 `frontend/src/modules/stocks` 新增 `TerminalView.vue` 与 `CopilotPanel.vue`，把股票信息页拆成“左侧专业看盘终端 + 右侧 AI 协驾侧栏”。
-- 已重构 `StockInfoTab.vue` 为 Grid 布局：左侧集中展示 K 线、分时、成交量、均线、消息带；右侧集中展示资讯影响、多 Agent 分析与股票聊天。
-- 已加入“一键专注模式 / 显示 AI 侧栏”切换，确保看盘时可以回到纯净终端视图。
-- 当前 AI 相关请求仍保持“仅在用户主动点击分析或发送聊天时才触发”，本次 Step 1 未推进 Step 2 的后端本地数据中枢改造。
-
-### 自测结果
-- 前端单测：`npm --prefix frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 通过（13/13）。
-- 前端构建：`npm --prefix frontend run build` 通过。
-
-### 说明
-- 已按你的要求只完成 Step 1，没有继续开发 Step 2 / Step 3。
-
-**开发已完成 Step 1，请去唤醒 Copilot 产品经理进行 Review！**
+> 接下来，**必须严格进入 Step 2：C# 本地数据中枢基建建立 (推进 GOAL-013) 的开发。**
+>
+> **你的开发任务 (Step 2)**:
+> 1. **数据库扩充**: 在 `backend/SimplerJiangAiAgent.Api/Data/Entities` 新增 `LocalStockNews` 和 `LocalSectorReport` 实体类，并在 `AppDbContext` 中注册 DbSet。完成后请使用 EF Core 生成 Migration 进行数据库结构的演进。
+>    - 核心强字段要求包含：`Id`, `Symbol` (标的代码), `Title`, `Content` (降噪后的文本), `Source` (来源机构), `PublishTime` (新闻实际发布时间, 关键!), `CreatedAt` (入库时间)。
+> 2. **后端采集底层**: 在 Infrastructure 层实现强类型的 `IHostedService` (`BackgroundService`)，比如 `MarketDataScraperWorker`：周期性通过原生 HttpClient/爬虫拉取新闻和研报，并`SaveChanges`存入本地。彻底取代由 LLM 请求直接向外网抓取的逻辑。
+> 3. **清理旧 Agent 权限**: 检查现有的 Agent Tools/Plugins，如果存在直接调用外网搜索引擎或临时爬取特定网页内容的 Tool（会导致严重的幻觉且极不稳定），将其移出 Tool 清单或直接废弃！
+> 4. **赋予受控新能力**: 为 Agent 编写一个且唯一的新 Tool，如 `QueryLocalFactDatabaseTool`。让 LLM 只能以受限查表/全文索引的方式检索本地 `LocalStockNews` 里爬虫已筛洗好的数据，进行投研推演。
+> 5. **自测与回执**: 完成后端 C# 业务和 Migration 并确保 `dotnet build` 且 `dotnet test` 通过后，**清空下方旧的回执，编写新的 `Step 2 开发完成回执`** 提醒用户进行 Review。
+>
+> *(收到此指令后，请立即开始编写 C# 后端代码并排查 Agent 工具侧代码！切勿修改前端页面。)*
