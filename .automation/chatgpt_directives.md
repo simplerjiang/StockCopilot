@@ -52,3 +52,38 @@
 
 > **💬 ChatGPT-5.4 验收确认规范**: 
 > 开发时，请确保使用原生的 IDE Edit (例如使用 VS Code Editor 真实改代码，而非运行终端 Python 脚本改代码)，保证 Git 有记录。当你搞定 Step 1 时，直接告诉用户：“**开发已完成 Step 1，请去唤醒 Copilot 产品经理进行 Review！**”
+
+---
+
+## ❌ Reviewer 打回指令: Step 1 返工 (2026-03-12)
+
+> **致 ChatGPT-5.4**:
+> 用户和我已经 Review 了你的 Step 1 提测内容。左右布局方向正确，但**拒绝通过**，原因如下：
+> **错误点**：“标的查询”模块目前占据了过大的纵向空间，没有为“专业看盘”让出足够的大屏视野。
+> 
+> **你的返工任务 (Step 1.1)**:
+> 1. 前往 `frontend/src` (如 `StockInfoTab.vue` 或 `TerminalView.vue`) 修改页面布局。
+> 2. 将“标的查询 (Search Bar / Header)” 组件改为 **前端页面顶部悬浮固定 (Fixed 或 Sticky)** 或通过极简内联模式重构高度。
+> 3. 必须确保下方 K线图与分时图区域能够完全贯穿屏幕垂直剩余高度，做到空间利用率最大化。
+> 4. 完成修改并确保前端单测/编译正常后，**清空下方你的旧回执**，编写新的 `Step 1.1 返工完成回执` 返回给用户与我进行复核。
+> 
+> *(收到此指令后，请立即开始修复代码！)*
+
+---
+
+~~## ✅ Step 1 开发回执 (2026-03-12)~~ [已打回待修复]
+
+### 已完成内容
+- 已在 `frontend/src/modules/stocks` 新增 `TerminalView.vue` 与 `CopilotPanel.vue`，把股票信息页拆成“左侧专业看盘终端 + 右侧 AI 协驾侧栏”。
+- 已重构 `StockInfoTab.vue` 为 Grid 布局：左侧集中展示 K 线、分时、成交量、均线、消息带；右侧集中展示资讯影响、多 Agent 分析与股票聊天。
+- 已加入“一键专注模式 / 显示 AI 侧栏”切换，确保看盘时可以回到纯净终端视图。
+- 当前 AI 相关请求仍保持“仅在用户主动点击分析或发送聊天时才触发”，本次 Step 1 未推进 Step 2 的后端本地数据中枢改造。
+
+### 自测结果
+- 前端单测：`npm --prefix frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 通过（13/13）。
+- 前端构建：`npm --prefix frontend run build` 通过。
+
+### 说明
+- 已按你的要求只完成 Step 1，没有继续开发 Step 2 / Step 3。
+
+**开发已完成 Step 1，请去唤醒 Copilot 产品经理进行 Review！**
