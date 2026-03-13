@@ -30,6 +30,34 @@ public sealed record LocalFactPackageDto(
     IReadOnlyList<LocalNewsItemDto> MarketReports
 );
 
+public sealed record LocalNewsArchiveItemDto(
+    string Level,
+    string? Symbol,
+    string? Name,
+    string? SectorName,
+    string Title,
+    string? TranslatedTitle,
+    string Source,
+    string SourceTag,
+    string? Category,
+    string Sentiment,
+    DateTime PublishTime,
+    DateTime CrawledAt,
+    string? Url,
+    string? AiTarget,
+    IReadOnlyList<string> AiTags
+);
+
+public sealed record LocalNewsArchivePageDto(
+    int Page,
+    int PageSize,
+    int Total,
+    string? Keyword,
+    string? Level,
+    string? Sentiment,
+    IReadOnlyList<LocalNewsArchiveItemDto> Items
+);
+
 public sealed record StockAgentQueryPolicyDto(
     bool AllowInternet,
     string Reason,

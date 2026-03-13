@@ -21,11 +21,11 @@ public sealed class RssMarketNewsParserTests
         </rss>
         """;
 
-        var result = RssMarketNewsParser.Parse(xml, "WSJ US Business", "wsj-us-business-rss", new DateTime(2026, 3, 13, 0, 0, 0, DateTimeKind.Utc));
+        var result = RssMarketNewsParser.Parse(xml, "CNBC Finance", "cnbc-finance-rss", new DateTime(2026, 3, 13, 0, 0, 0, DateTimeKind.Utc));
 
         var item = Assert.Single(result);
         Assert.Equal("market", item.Level);
-        Assert.Equal("WSJ US Business", item.Source);
+        Assert.Equal("CNBC Finance", item.Source);
         Assert.Equal("guid-1", item.ExternalId);
     }
 
@@ -44,7 +44,7 @@ public sealed class RssMarketNewsParserTests
         </feed>
         """;
 
-        var result = RssMarketNewsParser.Parse(xml, "NYT Business", "nyt-business-rss", new DateTime(2026, 3, 13, 9, 0, 0, DateTimeKind.Utc));
+        var result = RssMarketNewsParser.Parse(xml, "TechCrunch", "techcrunch-rss", new DateTime(2026, 3, 13, 9, 0, 0, DateTimeKind.Utc));
 
         var item = Assert.Single(result);
         Assert.Equal("https://example.com/market-2", item.Url);
@@ -74,7 +74,7 @@ public sealed class RssMarketNewsParserTests
         </rss>
         """;
 
-        var result = RssMarketNewsParser.Parse(xml, "WSJ US Business", "wsj-us-business-rss", new DateTime(2026, 3, 13, 0, 0, 0, DateTimeKind.Utc));
+        var result = RssMarketNewsParser.Parse(xml, "Seeking Alpha", "seeking-alpha-rss", new DateTime(2026, 3, 13, 0, 0, 0, DateTimeKind.Utc));
 
         var item = Assert.Single(result);
         Assert.Equal("guid-new", item.ExternalId);
@@ -83,7 +83,7 @@ public sealed class RssMarketNewsParserTests
     [Fact]
     public void Parse_ShouldReturnEmptyForInvalidXml()
     {
-        var result = RssMarketNewsParser.Parse("not xml", "WSJ US Business", "wsj-us-business-rss", DateTime.UtcNow);
+      var result = RssMarketNewsParser.Parse("not xml", "CNBC Finance", "cnbc-finance-rss", DateTime.UtcNow);
 
         Assert.Empty(result);
     }

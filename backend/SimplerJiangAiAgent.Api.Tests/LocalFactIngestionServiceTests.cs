@@ -56,6 +56,22 @@ public sealed class LocalFactIngestionServiceTests
     }
 
     [Fact]
+    public void BuildDomesticMarketReports_ShouldDropBlockedSelfMediaSources()
+    {
+        var messages = new[]
+        {
+            new IntradayMessageDto("A股午评：指数震荡", "自媒体热点", new DateTime(2026, 3, 12, 10, 0, 0, DateTimeKind.Utc), "https://example.com/blocked"),
+            new IntradayMessageDto("大盘午评：成交额放大", "新浪财经", new DateTime(2026, 3, 12, 10, 5, 0, DateTimeKind.Utc), "https://example.com/ok")
+        };
+
+        var result = LocalFactIngestionService.BuildDomesticMarketReports(messages, new DateTime(2026, 3, 12, 10, 6, 0, DateTimeKind.Utc));
+
+        var item = Assert.Single(result);
+        Assert.Equal("大盘午评：成交额放大", item.Title);
+        Assert.DoesNotContain(result, entry => entry.Source.Contains("自媒体", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task EnsureMarketFreshAsync_WhenFreshButPendingAi_ShouldProcessPendingRows()
     {
         await using var dbContext = CreateDbContext();

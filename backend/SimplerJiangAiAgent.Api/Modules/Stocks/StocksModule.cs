@@ -185,6 +185,33 @@ public sealed class StocksModule : IModule
         .WithName("GetLocalNews")
         .WithOpenApi();
 
+        app.MapGet("/api/news/archive", async (
+            string? keyword,
+            string? level,
+            string? sentiment,
+            int? page,
+            int? pageSize,
+            IQueryLocalFactDatabaseTool queryTool) =>
+        {
+            try
+            {
+                var archive = await queryTool.QueryArchiveAsync(
+                    keyword,
+                    level,
+                    sentiment,
+                    Math.Max(page ?? 1, 1),
+                    Math.Clamp(pageSize ?? 20, 1, 50));
+
+                return Results.Ok(archive);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("GetLocalNewsArchive")
+        .WithOpenApi();
+
         // 事件驱动信号（含证据/反证与历史对齐）
         group.MapGet("/signals", async (string symbol, string? source, IStockDataService dataService, IStockNewsImpactService impactService, IStockSignalService signalService) =>
         {

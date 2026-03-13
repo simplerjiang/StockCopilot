@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
@@ -17,15 +18,19 @@ public interface ILocalFactIngestionService
 
 public sealed class LocalFactIngestionService : ILocalFactIngestionService
 {
-    private const string SinaRollUrl = "https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=60&versionNumber=1.2.8.1";
+    private const string SinaRollUrl = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=60&versionNumber=1.2.8.1";
     private const int MarketNewsMaxAcceptedAgeDays = 30;
     private static readonly SemaphoreSlim MarketRefreshGate = new(1, 1);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> SymbolRefreshGates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly (string Url, string Source, string SourceTag)[] MarketRssFeeds =
     {
-        ("https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml", "WSJ US Business", "wsj-us-business-rss"),
-        ("https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "NYT Business", "nyt-business-rss")
+        ("https://www.cnbc.com/id/10000664/device/rss/rss.html", "CNBC Finance", "cnbc-finance-rss"),
+        ("https://seekingalpha.com/feed.xml", "Seeking Alpha", "seeking-alpha-rss"),
+        ("https://cointelegraph.com/rss", "CoinTelegraph", "cointelegraph-rss"),
+        ("https://techcrunch.com/feed/", "TechCrunch", "techcrunch-rss"),
+        ("https://thehill.com/news/feed", "The Hill", "thehill-rss")
     };
+    private static readonly string[] BlockedSourceKeywords = { "自媒体" };
     private static readonly string[] MarketKeywords =
     {
         "A股", "大盘", "沪指", "深成指", "创业板", "科创板", "两市", "收盘", "午评", "早评", "北向资金", "指数"
@@ -287,6 +292,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         var reports = rssResults
             .SelectMany(items => items)
             .Concat(domesticReports)
+            .Where(item => !IsBlockedSource(item.Source))
             .OrderByDescending(item => item.PublishTime)
             .DistinctBy(item => item.Url ?? item.ExternalId ?? item.Title)
             .Take(18)
@@ -329,7 +335,9 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
             response.EnsureSuccessStatusCode();
-            return RssMarketNewsParser.Parse(content, source, sourceTag, crawledAt);
+            return RssMarketNewsParser.Parse(content, source, sourceTag, crawledAt)
+                .Where(item => !IsBlockedSource(item.Source))
+                .ToArray();
         }
         catch (Exception ex)
         {
@@ -506,6 +514,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         var minPublishTime = EnsureUtc(crawledAt).AddDays(-MarketNewsMaxAcceptedAgeDays);
         var matched = rollMessages
             .Where(item => EnsureUtc(item.PublishedAt) >= minPublishTime)
+            .Where(item => !IsBlockedSource(item.Source))
             .Where(item => MarketKeywords.Any(keyword => item.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(item => item.PublishedAt)
             .Take(12)
@@ -515,6 +524,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             ? matched
             : rollMessages
                 .Where(item => EnsureUtc(item.PublishedAt) >= minPublishTime)
+                .Where(item => !IsBlockedSource(item.Source))
                 .OrderByDescending(item => item.PublishedAt)
                 .Take(12)
                 .ToArray();
@@ -532,6 +542,16 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
                 crawledAt,
                 item.Url))
             .ToArray();
+    }
+
+    private static bool IsBlockedSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return false;
+        }
+
+        return BlockedSourceKeywords.Any(keyword => source.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     private Task<bool> HasPendingMarketAiAsync(CancellationToken cancellationToken)
