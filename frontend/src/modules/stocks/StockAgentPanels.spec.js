@@ -37,4 +37,13 @@ describe('StockAgentPanels', () => {
     expect(expiredCell.exists()).toBe(true)
     expect(expiredCell.text()).toContain('过期风险')
   })
+
+  it('emits standard and pro run flags from action buttons', async () => {
+    const wrapper = mount(StockAgentPanels)
+
+    await wrapper.find('.run-standard-button').trigger('click')
+    await wrapper.find('.run-pro-button').trigger('click')
+
+    expect(wrapper.emitted('run')).toEqual([[false], [true]])
+  })
 })

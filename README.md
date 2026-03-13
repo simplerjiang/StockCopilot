@@ -24,7 +24,7 @@
 - /api/stocks/news/impact 资讯影响评估（公告/研报/新闻分级、来源可信度、同主题合并去重）
 - /api/stocks/signals 事件驱动信号（证据/反证、历史对齐）
 - /api/stocks/position-guidance 个性化风险与仓位建议
-- /api/stocks/agents 多Agent分析（问题1已增强：资讯默认72h时效窗口、证据不足自动扩窗7d并标注、证据缺失时降级观望）
+- /api/stocks/agents 多Agent分析（默认模型已切到 `gemini-3.1-flash-lite-preview-thinking-high`，支持前端显式触发 `Pro 深度分析` 并路由到 `gemini-3.1-pro-preview-thinking-medium`，普通分析严格禁用 Pro）
 - /api/admin/login 管理员登录
 - /api/admin/llm/settings/{provider} LLM 配置读取/更新（需管理员 token）
 - /api/admin/llm/test/{provider} LLM 调用测试（需管理员 token）
@@ -34,6 +34,7 @@
 - Stock Tabs 基础框架
 - LLM 设置页签（管理员配置）
 - K线/分时图 AI 关键价位叠加（突破线/支撑线，来源于多Agent分析）
+- 股票信息页多Agent面板支持双档位触发：标准分析 / Pro 深度分析
 - 治理开发者模式：参数说明、治理链路 Trace 查询、以及按 traceId 聚合的 LLM 对话会话前端可视化（请求/返回/异常一一对应，支持 JSON 美化）
 
 ### 桌面端
@@ -98,7 +99,7 @@ opencode
 - [x] GOAL-005 专业行情图升级（K线+成交量副图、分时专业渲染、数据精确映射）
 - [x] GOAL-006 图表增强（二期：分时成交量副图 + K线 MA5/MA10 叠加线）
 - [x] GOAL-012 界面重构与“专业看盘/AI辅屏”解耦（股票信息页已拆为 TerminalView 主终端 + CopilotPanel 侧栏，并支持专注模式）
-- [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由与新闻精准过滤）
+- [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤，以及 Step 2.2 Task 4 的标准/Pro 模型分流）
 - [x] ISSUE-20260310 提示词增强（新闻抗污染策略 + 新闻库定时采集约束 + 白盒 MCP/Skill 任务执行规范）
 - [x] ISSUE-20260310-P0 动态来源治理基座（LLM每日候选源发现 + 自动新增爬取地址/流程 + 爬虫失效自动修复发布 + 程序化验证与自动隔离）
 - [x] ISSUE-20260310-P0-R1 P0剩余计划：开发者模式可视化收口（治理仪表盘 + 最小查询接口 + 过滤/详情展开/trace跳转 + 可观测审计）

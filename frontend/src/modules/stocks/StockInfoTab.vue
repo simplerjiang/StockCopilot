@@ -611,7 +611,7 @@ const fetchLocalNews = async () => {
   }
 }
 
-const runAgents = async () => {
+const runAgents = async (isPro = false) => {
   if (!detail.value?.quote?.symbol) {
     agentError.value = '请先选择股票'
     return
@@ -632,7 +632,8 @@ const runAgents = async () => {
         source: selectedSource.value || null,
         provider: 'openai',
         useInternet: true,
-        dependencyResults: agentId === 'commander' ? agentResults.value : []
+        dependencyResults: agentId === 'commander' ? agentResults.value : [],
+        isPro
       }
 
       try {

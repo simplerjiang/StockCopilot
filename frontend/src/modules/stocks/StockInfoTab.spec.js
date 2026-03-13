@@ -255,6 +255,90 @@ describe('StockInfoTab', () => {
     expect(body.useInternet).toBe(true)
   })
 
+  it('sends pro flag when triggering Pro analysis', async () => {
+    const agentCalls = []
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/agents/single') {
+          const body = JSON.parse(options.body)
+          agentCalls.push(body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({ agentId: body.agentId, agentName: body.agentId, success: true, data: { summary: body.agentId } })
+          })
+        }
+
+        if (url === '/api/stocks/agents/history' && options.method === 'POST') {
+          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 1 }) })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '深科技', symbol: 'sz000021', price: 31.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    await wrapper.find('.run-pro-button').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(agentCalls).toHaveLength(5)
+    expect(agentCalls.every(item => item.isPro === true)).toBe(true)
+  })
+
+  it('sends standard flag when triggering regular analysis', async () => {
+    const agentCalls = []
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/agents/single') {
+          const body = JSON.parse(options.body)
+          agentCalls.push(body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({ agentId: body.agentId, agentName: body.agentId, success: true, data: { summary: body.agentId } })
+          })
+        }
+
+        if (url === '/api/stocks/agents/history' && options.method === 'POST') {
+          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 1 }) })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '深科技', symbol: 'sz000021', price: 31.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    await wrapper.find('.run-standard-button').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(agentCalls).toHaveLength(5)
+    expect(agentCalls.every(item => item.isPro === false)).toBe(true)
+  })
+
   it('streams assistant response chunks and persists history per stock', async () => {
     const encoder = new TextEncoder()
     const stream = new ReadableStream({

@@ -134,8 +134,11 @@ const getCellText = (section, row, col) => {
             </option>
           </select>
         </div>
-        <button @click="emit('run')" :disabled="loading">
+        <button class="run-standard-button" @click="emit('run', false)" :disabled="loading">
           {{ loading ? '分析中...' : '启动多Agent' }}
+        </button>
+        <button class="run-pro-button" @click="emit('run', true)" :disabled="loading">
+          {{ loading ? '分析中...' : 'Pro 深度分析' }}
         </button>
         <span v-if="lastUpdated" class="muted">更新时间：{{ lastUpdated }}</span>
       </div>

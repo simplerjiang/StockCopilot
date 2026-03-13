@@ -142,6 +142,63 @@ public sealed class SourceGovernanceServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_RepeatedSameDayRun_UpdatesExistingHealthDailyInsteadOfAddingDuplicate()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.NewsSourceRegistries.Add(new NewsSourceRegistry
+        {
+            Domain = "repeat-health.test",
+            BaseUrl = "https://repeat-health.test",
+            Status = NewsSourceStatus.Active,
+            Tier = NewsSourceTier.Preferred,
+            FetchStrategy = "html",
+            ParseSuccessRate = 0.70m,
+            TimestampCoverage = 0.55m,
+            FreshnessLagMinutes = 120,
+            ConsecutiveFailures = 1,
+            LastStatusReason = "seed"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var options = Options.Create(new SourceGovernanceOptions
+        {
+            EnableLlmDiscovery = false,
+            EnableCrawlerAutoFix = false,
+            MinParseSuccessRate = 0.6m,
+            MinTimestampCoverage = 0.2m,
+            MaxFreshnessLagMinutes = 600
+        });
+
+        var service = new SourceGovernanceService(
+            dbContext,
+            options,
+            new FakeFileLogWriter(),
+            new FakeLlmService("[]"),
+            new FakeHttpClientFactory(new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))),
+            new FakeCommandRunner());
+
+        await service.RunOnceAsync();
+
+        var source = await dbContext.NewsSourceRegistries.SingleAsync();
+        source.ParseSuccessRate = 0.92m;
+        source.TimestampCoverage = 0.88m;
+        source.FreshnessLagMinutes = 15;
+        source.ConsecutiveFailures = 0;
+        await dbContext.SaveChangesAsync();
+
+        await service.RunOnceAsync();
+
+        var healthRows = await dbContext.NewsSourceHealthDailies.ToListAsync();
+        var daily = Assert.Single(healthRows);
+        Assert.Equal(source.Id, daily.SourceId);
+        Assert.Equal(DateTime.UtcNow.Date, daily.HealthDate);
+        Assert.Equal(0.92m, daily.ParseSuccessRate);
+        Assert.Equal(0.88m, daily.TimestampCoverage);
+        Assert.Equal(15, daily.FreshnessLagMinutes);
+        Assert.Equal(0, daily.ErrorCount);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_CommandValidationFails_RejectsCrawlerChange()
     {
         var repoRoot = CreateSandboxRepository();

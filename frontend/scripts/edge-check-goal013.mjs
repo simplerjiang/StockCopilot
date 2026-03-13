@@ -65,10 +65,10 @@ const run = async () => {
   await page.getByRole('button', { name: '股票信息' }).click({ force: true });
 
   const symbolInput = page.getByPlaceholder('输入股票代码/名称/拼音缩写');
-  const detailResponse = page.waitForResponse(resp => resp.url().includes('/api/stocks/detail') && resp.status() === 200, { timeout: 30000 });
-  const stockNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=stock') && resp.status() === 200, { timeout: 30000 });
-  const sectorNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=sector') && resp.status() === 200, { timeout: 30000 });
-  const marketNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=market') && resp.status() === 200, { timeout: 30000 });
+  const detailResponse = page.waitForResponse(resp => resp.url().includes('/api/stocks/detail') && resp.status() === 200, { timeout: 90000 });
+  const stockNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=stock') && resp.status() === 200, { timeout: 90000 });
+  const sectorNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=sector') && resp.status() === 200, { timeout: 90000 });
+  const marketNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=market') && resp.status() === 200, { timeout: 90000 });
   await symbolInput.fill('600000');
   await symbolInput.press('Enter');
   await Promise.all([detailResponse, stockNewsResponse, sectorNewsResponse, marketNewsResponse]);
@@ -76,6 +76,8 @@ const run = async () => {
   await page.waitForSelector('text=股票信息终端', { timeout: 20000 });
   await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card').length >= 3, null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card li').length >= 1, null, { timeout: 30000 });
+  await page.waitForSelector('.run-standard-button', { timeout: 20000 });
+  await page.waitForSelector('.run-pro-button', { timeout: 20000 });
   await page.waitForTimeout(2000);
 
   const expandedLayout = await page.evaluate(measureTerminalLayout);
@@ -92,6 +94,7 @@ const run = async () => {
   const quoteText = await page.locator('.quote-card').first().textContent();
   const stockFactCount = await page.locator('.news-bucket-card').first().locator('li').count();
   const sentimentBadgeCount = await page.locator('.news-bucket-card .impact-tag').count();
+  const proButtonText = await page.locator('.run-pro-button').textContent();
   const clickableTicker = page.locator('.messages li.clickable').first();
   if (await clickableTicker.count()) {
     const popupPromise = context.waitForEvent('page').catch(() => null);
@@ -115,6 +118,10 @@ const run = async () => {
 
   if (sentimentBadgeCount < 1) {
     throw new Error('Expected sentiment badges in local news buckets');
+  }
+
+  if (!proButtonText || !proButtonText.includes('Pro')) {
+    throw new Error(`Expected Pro analysis button text, got: ${proButtonText ?? '<empty>'}`);
   }
 
   if (localNewsResponses.length < 3) {

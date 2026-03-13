@@ -9,7 +9,8 @@ public sealed record StockAgentRequestDto(
     string? Model,
     string? Interval,
     int? Count,
-    bool UseInternet = true
+    bool UseInternet = true,
+    bool IsPro = false
 );
 
 public sealed record StockAgentSingleRequestDto(
@@ -21,7 +22,8 @@ public sealed record StockAgentSingleRequestDto(
     string? Interval,
     int? Count,
     bool UseInternet = true,
-    IReadOnlyList<StockAgentResultDto>? DependencyResults = null
+    IReadOnlyList<StockAgentResultDto>? DependencyResults = null,
+    bool IsPro = false
 );
 
 public sealed record StockAgentResponseDto(

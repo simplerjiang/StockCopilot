@@ -146,7 +146,12 @@ Step 2.1 已按 4 项整改要求修复完成，请进行重新验视。
 > * 针对网络连接错误 (`HttpRequestException`)，增加 Try-Catch 并将真正的内层错误（如连接被拒绝、代理错误）通过日志打印，并向外抛出更带有人话解释的 Exception，避免前端只看到生硬的空对象或 JSON 异常。
 > * 检查 `appsettings.Development.json` 中配置的 OpenAI BaseUrl，如果缺失关键的后缀，在使用 `HttpClient` 拼接时要保证容错性。
 > 
-> 完成代码修改并自测后，请填写新的 `Step 2.2 开发完成回执` 提醒我重新验收！
+> **任务 4（模型升级与多档位分析控制 - `backend/SimplerJiangAiAgent.Api` 及其配置与业务层）**:
+* **更新默认模型**：将项目中的普通 LLM 分析（例如短对话、摘要）以及海外新闻动态获取的模型名称切换为 `gemini-3.1-flash-lite-preview-thinking-high`。修改相应的配置文件或硬编码常量。
+* **新建“Pro分析”分支**：前端提供显式的“Pro 深度分析”选项（或复用现有触发按钮传入 `isPro=true`），对应的后端业务层在接收到开启了 Pro 的标识后，调用模型必须切换为 `gemini-3.1-pro-preview-thinking-medium`。
+* **严格约束**：其余非深度分析的情况，绝对禁止使用 Pro 模型。要求在单元测试中覆盖对不同分析精度意图分配正确模型的验证。
+
+完成代码修改并自测后，请填写新的 `Step 2.2 开发完成回执` 提醒我重新验收！
 
 ## ✅ Step 2.2 开发完成回执 (2026-03-13)
 
@@ -155,12 +160,15 @@ Step 2.1 已按 4 项整改要求修复完成，请进行重新验视。
 2. 已修复 `StockCharts.vue` 在 AI 侧栏收起/展开时的图表重算问题：新增 wrapper 级 `ResizeObserver` 监听与 `requestAnimationFrame` 调度，K 线图和分时图会随可用宽度变化正确 resize，且不再越界重叠。
 3. 已强化 `OpenAiProvider.cs`：OpenAI 兼容 BaseUrl 会自动补齐 `/v1` 并清理重复路径；请求发送前会记录完整 Request URI 与脱敏请求头；遇到 `HttpRequestException` 或超时时会输出更清晰的人话错误，并保留底层原因。
 4. 已补充回归覆盖：前端新增图表 resize 单测，后端新增 BaseUrl 归一化与网络异常诊断单测；Edge 脚本已扩展为真实点击 AI 侧栏开关并检查图表宽度变化与越界情况。
+5. 已完成 Task 4：普通 LLM 默认模型切换为 `gemini-3.1-flash-lite-preview-thinking-high`；股票多Agent新增显式 `Pro 深度分析` 按钮并透传 `isPro=true`；后端 `StockAgentOrchestrator` 已在业务层统一路由模型，Pro 固定走 `gemini-3.1-pro-preview-thinking-medium`，普通分析即使误传 Pro 模型名也会被降级为非 Pro 路由。
 
 ### 自测结果
 - 后端定向单测：`dotnet test backend/SimplerJiangAiAgent.Api.Tests/SimplerJiangAiAgent.Api.Tests.csproj --filter "FullyQualifiedName~OpenAiProviderTests"` 通过（6/6）
+- 后端定向单测：`dotnet test backend/SimplerJiangAiAgent.Api.Tests/SimplerJiangAiAgent.Api.Tests.csproj --filter "StockAgentModelRoutingPolicyTests"` 通过（4/4）
 - 前端单测：`npm --prefix frontend run test:unit -- src/modules/stocks/StockCharts.spec.js` 通过（3/3）
+- 前端单测：`npm --prefix frontend run test:unit -- StockAgentPanels.spec.js StockInfoTab.spec.js` 通过（21/21）
 - 前端构建：`npm --prefix frontend run build` 通过
 - Edge 校验：`node frontend/scripts/edge-check-goal013.mjs` 通过
 
 ### 结论
-Step 2.2 已按排版修复、图表响应式修复与底层网关报错诊断三项要求完成，请进行重新验收。
+Step 2.2 已按排版修复、图表响应式修复、底层网关报错诊断，以及 Task 4 的标准/Pro 模型分流要求完成，请进行重新验收。

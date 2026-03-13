@@ -114,7 +114,8 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             request.Model,
             request.Interval,
             request.Count,
-            request.UseInternet), dependencies, cancellationToken);
+            request.UseInternet,
+            request.IsPro), dependencies, cancellationToken);
     }
 
     private async Task<StockAgentContextDto> BuildContextAsync(
@@ -155,12 +156,13 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         var prompt = StockAgentPromptBuilder.BuildPrompt(kind, contextJson, dependencyResults);
         var provider = string.IsNullOrWhiteSpace(request.Provider) ? "openai" : request.Provider.Trim();
         var allowInternet = StockAgentInternetRoutingPolicy.ResolveUseInternet(request.Symbol, kind, request.UseInternet);
+        var model = StockAgentModelRoutingPolicy.ResolveModel(request.Model, request.IsPro);
 
         try
         {
             var result = await _llmService.ChatAsync(
                 provider,
-            new LlmChatRequest(prompt, request.Model, 0.4, allowInternet),
+                new LlmChatRequest(prompt, model, 0.4, allowInternet),
                 cancellationToken);
 
             var raw = result.Content?.Trim() ?? string.Empty;
@@ -174,7 +176,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
                     var repairPrompt = StockAgentPromptBuilder.BuildRepairPrompt(kind, currentRaw);
                     var repair = await _llmService.ChatAsync(
                         provider,
-                        new LlmChatRequest(repairPrompt, request.Model, 0.2, false),
+                        new LlmChatRequest(repairPrompt, model, 0.2, false),
                         cancellationToken);
 
                     var repairRaw = repair.Content?.Trim() ?? string.Empty;
@@ -279,6 +281,28 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IReadOnlyList<KLinePointDto> KLines,
         DateTime RequestTime
     );
+}
+
+internal static class StockAgentModelRoutingPolicy
+{
+    internal const string DefaultModel = "gemini-3.1-flash-lite-preview-thinking-high";
+    internal const string ProModel = "gemini-3.1-pro-preview-thinking-medium";
+
+    public static string ResolveModel(string? requestedModel, bool isPro)
+    {
+        if (isPro)
+        {
+            return ProModel;
+        }
+
+        var normalized = requestedModel?.Trim();
+        if (!string.IsNullOrWhiteSpace(normalized) && !string.Equals(normalized, ProModel, StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        return DefaultModel;
+    }
 }
 
 internal sealed record StockAgentNewsPolicyDto(

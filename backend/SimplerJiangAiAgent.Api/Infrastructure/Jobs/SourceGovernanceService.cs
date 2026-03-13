@@ -217,9 +217,15 @@ public sealed class SourceGovernanceService : ISourceGovernanceService
 
     private async Task RefreshSourceStatusesAsync(CancellationToken cancellationToken)
     {
+        var healthDate = DateTime.UtcNow.Date;
         var registries = await _dbContext.NewsSourceRegistries
             .Where(x => x.Status != NewsSourceStatus.Rejected)
             .ToListAsync(cancellationToken);
+
+        var registryIds = registries.Select(x => x.Id).ToArray();
+        var existingHealthRows = await _dbContext.NewsSourceHealthDailies
+            .Where(x => registryIds.Contains(x.SourceId) && x.HealthDate == healthDate)
+            .ToDictionaryAsync(x => x.SourceId, cancellationToken);
 
         var domains = registries.Select(x => x.Domain).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var recentRuns = await _dbContext.NewsSourceVerificationRuns
@@ -240,19 +246,25 @@ public sealed class SourceGovernanceService : ISourceGovernanceService
             source.LastCheckedAt = DateTime.UtcNow;
             source.UpdatedAt = DateTime.UtcNow;
 
-            _dbContext.NewsSourceHealthDailies.Add(new NewsSourceHealthDaily
+            if (!existingHealthRows.TryGetValue(source.Id, out var healthDaily))
             {
-                SourceId = source.Id,
-                HealthDate = DateTime.UtcNow.Date,
-                ParseSuccessRate = source.ParseSuccessRate ?? 0m,
-                TimestampCoverage = source.TimestampCoverage ?? 0m,
-                DuplicateRate = latestRunByDomain.TryGetValue(source.Domain, out var latestRun) ? latestRun.DuplicateRate : 0m,
-                FreshnessLagMinutes = source.FreshnessLagMinutes ?? 0,
-                ErrorCount = source.ConsecutiveFailures,
-                SuggestedStatus = nextStatus,
-                SuggestionReason = reason,
-                CreatedAt = DateTime.UtcNow
-            });
+                healthDaily = new NewsSourceHealthDaily
+                {
+                    SourceId = source.Id,
+                    HealthDate = healthDate,
+                    CreatedAt = DateTime.UtcNow
+                };
+                existingHealthRows[source.Id] = healthDaily;
+                _dbContext.NewsSourceHealthDailies.Add(healthDaily);
+            }
+
+            healthDaily.ParseSuccessRate = source.ParseSuccessRate ?? 0m;
+            healthDaily.TimestampCoverage = source.TimestampCoverage ?? 0m;
+            healthDaily.DuplicateRate = latestRunByDomain.TryGetValue(source.Domain, out var latestRun) ? latestRun.DuplicateRate : 0m;
+            healthDaily.FreshnessLagMinutes = source.FreshnessLagMinutes ?? 0;
+            healthDaily.ErrorCount = source.ConsecutiveFailures;
+            healthDaily.SuggestedStatus = nextStatus;
+            healthDaily.SuggestionReason = reason;
 
             if (!string.Equals(oldStatus, nextStatus, StringComparison.OrdinalIgnoreCase))
             {
