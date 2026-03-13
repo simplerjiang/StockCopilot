@@ -42,7 +42,7 @@
 
 ## 数据同步与配置
 - 后台定时任务按 appsettings.json 的 StockSync 配置抓取并落库
-- GOAL-013 已新增本地事实采集链路：东方财富公告/公司资料 + 新浪公司新闻/滚动资讯会进入本地 SQL（`LocalStockNews` / `LocalSectorReports`），供 `/api/news` 与 Stock Agents 读取
+- GOAL-013 已新增本地事实采集链路：东方财富公告/公司资料 + 新浪公司新闻会进入 `LocalStockNews`；板块资讯改为东方财富板块定向搜索，大盘环境改为 CNBC/WSJ/NYT Business RSS 聚合并写入 `LocalSectorReports`，供 `/api/news` 与 Stock Agents 读取
 - 默认账号：admin / admin123（可在 backend/SimplerJiangAiAgent.Api/appsettings.json 的 Admin 段落中修改）
 
 ## 日志位置
@@ -99,7 +99,7 @@ opencode
 - [x] GOAL-005 专业行情图升级（K线+成交量副图、分时专业渲染、数据精确映射）
 - [x] GOAL-006 图表增强（二期：分时成交量副图 + K线 MA5/MA10 叠加线）
 - [x] GOAL-012 界面重构与“专业看盘/AI辅屏”解耦（股票信息页已拆为 TerminalView 主终端 + CopilotPanel 侧栏，并支持专注模式）
-- [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤，以及 Step 2.2 Task 4 的标准/Pro 模型分流）
+- [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤、Step 2.2 Task 4 的标准/Pro 模型分流，以及 Step 2.3 的板块定向资讯源重构）
 - [x] ISSUE-20260310 提示词增强（新闻抗污染策略 + 新闻库定时采集约束 + 白盒 MCP/Skill 任务执行规范）
 - [x] ISSUE-20260310-P0 动态来源治理基座（LLM每日候选源发现 + 自动新增爬取地址/流程 + 爬虫失效自动修复发布 + 程序化验证与自动隔离）
 - [x] ISSUE-20260310-P0-R1 P0剩余计划：开发者模式可视化收口（治理仪表盘 + 最小查询接口 + 过滤/详情展开/trace跳转 + 可观测审计）

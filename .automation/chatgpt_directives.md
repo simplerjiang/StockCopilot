@@ -151,7 +151,47 @@ Step 2.1 已按 4 项整改要求修复完成，请进行重新验视。
 * **新建“Pro分析”分支**：前端提供显式的“Pro 深度分析”选项（或复用现有触发按钮传入 `isPro=true`），对应的后端业务层在接收到开启了 Pro 的标识后，调用模型必须切换为 `gemini-3.1-pro-preview-thinking-medium`。
 * **严格约束**：其余非深度分析的情况，绝对禁止使用 Pro 模型。要求在单元测试中覆盖对不同分析精度意图分配正确模型的验证。
 
-完成代码修改并自测后，请填写新的 `Step 2.2 开发完成回执` 提醒我重新验收！
+---
+
+## 🔴 Reviewer 验收指令: Step 2.2 遗留排查启动 Step 2.3 (2026-03-13)
+
+> **致 ChatGPT-5.4**:
+> 上一个版本的修复很顺利，但目前我作为产品经理发现了新的痛点：**“板块上下文”永远都没有消息**。
+> 我已通过内置 Sqlcmd、代码搜排以及爬虫试运行，明确了导致这个 Bug 的根本原因：
+> 1. **代码与爬虫错位**：`LocalFactIngestionService.cs` 中 `BuildSectorReports` 方法目前复用了新浪 7x24 小时全球滚动的宏观事件（`SinaRollUrl`），并粗暴地按东方财富发来的 `SectorName`（如“半导体”、“银行”）进行硬匹配 (`Title.Contains(keyword)`)。
+> 2. **命中率极低**：新浪的这 100 条实时滚动新闻大多是美国、欧洲政经大环境或是无直接板块指代的宏观信息，由于极难精确包含“半导体”或“银行”字眼，导致 SQL 表 `LocalSectorReports (Level='sector')` 里的落地数据永远是 0 条。
+> 
+> **你的开发任务 (Step 2.3 - 重构并丰富板块新闻源)**:
+> 
+> 目标文件：`backend/SimplerJiangAiAgent.Api/Infrastructure/Jobs/LocalFactIngestionService.cs` 及相关 Parser。
+> 
+> * **抛弃大杂烩过滤**：不要再尝试用新浪 7x24 全球滚动新闻的截取去充当具体的 A股板块行情。
+> * **接入定向搜索与国外多元资讯源**：抛弃过时的国内消息源，补充国际视野。请在后台爬取新闻时（如 `UpsertSectorReportsAsync` 以及盘中消息源），去落实以下机制：
+>   1. **引入真实可用的国外消息源 (Global Macro Base)**: 我刚刚使用爬虫验证过，部分国外源存在 Cloudflare 反爬或国内不可用（如 Yahoo, Investing.com）。请使用以下**已验证可用**的高质量英文 RSS 财经流（抓取后可保留英文或机翻）作为大盘（Market Level）级别的宏观投研基座：
+>      - **CNBC 财经**: `https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664`
+>      - **华尔街日报 (WSJ US Business)**: `https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml`
+>      - **纽约时报 (NYT Business)**: `https://rss.nytimes.com/services/xml/rss/nyt/Business.xml`
+>      *(请尽量将以上几个源都接入获取，使用 C# `HttpClient` 或 `SyndicationFeed` 并发或轮询抓取，以提高数据丰富度和容错率)。*
+>   2. **东方财富全网搜索 API (精确打击 A股具体板块)**: `GET https://search-api-dev.eastmoney.com/api/info/get?words={url_encoded_sectorName}&type=21` （返回 JSON，取 `Data.Data` 或 `Data.List` 里的 `Title`, `PublishTime` 等，用于填补目前板块内容的空白）。
+> * **入库映射**：将拿到这批真实且贴合特定 `SectorName` 的新闻，专门写入 `LocalSectorReports` `Level=sector` 表里；把抓取到的“国外时讯”作为大盘（`Level=market`）的兜底数据写入表里，确保前端不再显示“暂无匹配资讯”，且AI能够感知到海外宏观环境对A股的映射。
+> 
+> 完成代码修改并自测后，请填写新的 `Step 2.3 开发完成回执` 提醒我重新验收！
+
+## ✅ Step 2.3 开发完成回执 (2026-03-13)
+
+### 已完成修复
+1. 已重构 `LocalFactIngestionService.cs`：删除“新浪 7x24 + 板块关键字硬匹配”生成 `level=sector` 的旧路径，板块资讯改为东方财富板块定向搜索抓取并解析。
+2. 已新增 `EastmoneySectorSearchParser`，兼容 `Data.Data` / `Data.List` 等多种 JSON 结构；当上游返回 HTML 或非 JSON 时会安全降级为空结果并记录日志，不再污染解析链路。
+3. 已新增 `RssMarketNewsParser` 并接入 CNBC Finance、WSJ US Business、NYT Business 三个 RSS 源，聚合后写入 `LocalSectorReports` 的 `level=market`，用于补足海外宏观上下文。
+4. 已保留确定性兜底：若全球 RSS 本轮全部不可用，则市场级资讯会回退到现有新浪滚动，避免前端市场上下文出现整块空白。
+
+### 自测结果
+- 数据源探测：CNBC RSS、WSJ RSS 在当前环境可直接返回标准 XML；NYT Business 在当前环境超时，代码已做多源聚合和异常兜底。
+- 后端定向单测：`dotnet test backend/SimplerJiangAiAgent.Api.Tests/SimplerJiangAiAgent.Api.Tests.csproj --filter "FullyQualifiedName~LocalFactIngestionServiceTests|FullyQualifiedName~EastmoneySectorSearchParserTests|FullyQualifiedName~RssMarketNewsParserTests"` 通过（8/8）
+- 后端回归单测：`dotnet test backend/SimplerJiangAiAgent.Api.Tests/SimplerJiangAiAgent.Api.Tests.csproj --filter "FullyQualifiedName~QueryLocalFactDatabaseToolTests"` 通过（1/1）
+
+### 结论
+Step 2.3 已完成板块定向资讯源重构与全球宏观 RSS 聚合，请进行重新验收。
 
 ## ✅ Step 2.2 开发完成回执 (2026-03-13)
 

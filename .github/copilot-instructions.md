@@ -113,8 +113,10 @@
 - For GOAL-013 stock news pages, render local fact buckets independently from slower `/api/stocks/news/impact` analysis, and protect concurrent `/api/news` refreshes with per-symbol plus market-level locks so they do not race into 500s.
 - For `HttpRequestException` diagnostics in LLM providers, surface both the outer exception message and the inner exception message; some gateway failures only expose the actionable cause on the outer message.
 - For stock-agent model tiering, route model choice in backend business logic from an explicit `IsPro` flag, force Pro requests onto the approved Pro model, and downgrade any non-Pro request away from Pro even if the caller passes a Pro model name.
+- For GOAL-013 sector-context ingestion, do not derive A-share sector news from generic Sina roll keyword matching; use a sector-targeted Eastmoney source for `level=sector`, aggregate multiple verified global business RSS feeds for `level=market`, and keep a deterministic fallback path when an upstream source returns non-JSON or times out.
 - 对于密集仪表盘布局的 Playwright Edge 校验，遇到点击被遮挡时使用稳健点击策略（必要时 `force`），并为“空数据”场景提供容错分支，保证不同种子数据下校验稳定。
 - 对于股票 Agent 的模型分档，必须在后端业务层基于显式 `IsPro` 标志统一做路由：Pro 请求强制走批准的 Pro 模型，非 Pro 请求即使传入 Pro 模型名也必须降级，禁止把模型选择完全信任给前端或调用方。
+- 对于 GOAL-013 的板块上下文采集，禁止再用通用新浪滚动新闻做 A 股板块关键字硬匹配；`level=sector` 必须接定向板块源，`level=market` 必须聚合多个已验证的全球商业 RSS，并在上游返回非 JSON 或超时时保留确定性兜底路径。
 - 对于 LLM Provider 的 `HttpRequestException` 诊断，必须同时保留外层异常消息和内层异常消息；有些网关失败的关键信息只存在于外层消息里。
 - 对于前端 LLM 审计视图，只要存在“请求-返回配对”需求，就不能以前端逐行猜测 raw 日志；必须先由后端按 `traceId` 聚合，再展示确定性会话记录。
 - 对于 GOAL-012 股票终端后续优化，标的查询/历史控制必须保持紧凑的 sticky 或内联工具条形态，并优先把剩余纵向视口空间让给 K 线与分时图。

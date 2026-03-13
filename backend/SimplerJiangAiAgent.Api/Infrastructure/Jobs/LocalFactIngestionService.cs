@@ -17,8 +17,15 @@ public interface ILocalFactIngestionService
 public sealed class LocalFactIngestionService : ILocalFactIngestionService
 {
     private const string SinaRollUrl = "https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=60&versionNumber=1.2.8.1";
+    private const string EastmoneySectorSearchBaseUrl = "https://search-api-dev.eastmoney.com/api/info/get";
     private static readonly SemaphoreSlim MarketRefreshGate = new(1, 1);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> SymbolRefreshGates = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly (string Url, string Source, string SourceTag)[] MarketRssFeeds =
+    {
+        ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "CNBC Finance", "cnbc-finance-rss"),
+        ("https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml", "WSJ US Business", "wsj-us-business-rss"),
+        ("https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "NYT Business", "nyt-business-rss")
+    };
     private static readonly string[] MarketKeywords =
     {
         "A股", "大盘", "沪指", "深成指", "创业板", "科创板", "两市", "收盘", "午评", "早评", "北向资金", "指数"
@@ -50,12 +57,12 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         }
 
         var crawledAt = DateTime.UtcNow;
-        var rollMessages = await FetchRollMessagesAsync(cancellationToken);
+        var marketReports = await FetchMarketReportsAsync(crawledAt, cancellationToken);
 
         await MarketRefreshGate.WaitAsync(cancellationToken);
         try
         {
-            await UpsertMarketReportsAsync(rollMessages, crawledAt, cancellationToken);
+            await UpsertMarketReportsAsync(marketReports, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
         finally
@@ -69,7 +76,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             await symbolGate.WaitAsync(cancellationToken);
             try
             {
-                await SyncSymbolAsync(symbol, rollMessages, crawledAt, cancellationToken);
+                await SyncSymbolAsync(symbol, crawledAt, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
             }
             catch (Exception ex)
@@ -87,7 +94,6 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
     {
         var normalized = StockSymbolNormalizer.Normalize(symbol);
         var freshCutoff = DateTime.UtcNow.AddMinutes(-30);
-        IReadOnlyList<IntradayMessageDto>? rollMessages = null;
 
         await MarketRefreshGate.WaitAsync(cancellationToken);
         try
@@ -98,8 +104,8 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             if (!hasFreshMarket)
             {
                 var crawledAt = DateTime.UtcNow;
-                rollMessages = await FetchRollMessagesAsync(cancellationToken);
-                await UpsertMarketReportsAsync(rollMessages, crawledAt, cancellationToken);
+                var marketReports = await FetchMarketReportsAsync(crawledAt, cancellationToken);
+                await UpsertMarketReportsAsync(marketReports, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
             }
         }
@@ -124,8 +130,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             }
 
             var crawledAt = DateTime.UtcNow;
-            rollMessages ??= await FetchRollMessagesAsync(cancellationToken);
-            await SyncSymbolAsync(normalized, rollMessages, crawledAt, cancellationToken);
+            await SyncSymbolAsync(normalized, crawledAt, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
         finally
@@ -160,7 +165,6 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
 
     private async Task SyncSymbolAsync(
         string symbol,
-        IReadOnlyList<IntradayMessageDto> rollMessages,
         DateTime crawledAt,
         CancellationToken cancellationToken)
     {
@@ -185,7 +189,8 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             .ToArray();
 
         await UpsertStockNewsAsync(symbol, announcementItems.Concat(companyNews).ToArray(), cancellationToken);
-        await UpsertSectorReportsAsync(symbol, profile.SectorName, rollMessages, crawledAt, cancellationToken);
+        var sectorReports = await FetchSectorReportsAsync(symbol, profile.SectorName, crawledAt, cancellationToken);
+        await UpsertSectorReportsAsync(symbol, sectorReports, cancellationToken);
     }
 
     private async Task<EastmoneyCompanyProfileDto> FetchCompanyProfileAsync(string symbol, CancellationToken cancellationToken)
@@ -205,10 +210,102 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             .ToArray();
     }
 
+    private async Task<IReadOnlyList<LocalSectorReportSeed>> FetchSectorReportsAsync(
+        string symbol,
+        string? sectorName,
+        DateTime crawledAt,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sectorName))
+        {
+            return Array.Empty<LocalSectorReportSeed>();
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildSectorSearchUrl(sectorName));
+            request.Headers.TryAddWithoutValidation("Accept", "application/json,text/plain,*/*");
+            request.Headers.TryAddWithoutValidation("Referer", "https://so.eastmoney.com/");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36");
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var reports = EastmoneySectorSearchParser.Parse(symbol, sectorName, content, crawledAt);
+            if (reports.Count == 0)
+            {
+                _logger.LogWarning("东财板块搜索未返回可解析结果: {SectorName}", sectorName);
+            }
+
+            return reports;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "抓取板块资讯失败: {SectorName}", sectorName);
+            return Array.Empty<LocalSectorReportSeed>();
+        }
+    }
+
+    private async Task<IReadOnlyList<LocalSectorReportSeed>> FetchMarketReportsAsync(
+        DateTime crawledAt,
+        CancellationToken cancellationToken)
+    {
+        var rssTasks = MarketRssFeeds
+            .Select(feed => FetchMarketFeedAsync(feed.Url, feed.Source, feed.SourceTag, crawledAt, cancellationToken))
+            .ToArray();
+
+        var rssResults = await Task.WhenAll(rssTasks);
+        var reports = rssResults
+            .SelectMany(items => items)
+            .OrderByDescending(item => item.PublishTime)
+            .DistinctBy(item => item.Url ?? item.ExternalId ?? item.Title)
+            .Take(18)
+            .ToArray();
+
+        if (reports.Length > 0)
+        {
+            return reports;
+        }
+
+        var fallbackMessages = await FetchRollMessagesAsync(cancellationToken);
+        return BuildFallbackMarketReports(fallbackMessages, crawledAt);
+    }
+
+    private async Task<IReadOnlyList<LocalSectorReportSeed>> FetchMarketFeedAsync(
+        string url,
+        string source,
+        string sourceTag,
+        DateTime crawledAt,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.TryAddWithoutValidation("Accept", "application/rss+xml,application/xml,text/xml,*/*");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36");
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return RssMarketNewsParser.Parse(content, source, sourceTag, crawledAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "抓取宏观 RSS 失败: {Source}", source);
+            return Array.Empty<LocalSectorReportSeed>();
+        }
+    }
+
     private static string BuildAnnouncementUrl(string symbol)
     {
         var code = symbol[2..];
         return $"https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=30&page_index=1&ann_type=A&client_source=web&stock_list={code}";
+    }
+
+    private static string BuildSectorSearchUrl(string sectorName)
+    {
+        return $"{EastmoneySectorSearchBaseUrl}?words={Uri.EscapeDataString(sectorName)}&type=21";
     }
 
     private async Task UpsertStockNewsAsync(string symbol, IReadOnlyList<LocalStockNewsSeed> items, CancellationToken cancellationToken)
@@ -239,12 +336,9 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
 
     private async Task UpsertSectorReportsAsync(
         string symbol,
-        string? sectorName,
-        IReadOnlyList<IntradayMessageDto> rollMessages,
-        DateTime crawledAt,
+        IReadOnlyList<LocalSectorReportSeed> sectorReports,
         CancellationToken cancellationToken)
     {
-        var sectorReports = BuildSectorReports(symbol, sectorName, rollMessages, crawledAt);
         var existing = await _dbContext.LocalSectorReports
             .Where(item => item.Symbol == symbol && item.Level == "sector")
             .ToListAsync(cancellationToken);
@@ -266,12 +360,9 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
     }
 
     private async Task UpsertMarketReportsAsync(
-        IReadOnlyList<IntradayMessageDto> rollMessages,
-        DateTime crawledAt,
+        IReadOnlyList<LocalSectorReportSeed> reports,
         CancellationToken cancellationToken)
     {
-        var reports = BuildMarketReports(rollMessages, crawledAt);
-
         var existing = await _dbContext.LocalSectorReports
             .Where(item => item.Level == "market")
             .ToListAsync(cancellationToken);
@@ -292,38 +383,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         }));
     }
 
-    internal static IReadOnlyList<LocalSectorReportSeed> BuildSectorReports(
-        string symbol,
-        string? sectorName,
-        IReadOnlyList<IntradayMessageDto> rollMessages,
-        DateTime crawledAt)
-    {
-        if (string.IsNullOrWhiteSpace(sectorName))
-        {
-            return Array.Empty<LocalSectorReportSeed>();
-        }
-
-        var sectorKeywords = BuildSectorKeywords(sectorName);
-
-        return rollMessages
-            .Where(item => sectorKeywords.Any(keyword => item.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
-            .OrderByDescending(item => item.PublishedAt)
-            .Take(12)
-            .Select(item => new LocalSectorReportSeed(
-                symbol,
-                sectorName,
-                "sector",
-                item.Title,
-                item.Source,
-                "sina-roll-sector",
-                item.Url,
-                item.PublishedAt,
-                crawledAt,
-                item.Url))
-            .ToArray();
-    }
-
-    internal static IReadOnlyList<LocalSectorReportSeed> BuildMarketReports(
+    internal static IReadOnlyList<LocalSectorReportSeed> BuildFallbackMarketReports(
         IReadOnlyList<IntradayMessageDto> rollMessages,
         DateTime crawledAt)
     {
@@ -344,45 +404,11 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
                 "market",
                 item.Title,
                 item.Source,
-                "sina-roll-market",
+                "sina-roll-market-fallback",
                 item.Url,
                 item.PublishedAt,
                 crawledAt,
                 item.Url))
             .ToArray();
-    }
-
-    internal static IReadOnlyList<string> BuildSectorKeywords(string sectorName)
-    {
-        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            sectorName.Trim()
-        };
-
-        foreach (var raw in sectorName.Split(new[] { '/', '、', '（', '）', '(', ')', '-', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            tokens.Add(raw);
-        }
-
-        foreach (var token in tokens.ToArray())
-        {
-            var compact = token
-                .Replace("行业", string.Empty, StringComparison.OrdinalIgnoreCase)
-                .Replace("板块", string.Empty, StringComparison.OrdinalIgnoreCase)
-                .Replace("概念", string.Empty, StringComparison.OrdinalIgnoreCase)
-                .Replace("Ⅱ", string.Empty, StringComparison.OrdinalIgnoreCase)
-                .Replace("Ⅲ", string.Empty, StringComparison.OrdinalIgnoreCase)
-                .Trim();
-
-            if (!string.IsNullOrWhiteSpace(compact))
-            {
-                tokens.Add(compact);
-                tokens.Add($"{compact}板块");
-                tokens.Add($"{compact}行业");
-                tokens.Add($"{compact}概念");
-            }
-        }
-
-        return tokens.Where(item => !string.IsNullOrWhiteSpace(item)).ToArray();
     }
 }
