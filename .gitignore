@@ -19,3 +19,4 @@ backend/SimplerJiangAiAgent.Api/App_Data/*.local.json
 .DS_Store
 Thumbs.db
 noupload
+backend/SimplerJiangAiAgent.Api/App_Data/logs/llm-requests.txt
