@@ -20,7 +20,7 @@
 - /api/stocks/detail 组合详情
 - /api/stocks/detail/cache 组合详情（缓存）
 - /api/stocks/sync 手动触发同步
-- /api/news 本地事实新闻查询（按 symbol + level=stock/sector/market 精准过滤）
+- /api/news 本地事实新闻查询（按 symbol + level=stock/sector/market 精准过滤，前端展示使用批量 AI 清洗后的翻译/情绪/标签）
 - /api/stocks/news/impact 资讯影响评估（公告/研报/新闻分级、来源可信度、同主题合并去重）
 - /api/stocks/signals 事件驱动信号（证据/反证、历史对齐）
 - /api/stocks/position-guidance 个性化风险与仓位建议
@@ -42,7 +42,7 @@
 
 ## 数据同步与配置
 - 后台定时任务按 appsettings.json 的 StockSync 配置抓取并落库
-- GOAL-013 已新增本地事实采集链路：东方财富公告/公司资料 + 新浪公司新闻会进入 `LocalStockNews`；板块资讯改为东方财富板块定向搜索，大盘环境改为 CNBC/WSJ/NYT Business RSS 聚合并写入 `LocalSectorReports`，供 `/api/news` 与 Stock Agents 读取
+- GOAL-013 已新增本地事实采集链路：东方财富公告/公司资料 + 新浪公司新闻会进入 `LocalStockNews`；板块资讯改为新浪财经搜索页 HTML 定向抓取，大盘环境改为 WSJ/NYT Business RSS 与新浪滚动宏观资讯合并写入 `LocalSectorReports`，并在股票信息终端顶部以独立浮层展示大盘资讯；即使尚未选择股票也可查看市场级资讯，查询历史则完整展示为可滚动列表。Step 2.4 进一步在本地事实入库后增加 `gemini-2.5-flash-lite` 批量 AI 清洗层，补齐中文翻译、`AiSentiment`、`AiTarget`、`AiTags` 与 `IsAiProcessed` 增量重试机制；这些廉价 AI 标签仅用于 `/api/news` 展示，不直接投喂 Stock Agents，避免污染高阶分析上下文
 - 默认账号：admin / admin123（可在 backend/SimplerJiangAiAgent.Api/appsettings.json 的 Admin 段落中修改）
 
 ## 日志位置
@@ -99,7 +99,7 @@ opencode
 - [x] GOAL-005 专业行情图升级（K线+成交量副图、分时专业渲染、数据精确映射）
 - [x] GOAL-006 图表增强（二期：分时成交量副图 + K线 MA5/MA10 叠加线）
 - [x] GOAL-012 界面重构与“专业看盘/AI辅屏”解耦（股票信息页已拆为 TerminalView 主终端 + CopilotPanel 侧栏，并支持专注模式）
-- [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤、Step 2.2 Task 4 的标准/Pro 模型分流，以及 Step 2.3 的板块定向资讯源重构）
+- [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤、Step 2.2 Task 4 的标准/Pro 模型分流、Step 2.3 的新浪板块资讯抓取/大盘多源聚合/无选股即可查看的大盘资讯与完整查询历史展示，以及 Step 2.4 的本地事实批量 AI 清洗、翻译与标签隔离投喂）
 - [x] ISSUE-20260310 提示词增强（新闻抗污染策略 + 新闻库定时采集约束 + 白盒 MCP/Skill 任务执行规范）
 - [x] ISSUE-20260310-P0 动态来源治理基座（LLM每日候选源发现 + 自动新增爬取地址/流程 + 爬虫失效自动修复发布 + 程序化验证与自动隔离）
 - [x] ISSUE-20260310-P0-R1 P0剩余计划：开发者模式可视化收口（治理仪表盘 + 最小查询接口 + 过滤/详情展开/trace跳转 + 可观测审计）

@@ -111,6 +111,7 @@
 - For GOAL-012 stock terminal refinements, keep the symbol query/history controls in a compact sticky or inline toolbar and prioritize remaining vertical viewport space for K-line and minute charts.
 - For GOAL-013 database work in this repo, if a freshly generated EF migration captures schema-initializer-managed legacy tables, trim the migration back to the feature tables, then verify the final tables/columns/indexes with SQLCMD before concluding.
 - For GOAL-013 stock news pages, render local fact buckets independently from slower `/api/stocks/news/impact` analysis, and protect concurrent `/api/news` refreshes with per-symbol plus market-level locks so they do not race into 500s.
+- For GOAL-013 stock terminal local-fact UX, fetch `level=market` independently of stock selection and never hard-cap visible query history with `slice(...)`; use a scrollable layout when the full list must remain accessible.
 - For `HttpRequestException` diagnostics in LLM providers, surface both the outer exception message and the inner exception message; some gateway failures only expose the actionable cause on the outer message.
 - For stock-agent model tiering, route model choice in backend business logic from an explicit `IsPro` flag, force Pro requests onto the approved Pro model, and downgrade any non-Pro request away from Pro even if the caller passes a Pro model name.
 - For GOAL-013 sector-context ingestion, do not derive A-share sector news from generic Sina roll keyword matching; use a sector-targeted Eastmoney source for `level=sector`, aggregate multiple verified global business RSS feeds for `level=market`, and keep a deterministic fallback path when an upstream source returns non-JSON or times out.
@@ -122,6 +123,7 @@
 - 对于 GOAL-012 股票终端后续优化，标的查询/历史控制必须保持紧凑的 sticky 或内联工具条形态，并优先把剩余纵向视口空间让给 K 线与分时图。
 - 对于本仓库的 GOAL-013 数据库变更，如果新生成的 EF migration 误把 schema initializer 管理的历史表也带上，必须先把 migration 收敛回本次功能表，再用 SQLCMD 校验最终表/字段/索引后才可结束任务。
 - 对于 GOAL-013 股票新闻页，本地事实 buckets 必须独立于较慢的 `/api/stocks/news/impact` 分析接口渲染，且 `/api/news` 并发刷新必须采用“每个 symbol + 大盘级别”的锁，避免并发写库打出 500。
+- 对于 GOAL-013 股票终端本地事实体验，`level=market` 必须独立于选股状态加载；查询历史禁止再用 `slice(...)` 这类硬截断隐藏数据，列表过长时应改为可滚动布局。
 
 # Agent Collaboration & Product Manager Workflow
 - **角色定位 (Persona)**: 我 (当前AI) 是系统的产品经理 (Product Manager)、架构师 (Architect) 和质量监督员 (QA/Reviewer)。我不负责直接编写大量业务代码，而是对项目功能、系统架构和最终质量负责。

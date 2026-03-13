@@ -161,19 +161,20 @@ Step 2.1 已按 4 项整改要求修复完成，请进行重新验视。
 > 1. **代码与爬虫错位**：`LocalFactIngestionService.cs` 中 `BuildSectorReports` 方法目前复用了新浪 7x24 小时全球滚动的宏观事件（`SinaRollUrl`），并粗暴地按东方财富发来的 `SectorName`（如“半导体”、“银行”）进行硬匹配 (`Title.Contains(keyword)`)。
 > 2. **命中率极低**：新浪的这 100 条实时滚动新闻大多是美国、欧洲政经大环境或是无直接板块指代的宏观信息，由于极难精确包含“半导体”或“银行”字眼，导致 SQL 表 `LocalSectorReports (Level='sector')` 里的落地数据永远是 0 条。
 > 
-> **你的开发任务 (Step 2.3 - 重构并丰富板块新闻源)**:
+> **你的开发任务 (Step 2.3 - 重构并丰富板块与大盘新闻，剥离AI面板)**:
 > 
-> 目标文件：`backend/SimplerJiangAiAgent.Api/Infrastructure/Jobs/LocalFactIngestionService.cs` 及相关 Parser。
+> 目标文件：`backend/SimplerJiangAiAgent.Api/Infrastructure/Jobs/LocalFactIngestionService.cs` 及前端 Vue 组件。
 > 
-> * **抛弃大杂烩过滤**：不要再尝试用新浪 7x24 全球滚动新闻的截取去充当具体的 A股板块行情。
-> * **接入定向搜索与国外多元资讯源**：抛弃过时的国内消息源，补充国际视野。请在后台爬取新闻时（如 `UpsertSectorReportsAsync` 以及盘中消息源），去落实以下机制：
->   1. **引入真实可用的国外消息源 (Global Macro Base)**: 我刚刚使用爬虫验证过，部分国外源存在 Cloudflare 反爬或国内不可用（如 Yahoo, Investing.com）。请使用以下**已验证可用**的高质量英文 RSS 财经流（抓取后可保留英文或机翻）作为大盘（Market Level）级别的宏观投研基座：
->      - **CNBC 财经**: `https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664`
+> * **抛弃大杂烩过滤与失效API**：目前东财的 Search API 已经被严格的 403 WAF / 验证码机制拦截，导致无法拉取数据。不要再执着于用单纯的 HttpClient 去请求东财的数据接口。
+> * **接入新外围资讯源 (大盘与板块)**：
+>   1. **国外大盘消息 (Global Macro Base)**: 继续使用以下**已验证可用**的高质量英文 RSS 财经流作为大盘（Market Level）级别的海外投研基座：
 >      - **华尔街日报 (WSJ US Business)**: `https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml`
 >      - **纽约时报 (NYT Business)**: `https://rss.nytimes.com/services/xml/rss/nyt/Business.xml`
->      *(请尽量将以上几个源都接入获取，使用 C# `HttpClient` 或 `SyndicationFeed` 并发或轮询抓取，以提高数据丰富度和容错率)。*
->   2. **东方财富全网搜索 API (精确打击 A股具体板块)**: `GET https://search-api-dev.eastmoney.com/api/info/get?words={url_encoded_sectorName}&type=21` （返回 JSON，取 `Data.Data` 或 `Data.List` 里的 `Title`, `PublishTime` 等，用于填补目前板块内容的空白）。
-> * **入库映射**：将拿到这批真实且贴合特定 `SectorName` 的新闻，专门写入 `LocalSectorReports` `Level=sector` 表里；把抓取到的“国外时讯”作为大盘（`Level=market`）的兜底数据写入表里，确保前端不再显示“暂无匹配资讯”，且AI能够感知到海外宏观环境对A股的映射。
+>      *(请将以上外媒源与国内源合并抓取，以提高数据丰富度)。*
+>   2. **国内大盘消息兜底**: 恢复或继续使用新浪 7x24 小时全球/A股滚动宏观事件 (`https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=60`)，或者使用 HtmlAgilityPack 抓取东方财富网的静态资讯页（如 `https://finance.eastmoney.com/a/cgnjj.html`），并将这部分混合为“大盘(Market)”级别事实。
+>   3. **板块新闻替代方案 (精确打击 A股具体板块)**: 既然东方财富限制了爬虫，请改用 **新浪财经关键字搜索的网页爬虫**。使用 HttpClient 请求 `https://search.sina.com.cn/?q={url_encoded_sectorName}&c=news`，通过 `HtmlAgilityPack` 或 正则表达式 (Regex) 从返回的静态 HTML 中提取新闻标题和发文时间（匹配 `.box-result` 或 `<h2><a...>`）。将获取到的板块关联新闻存入 `LocalSectorReports`。
+> * **前端独立呈现大盘新闻 (脱离 AI 助手)**：
+>   目前大盘新闻过度依赖 AI 面板。请修改前端布局，在 AI Copilot 侧栏 **之外**（比如看盘核心区 `TerminalView` 的底部、或顶部标题栏下一排，或是左侧新增一个独立的“大盘资讯”专属卡片），将国内与国外的全局宏观新闻以轮播走马灯或独立列表的形式直观展示。确保即使用户关闭或隐藏了 AI 助手，也能清晰看到大盘消息。
 > 
 > 完成代码修改并自测后，请填写新的 `Step 2.3 开发完成回执` 提醒我重新验收！
 
@@ -212,3 +213,92 @@ Step 2.3 已完成板块定向资讯源重构与全球宏观 RSS 聚合，请进
 
 ### 结论
 Step 2.2 已按排版修复、图表响应式修复、底层网关报错诊断，以及 Task 4 的标准/Pro 模型分流要求完成，请进行重新验收。
+
+---
+
+## 🔎 PM 新增架构核查结论: 当前“利好/利空/中性”判定来源已确认 (2026-03-13)
+
+> **致 ChatGPT-5.4**:
+> 在继续后续开发前，我已对当前仓库实现做了代码核查，确认“新闻情绪标签”目前存在两条完全不同的判定链路。你后续开发时必须以此事实为准，禁止再把它们混写成“AI统一判定”。
+
+### 已确认事实
+1. **本地资讯卡片 / 顶部大盘资讯条带的 `利好/中性/利空` 不是 LLM 判定**：
+  * 当前 `/api/news` 返回给前端的 `sentiment`，来自后端 `LocalNewsSentimentClassifier`。
+  * 它本质上是**关键词命中规则**：统计标题或分类字段中的正向词、负向词，正向多则判 `利好`，负向多则判 `利空`，打平或无命中则判 `中性`。
+  * 这条链路目前只是一套轻量规则分类器，并不具备真正的上下文理解能力。
+
+2. **“资讯影响分析”面板的 `利好/中性/利空` 也不是 LLM 直接判定**：
+  * 当前 `/api/stocks/news/impact` 由后端 `StockNewsImpactService` 计算。
+  * 它采用的是**加权规则引擎**，不是大模型：会综合关键词命中、事件类型权重（公告/研报/新闻）、来源可信度、时间衰减，并基于得分阈值输出 `利好 / 中性 / 利空`，再汇总出 `利好偏多 / 利空偏多 / 中性` 的 overall。
+
+3. **前端仅负责展示，不负责情绪判断**：
+  * Vue 前端只是消费后端返回的 `sentiment` 或 `category` 字段并渲染颜色标签，没有在浏览器侧做任何真实情绪判断逻辑。
+
+### 对后续开发的约束
+* 后续若要优化“利好/利空/中性”的准确率，必须先明确是：
+  * 优化 `LocalNewsSentimentClassifier` 这条**本地 facts 轻规则链路**；还是
+  * 优化 `StockNewsImpactService` 这条**资讯影响加权规则链路**；还是
+  * 新增“规则初判 + LLM 复核”的第三条链路。
+* 在 PM 或 Reviewer 没有明确批准前，**禁止**在回执或文档中继续把当前本地资讯标签描述成“由 AI 智能分析得出”。当前事实不成立。
+* 如果后续要让大盘资讯、个股事实、板块上下文真正具备更强语义判断，应该把 LLM 放在**结构化复核或摘要层**（例如入库前的清洗流），而不是直接替代本地 facts 的基础落库。
+
+---
+
+## 🔴 Reviewer 验收指令: 启动 Step 2.4 (引入廉价 LLM 进行入库前翻译与多维智能打标) (2026-03-13)
+
+> **致 ChatGPT-5.4**:
+> 为了彻底解决此前遗留的“后端代码硬写关键字判断情感极不可靠”的问题，我们需要在获取新闻的定时器（如 `LocalFactIngestionService`）入库前，**增加一道 LLM 结构化清洗层**，使用速度极快且成本极低的 **`gemini-2.0-flash-lite`** 模型对原始新闻进行多维标注和英语翻译。
+
+**你的开发任务 (Step 2.4 - 批量 LLM 智能分类与翻译)**:
+
+1. **批量处理流水线 (性能与 Token 优化核心)**:
+   * **绝对禁止逐条请求**：为避免触发限流并极大地节约单条 System Prompt 带来的 Input Token 成本，你必须将定时器抓取到的新闻以 **批处理 (Batching)** 的方式打包（例如 10-20 条新闻精简成一个 JSON Array 发给模型）。
+   * 指定调用模型配置固定为成本最低的：`gemini-2.0-flash-lite` (注意必须替换原来的 2.5 版本模型)。
+
+2. **Prompt 设计与标签集扩充**:
+   向大模型传入带有新闻ID、原始标题和简要摘要的列表，要求其强制按照统一格式返回结构化 JSON 数组（包含对应的 ID）。它每次必须给出：
+   * **语言翻译 (Translation)**: 凡遇到英文/外媒资讯，翻译提炼为专业的中文财经标题；如果是中文则略过或原样保存，极大提高我们大盘资讯的阅读体验。
+   * **定性与定向 (Sentiment & Scope)**: 让 LLM 来判定 `利好`、`中性`、`利空`，并必须补充其定向靶点：例如标出 `利好大盘`、`利空大盘`、`利好特定板块(需指出板块名)`、`利空特定板块`。
+   * **丰富标签打标 (Rich Tags)**: 除了正负面，补充警示与分类维度。要求由 LLM 判断并打上如：`紧急消息`, `突发事件`, `宏观货币`, `地缘政治`, `行业周期`, `政策红利`, `财报业绩`, `资金面` 等多枚举标签，为之后的多 Agent 分析做先验准备。
+
+3. **数据库与数据流适配 (防重复处理机制)**:
+   * 更新 Entity Framework 中用于存储这些本地事实的新闻实体表（如 `LocalSectorReport` / `LocalStockNews`）。
+   * 增加状态字段：`IsAiProcessed` (布尔值，默认 false)，以标识该条资讯是否已完成 LLM 清洗。每次定时任务只捞取 `IsAiProcessed == false` 的增量新闻送给模型，避免重复耗费 Token。
+   * 增加结果字段：`TranslatedTitle` (译文)、`AiSentiment` (AI判定情绪)、`AiTarget` (影响目标:大盘/板块) 以及 `AiTags` (存储为 JSON 字符串或逗号分割串) 等。
+   * 生成最新的 EF Migration 并应用（`dotnet ef migrations add ...`）。
+
+4. **彻底废弃低效规则与安全降级设计**:
+   * 必须彻底移除或停用原有的 `LocalNewsSentimentClassifier` 关键词规则匹配层系统。情感、标签与板块判断现在全面交由这道 LLM 清洗层负责，因为旧规则极度不准确。
+   * 若发生网络连接错误、批量请求超时、或命中 `429 Too Many Requests`，**绝不能导致定时器数据基本入库的主流程中断！**
+   * **降级策略**：如果 LLM 请求失败，原始新闻依然正常入库，并将情绪默认置为 `中性`，但此时必须保持 `IsAiProcessed = false`。这样可以在下一个定时器轮询时重新对其进行 LLM 补全打标。
+
+5. **多 Agent 分析的数据投喂隔离隔离**:
+   * 在使用这些带有 AI 标签的数据进行“前端展示”时，充分利用这些由 flash 模型打出的 `AiSentiment` 和 `AiTags`。
+   * **但是，在向后端多 Agent 系统 (StockAgentOrchestrator、Pro模型等) 投喂本地事实进行深度研报时，禁止附带这些初筛的标签。** 只允许将新闻的【原文/翻译标题、摘要、时间、来源】喂给后续的多 Agent 框架，避免廉价模型生成的标签对高阶深思模型（Pro模型）产生思想锚定/污染（Anchoring Effect）。
+
+---
+
+## 🔴 Reviewer 验收指令: 启动 Step 2.5 (大盘交互升级、外媒数据时效性排查、个股/板块全面 LLM 覆盖) (2026-03-13)
+
+> **致 ChatGPT-5.4**:
+> 用户测试完了你提交的 Step 2.4，我们取得了很大进展。但目前实机运行暴露出三个必须修复的问题。请开启 Step 2.5 开发，解决以下新问题：
+
+**你的开发任务 (Step 2.5)**:
+
+1. **大盘资讯 UI 交互重构**:
+   * 当前的大盘资讯组件展现方式存在问题（可能被做成了悬浮或者占地太大）。请**取消悬浮设计**，让它稳固地嵌入页面流（例如放在布局某个固定栏位）。
+   * 增加 **高度调节功能 / 展开弹窗**：在组件上放一个控制开关或全屏按钮，用户平时只看精简行数，点击后可以呼出一个**放大弹窗 (Modal/Dialog)** 或是将卡片高度拉展，以便仔细阅读密集的大盘宏观翻译资讯。
+
+2. **国外消息接口的“老旧新闻”BUG 排查与清洗**:
+   * **现象**：发现爬取回来的国外消息有类似去年 1 月份的极大滞后新闻，污染了大盘事实。
+   * **修复任务**：检查 `RssMarketNewsParser` 及相关读取流。
+     - 在请求 URL 后面加上类似 `?t={timestamp}` 去除上游可能的静态缓存。
+     - **代码约束过滤**：在 `LocalFactIngestionService` 或是解析层，强制加入**时效性校验**：获取的 `PublishTime` 或 `PubDate` 如果距离当前系统时间**超过 30 天**(甚至 7 天)，无论是哪里的源，必须**直接丢弃**不入库。排序上务必保证 `OrderByDescending(x => x.PublishedAt)` 优先抓取最新。
+
+3. **个股与板块事实的 LLM 覆盖遗漏**:
+   * **现象**：似乎目前只有部分资讯使用了 LLM 清洗层，而在详情页看到的 **个股事实 (Stock Facts / Company News)**和 **板块上下文 (Sector News)** 没有被喂给大模型打标签。
+   * **修复任务**：请彻查 `LocalFactIngestionService` 和任何向 `LocalStockNews` 发起更新的定时器方法，确保**所有**抓取到的内容（包括 `level=stock` 和 `level=sector`）都能正确进入你开发的基于 `IsAiProcessed == false` 的 Batch LLM 清洗层，并且同样被打上 `AiSentiment` 和 `AiTags`，然后在对应 Vue 组件上通过颜色 Tag 美观地渲染出来。
+
+搞定这三个点后，请进行真实预览和单测，自测通过后再报告 `Step 2.5 开发完成回执`！
+
+请按上述要求完成 C# 的代码重构和库表更新后，填写 `Step 2.4 开发完成回执`！

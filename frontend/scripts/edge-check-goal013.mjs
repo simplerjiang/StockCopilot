@@ -74,8 +74,9 @@ const run = async () => {
   await Promise.all([detailResponse, stockNewsResponse, sectorNewsResponse, marketNewsResponse]);
 
   await page.waitForSelector('text=股票信息终端', { timeout: 20000 });
-  await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card').length >= 3, null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card').length >= 2, null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card li').length >= 1, null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('.terminal-market-banner .market-banner-item').length >= 1, null, { timeout: 30000 });
   await page.waitForSelector('.run-standard-button', { timeout: 20000 });
   await page.waitForSelector('.run-pro-button', { timeout: 20000 });
   await page.waitForTimeout(2000);
@@ -94,6 +95,7 @@ const run = async () => {
   const quoteText = await page.locator('.quote-card').first().textContent();
   const stockFactCount = await page.locator('.news-bucket-card').first().locator('li').count();
   const sentimentBadgeCount = await page.locator('.news-bucket-card .impact-tag').count();
+  const marketFactCount = await page.locator('.terminal-market-banner .market-banner-item').count();
   const proButtonText = await page.locator('.run-pro-button').textContent();
   const clickableTicker = page.locator('.messages li.clickable').first();
   if (await clickableTicker.count()) {
@@ -118,6 +120,10 @@ const run = async () => {
 
   if (sentimentBadgeCount < 1) {
     throw new Error('Expected sentiment badges in local news buckets');
+  }
+
+  if (marketFactCount < 1) {
+    throw new Error('Expected at least one market fact item in the floating terminal market banner');
   }
 
   if (!proButtonText || !proButtonText.includes('Pro')) {
@@ -148,8 +154,8 @@ const run = async () => {
     throw new Error(`Expected chart wrappers to shrink after reopening AI sidebar. focused=${focusedLayout.wrapperWidths.join(',')} restored=${restoredLayout.wrapperWidths.join(',')}`);
   }
 
-  if (!pageContent.includes('个股事实') || !pageContent.includes('板块上下文') || !pageContent.includes('大盘环境')) {
-    throw new Error('Expected local news bucket sections not found');
+  if (!pageContent.includes('个股事实') || !pageContent.includes('板块上下文') || !pageContent.includes('大盘资讯')) {
+    throw new Error('Expected local news sections not found in the updated Step 2.3 layout');
   }
 
   if (consoleErrors.length > 0) {

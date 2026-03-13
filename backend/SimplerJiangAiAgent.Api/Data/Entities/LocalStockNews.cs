@@ -14,4 +14,9 @@ public sealed class LocalStockNews
     public DateTime PublishTime { get; set; }
     public DateTime CrawledAt { get; set; }
     public string? Url { get; set; }
+    public bool IsAiProcessed { get; set; }
+    public string? TranslatedTitle { get; set; }
+    public string AiSentiment { get; set; } = "中性";
+    public string? AiTarget { get; set; }
+    public string? AiTags { get; set; }
 }

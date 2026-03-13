@@ -54,11 +54,12 @@ const localNewsLoading = ref(false)
 const localNewsError = ref('')
 const copilotPanelOpen = ref(localStorage.getItem('stock_copilot_panel_open') !== 'false')
 
-const newsSections = [
+const sidebarNewsSections = [
   { key: 'stock', title: '个股事实' },
-  { key: 'sector', title: '板块上下文' },
-  { key: 'market', title: '大盘环境' }
+  { key: 'sector', title: '板块上下文' }
 ]
+
+const requestedNewsSections = [...sidebarNewsSections, { key: 'market', title: '大盘环境' }]
 
 const upsertAgentResult = result => {
   const agentId = result?.agentId ?? result?.AgentId ?? ''
@@ -114,14 +115,19 @@ const getImpactClass = category => {
 
 const normalizeLocalNewsItem = item => ({
   title: item?.title ?? item?.Title ?? '',
+  translatedTitle: item?.translatedTitle ?? item?.TranslatedTitle ?? '',
   source: item?.source ?? item?.Source ?? '',
   sourceTag: item?.sourceTag ?? item?.SourceTag ?? '',
   category: item?.category ?? item?.Category ?? '',
   sentiment: item?.sentiment ?? item?.Sentiment ?? '中性',
   publishTime: item?.publishTime ?? item?.PublishTime ?? '',
   crawledAt: item?.crawledAt ?? item?.CrawledAt ?? '',
-  url: item?.url ?? item?.Url ?? ''
+  url: item?.url ?? item?.Url ?? '',
+  aiTarget: item?.aiTarget ?? item?.AiTarget ?? '',
+  aiTags: Array.isArray(item?.aiTags ?? item?.AiTags) ? (item.aiTags ?? item.AiTags) : []
 })
+
+const getLocalNewsHeadline = item => item?.translatedTitle || item?.title || ''
 
 const normalizeNewsBucket = (level, payload) => ({
   level,
@@ -398,6 +404,8 @@ const aiLevels = computed(() => {
   }
 })
 
+const marketNewsItems = computed(() => localNewsBuckets.value.market?.items ?? [])
+
 const getChangeClass = value => {
   const number = Number(value)
   if (Number.isNaN(number)) return ''
@@ -581,18 +589,17 @@ const fetchNewsImpact = async () => {
 
 const fetchLocalNews = async () => {
   const symbolValue = detail.value?.quote?.symbol
-  if (!symbolValue) {
-    localNewsBuckets.value = { stock: null, sector: null, market: null }
-    localNewsError.value = ''
-    return
-  }
+  const sectionsToFetch = symbolValue ? requestedNewsSections : [{ key: 'market', title: '大盘环境' }]
 
   localNewsLoading.value = true
   localNewsError.value = ''
   try {
     const buckets = await Promise.all(
-      newsSections.map(async section => {
-        const params = new URLSearchParams({ symbol: symbolValue, level: section.key })
+      sectionsToFetch.map(async section => {
+        const params = new URLSearchParams({ level: section.key })
+        if (symbolValue && section.key !== 'market') {
+          params.set('symbol', symbolValue)
+        }
         const response = await fetch(`/api/news?${params.toString()}`)
         if (!response.ok) {
           throw new Error('本地新闻加载失败')
@@ -602,10 +609,20 @@ const fetchLocalNews = async () => {
       })
     )
 
-    localNewsBuckets.value = Object.fromEntries(buckets)
+    localNewsBuckets.value = {
+      stock: symbolValue ? Object.fromEntries(buckets).stock : null,
+      sector: symbolValue ? Object.fromEntries(buckets).sector : null,
+      market: Object.fromEntries(buckets).market ?? null
+    }
   } catch (err) {
-    localNewsError.value = err.message || '本地新闻加载失败'
-    localNewsBuckets.value = { stock: null, sector: null, market: null }
+    const message = err.message || '本地新闻加载失败'
+    const onlyMarketMode = !symbolValue
+    localNewsError.value = onlyMarketMode ? '' : message
+    localNewsBuckets.value = {
+      stock: null,
+      sector: null,
+      market: onlyMarketMode ? localNewsBuckets.value.market : null
+    }
   } finally {
     localNewsLoading.value = false
   }
@@ -869,6 +886,7 @@ onMounted(() => {
   fetchSources()
   setupRefresh()
   fetchHistory()
+  fetchLocalNews()
   setupHistoryRefresh()
   window.addEventListener('click', closeContextMenu)
 })
@@ -1003,7 +1021,7 @@ watch(
           <p class="muted history-ribbon-title">最近查询</p>
           <div v-if="historyList.length" class="history-chip-row">
             <button
-              v-for="item in sortedHistoryList.slice(0, 10)"
+              v-for="item in sortedHistoryList"
               :key="item.id || item.Id"
               class="history-chip"
               @click="applyHistorySymbol(item)"
@@ -1030,6 +1048,35 @@ watch(
         </div>
       </section>
     </div>
+
+    <section class="terminal-market-banner" :class="{ empty: !detail && !localNewsLoading && !localNewsError && !marketNewsItems.length }">
+      <div class="market-banner-header">
+        <div>
+          <p class="market-banner-kicker">Market Wire</p>
+          <h3>大盘资讯</h3>
+        </div>
+        <button class="market-banner-refresh" @click="fetchLocalNews" :disabled="localNewsLoading">刷新</button>
+      </div>
+
+      <p v-if="localNewsError" class="muted error-text">{{ localNewsError }}</p>
+      <p v-else-if="localNewsLoading" class="muted">大盘资讯加载中...</p>
+      <div v-else-if="marketNewsItems.length" class="market-banner-strip">
+        <article v-for="item in marketNewsItems" :key="`market-${item.title}-${item.publishTime}`" class="market-banner-item">
+          <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
+          <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">
+            {{ getLocalNewsHeadline(item) }}
+          </a>
+          <span v-else>{{ getLocalNewsHeadline(item) }}</span>
+          <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
+          <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
+            <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
+            <span v-for="tag in item.aiTags" :key="`market-tag-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
+          </div>
+          <small>{{ item.source }} · {{ formatDate(item.publishTime) }}</small>
+        </article>
+      </div>
+      <p v-else class="muted">暂无可展示的大盘资讯。</p>
+    </section>
 
     <div class="workspace-grid" :class="{ focused: !copilotPanelOpen }">
       <TerminalView :quote="detail?.quote ?? null" :monochrome="monochromeMode">
@@ -1107,7 +1154,7 @@ watch(
             <p v-else class="muted">资讯影响待生成。</p>
 
             <div class="news-buckets">
-              <article v-for="section in newsSections" :key="section.key" class="news-bucket-card">
+              <article v-for="section in sidebarNewsSections" :key="section.key" class="news-bucket-card">
                 <div class="news-bucket-header">
                   <strong>{{ section.title }}</strong>
                   <span v-if="section.key === 'sector' && localNewsBuckets[section.key]?.sectorName" class="muted">
@@ -1120,9 +1167,14 @@ watch(
                   <li v-for="item in localNewsBuckets[section.key].items" :key="`${section.key}-${item.title}-${item.publishTime}`">
                     <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
                     <a v-if="item.url ?? item.Url" :href="item.url ?? item.Url" target="_blank" rel="noreferrer">
-                      {{ item.title }}
+                      {{ getLocalNewsHeadline(item) }}
                     </a>
-                    <span v-else>{{ item.title }}</span>
+                    <span v-else>{{ getLocalNewsHeadline(item) }}</span>
+                    <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
+                    <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
+                      <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
+                      <span v-for="tag in item.aiTags" :key="`${section.key}-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
+                    </div>
                     <small>
                       {{ item.source }} · {{ formatDate(item.publishTime) }}
                     </small>
@@ -1361,10 +1413,12 @@ watch(
 }
 
 .history-chip-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
   gap: 0.5rem;
-  overflow-x: auto;
-  padding-bottom: 0.1rem;
+  max-height: 10.5rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .history-chip {
@@ -1418,6 +1472,109 @@ watch(
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.25fr);
+}
+
+.terminal-market-banner {
+  position: sticky;
+  top: 5.75rem;
+  z-index: 24;
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: 20px;
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.14), transparent 28%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(15, 23, 42, 0.9));
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
+}
+
+.terminal-market-banner.empty {
+  position: relative;
+  top: 0;
+}
+
+.market-banner-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.market-banner-kicker {
+  margin: 0 0 0.2rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+
+.market-banner-header h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1.1rem;
+}
+
+.market-banner-refresh {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.market-banner-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.market-banner-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
+  gap: 0.85rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+}
+
+.market-banner-item {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  padding: 0.8rem 0.9rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.market-banner-item a,
+.market-banner-item span {
+  color: #f8fafc;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.market-banner-item small {
+  color: #94a3b8;
+}
+
+.local-news-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.local-news-tag,
+.local-news-target {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
 }
 
 .quote-card {
@@ -1630,6 +1787,37 @@ watch(
 .panel.monochrome .search-dropdown {
   background: #ffffff;
   color: #000000;
+}
+
+.panel.monochrome .market-banner-refresh {
+  background: rgba(255, 255, 255, 0.88);
+  color: #111827;
+}
+
+.panel.monochrome .terminal-market-banner {
+  background:
+    radial-gradient(circle at top left, rgba(148, 163, 184, 0.12), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.94));
+}
+
+.panel.monochrome .market-banner-item a,
+.panel.monochrome .market-banner-item span,
+.panel.monochrome .market-banner-header h3 {
+  color: #111827;
+}
+
+.panel.monochrome .market-banner-kicker {
+  color: #0369a1;
+}
+
+.panel.monochrome .market-banner-item small {
+  color: #4b5563;
+}
+
+.panel.monochrome .local-news-tag,
+.panel.monochrome .local-news-target {
+  background: rgba(148, 163, 184, 0.2);
+  color: #334155;
 }
 
 .panel.monochrome .text-rise,

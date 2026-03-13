@@ -131,7 +131,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         var minuteLines = await _dataService.GetMinuteLineAsync(symbol, source);
         var messages = await _dataService.GetIntradayMessagesAsync(symbol, source);
         var newsContext = StockAgentNewsContextPolicy.Apply(messages, DateTime.Now);
-        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(symbol, cancellationToken);
+        var localFacts = StockAgentLocalFactProjection.Create(await _queryLocalFactDatabaseTool.QueryAsync(symbol, cancellationToken));
         var queryPolicy = StockAgentInternetRoutingPolicy.Build(symbol, requestedUseInternet);
 
         return new StockAgentContextDto(
@@ -224,7 +224,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IReadOnlyList<MinuteLinePointDto> MinuteLines,
         IReadOnlyList<IntradayMessageDto> Messages,
         StockAgentNewsPolicyDto NewsPolicy,
-        LocalFactPackageDto LocalFacts,
+        StockAgentLocalFactPackageDto LocalFacts,
         StockAgentQueryPolicyDto QueryPolicy,
         DateTime RequestTime
     );
@@ -266,7 +266,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         StockQuoteDto Quote,
         IReadOnlyList<IntradayMessageDto> Messages,
         StockAgentNewsPolicyDto NewsPolicy,
-        LocalFactPackageDto LocalFacts,
+        StockAgentLocalFactPackageDto LocalFacts,
         StockAgentQueryPolicyDto QueryPolicy,
         DateTime RequestTime
     );
@@ -275,7 +275,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         StockQuoteDto Quote,
         IReadOnlyList<IntradayMessageDto> Messages,
         StockAgentNewsPolicyDto NewsPolicy,
-        LocalFactPackageDto LocalFacts,
+        StockAgentLocalFactPackageDto LocalFacts,
         StockAgentQueryPolicyDto QueryPolicy,
         StockAgentCommanderHistoryPackageDto CommanderHistory,
         IReadOnlyList<KLinePointDto> KLines,

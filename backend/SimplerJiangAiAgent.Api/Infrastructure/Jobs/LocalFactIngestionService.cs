@@ -11,18 +11,17 @@ namespace SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 public interface ILocalFactIngestionService
 {
     Task SyncAsync(CancellationToken cancellationToken = default);
+    Task EnsureMarketFreshAsync(CancellationToken cancellationToken = default);
     Task EnsureFreshAsync(string symbol, CancellationToken cancellationToken = default);
 }
 
 public sealed class LocalFactIngestionService : ILocalFactIngestionService
 {
     private const string SinaRollUrl = "https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=60&versionNumber=1.2.8.1";
-    private const string EastmoneySectorSearchBaseUrl = "https://search-api-dev.eastmoney.com/api/info/get";
     private static readonly SemaphoreSlim MarketRefreshGate = new(1, 1);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> SymbolRefreshGates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly (string Url, string Source, string SourceTag)[] MarketRssFeeds =
     {
-        ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", "CNBC Finance", "cnbc-finance-rss"),
         ("https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml", "WSJ US Business", "wsj-us-business-rss"),
         ("https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "NYT Business", "nyt-business-rss")
     };
@@ -34,17 +33,20 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
     private readonly AppDbContext _dbContext;
     private readonly HttpClient _httpClient;
     private readonly StockSyncOptions _options;
+    private readonly ILocalFactAiEnrichmentService _aiEnrichmentService;
     private readonly ILogger<LocalFactIngestionService> _logger;
 
     public LocalFactIngestionService(
         AppDbContext dbContext,
         HttpClient httpClient,
         IOptions<StockSyncOptions> options,
+        ILocalFactAiEnrichmentService aiEnrichmentService,
         ILogger<LocalFactIngestionService> logger)
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
         _options = options.Value;
+        _aiEnrichmentService = aiEnrichmentService;
         _logger = logger;
     }
 
@@ -64,6 +66,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         {
             await UpsertMarketReportsAsync(marketReports, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
+            await _aiEnrichmentService.ProcessMarketPendingAsync(cancellationToken);
         }
         finally
         {
@@ -78,6 +81,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             {
                 await SyncSymbolAsync(symbol, crawledAt, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
+                await _aiEnrichmentService.ProcessSymbolPendingAsync(symbol, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -93,26 +97,9 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
     public async Task EnsureFreshAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var normalized = StockSymbolNormalizer.Normalize(symbol);
+        await EnsureMarketFreshAsync(cancellationToken);
+
         var freshCutoff = DateTime.UtcNow.AddMinutes(-30);
-
-        await MarketRefreshGate.WaitAsync(cancellationToken);
-        try
-        {
-            var hasFreshMarket = await _dbContext.LocalSectorReports
-                .AnyAsync(item => item.Level == "market" && item.CrawledAt >= freshCutoff, cancellationToken);
-
-            if (!hasFreshMarket)
-            {
-                var crawledAt = DateTime.UtcNow;
-                var marketReports = await FetchMarketReportsAsync(crawledAt, cancellationToken);
-                await UpsertMarketReportsAsync(marketReports, cancellationToken);
-                await _dbContext.SaveChangesAsync(cancellationToken);
-            }
-        }
-        finally
-        {
-            MarketRefreshGate.Release();
-        }
 
         var symbolGate = GetSymbolGate(normalized);
         await symbolGate.WaitAsync(cancellationToken);
@@ -132,10 +119,38 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             var crawledAt = DateTime.UtcNow;
             await SyncSymbolAsync(normalized, crawledAt, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
+            await _aiEnrichmentService.ProcessSymbolPendingAsync(normalized, cancellationToken);
         }
         finally
         {
             symbolGate.Release();
+        }
+    }
+
+    public async Task EnsureMarketFreshAsync(CancellationToken cancellationToken = default)
+    {
+        var freshCutoff = DateTime.UtcNow.AddMinutes(-30);
+
+        await MarketRefreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            var hasFreshMarket = await _dbContext.LocalSectorReports
+                .AnyAsync(item => item.Level == "market" && item.CrawledAt >= freshCutoff, cancellationToken);
+
+            if (hasFreshMarket)
+            {
+                return;
+            }
+
+            var crawledAt = DateTime.UtcNow;
+            var marketReports = await FetchMarketReportsAsync(crawledAt, cancellationToken);
+            await UpsertMarketReportsAsync(marketReports, cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await _aiEnrichmentService.ProcessMarketPendingAsync(cancellationToken);
+        }
+        finally
+        {
+            MarketRefreshGate.Release();
         }
     }
 
@@ -224,18 +239,18 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, BuildSectorSearchUrl(sectorName));
-            request.Headers.TryAddWithoutValidation("Accept", "application/json,text/plain,*/*");
-            request.Headers.TryAddWithoutValidation("Referer", "https://so.eastmoney.com/");
+            request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            request.Headers.TryAddWithoutValidation("Referer", "https://finance.sina.com.cn/");
             request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36");
 
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var reports = EastmoneySectorSearchParser.Parse(symbol, sectorName, content, crawledAt);
+            var reports = SinaSectorNewsSearchParser.Parse(symbol, sectorName, content, crawledAt);
             if (reports.Count == 0)
             {
-                _logger.LogWarning("东财板块搜索未返回可解析结果: {SectorName}", sectorName);
+                _logger.LogWarning("新浪板块搜索未返回可解析结果: {SectorName}", sectorName);
             }
 
             return reports;
@@ -251,13 +266,16 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         DateTime crawledAt,
         CancellationToken cancellationToken)
     {
+        var domesticTask = FetchRollMessagesSafeAsync(cancellationToken);
         var rssTasks = MarketRssFeeds
             .Select(feed => FetchMarketFeedAsync(feed.Url, feed.Source, feed.SourceTag, crawledAt, cancellationToken))
             .ToArray();
 
         var rssResults = await Task.WhenAll(rssTasks);
+        var domesticReports = BuildDomesticMarketReports(await domesticTask, crawledAt);
         var reports = rssResults
             .SelectMany(items => items)
+            .Concat(domesticReports)
             .OrderByDescending(item => item.PublishTime)
             .DistinctBy(item => item.Url ?? item.ExternalId ?? item.Title)
             .Take(18)
@@ -268,8 +286,20 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             return reports;
         }
 
-        var fallbackMessages = await FetchRollMessagesAsync(cancellationToken);
-        return BuildFallbackMarketReports(fallbackMessages, crawledAt);
+        return domesticReports;
+    }
+
+    private async Task<IReadOnlyList<IntradayMessageDto>> FetchRollMessagesSafeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await FetchRollMessagesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "抓取新浪滚动大盘资讯失败");
+            return Array.Empty<IntradayMessageDto>();
+        }
     }
 
     private async Task<IReadOnlyList<LocalSectorReportSeed>> FetchMarketFeedAsync(
@@ -305,7 +335,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
 
     private static string BuildSectorSearchUrl(string sectorName)
     {
-        return $"{EastmoneySectorSearchBaseUrl}?words={Uri.EscapeDataString(sectorName)}&type=21";
+        return $"https://search.sina.com.cn/?q={Uri.EscapeDataString(sectorName)}&c=news";
     }
 
     private async Task UpsertStockNewsAsync(string symbol, IReadOnlyList<LocalStockNewsSeed> items, CancellationToken cancellationToken)
@@ -314,23 +344,34 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             .Where(item => item.Symbol == symbol)
             .ToListAsync(cancellationToken);
 
+        var existingLookup = existing.ToDictionary(BuildStockNewsKey, StringComparer.OrdinalIgnoreCase);
+
         _dbContext.LocalStockNews.RemoveRange(existing);
         _dbContext.LocalStockNews.AddRange(items
             .OrderByDescending(item => item.PublishTime)
             .Take(40)
-            .Select(item => new LocalStockNews
+            .Select(item =>
             {
-                Symbol = item.Symbol,
-                Name = item.Name,
-                SectorName = item.SectorName,
-                Title = item.Title,
-                Category = item.Category,
-                Source = item.Source,
-                SourceTag = item.SourceTag,
-                ExternalId = item.ExternalId,
-                PublishTime = item.PublishTime,
-                CrawledAt = item.CrawledAt,
-                Url = item.Url
+                existingLookup.TryGetValue(BuildStockNewsKey(item), out var previous);
+                return new LocalStockNews
+                {
+                    Symbol = item.Symbol,
+                    Name = item.Name,
+                    SectorName = item.SectorName,
+                    Title = item.Title,
+                    Category = item.Category,
+                    Source = item.Source,
+                    SourceTag = item.SourceTag,
+                    ExternalId = item.ExternalId,
+                    PublishTime = item.PublishTime,
+                    CrawledAt = item.CrawledAt,
+                    Url = item.Url,
+                    IsAiProcessed = previous?.IsAiProcessed ?? false,
+                    TranslatedTitle = previous?.TranslatedTitle,
+                    AiSentiment = previous?.AiSentiment ?? "中性",
+                    AiTarget = previous?.AiTarget,
+                    AiTags = previous?.AiTags
+                };
             }));
     }
 
@@ -343,19 +384,30 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             .Where(item => item.Symbol == symbol && item.Level == "sector")
             .ToListAsync(cancellationToken);
 
+        var existingLookup = existing.ToDictionary(BuildSectorReportKey, StringComparer.OrdinalIgnoreCase);
+
         _dbContext.LocalSectorReports.RemoveRange(existing);
-        _dbContext.LocalSectorReports.AddRange(sectorReports.Select(item => new LocalSectorReport
+        _dbContext.LocalSectorReports.AddRange(sectorReports.Select(item =>
         {
-            Symbol = item.Symbol,
-            SectorName = item.SectorName,
-            Level = item.Level,
-            Title = item.Title,
-            Source = item.Source,
-            SourceTag = item.SourceTag,
-            ExternalId = item.ExternalId,
-            PublishTime = item.PublishTime,
-            CrawledAt = item.CrawledAt,
-            Url = item.Url
+            existingLookup.TryGetValue(BuildSectorReportKey(item), out var previous);
+            return new LocalSectorReport
+            {
+                Symbol = item.Symbol,
+                SectorName = item.SectorName,
+                Level = item.Level,
+                Title = item.Title,
+                Source = item.Source,
+                SourceTag = item.SourceTag,
+                ExternalId = item.ExternalId,
+                PublishTime = item.PublishTime,
+                CrawledAt = item.CrawledAt,
+                Url = item.Url,
+                IsAiProcessed = previous?.IsAiProcessed ?? false,
+                TranslatedTitle = previous?.TranslatedTitle,
+                AiSentiment = previous?.AiSentiment ?? "中性",
+                AiTarget = previous?.AiTarget,
+                AiTags = previous?.AiTags
+            };
         }));
     }
 
@@ -367,23 +419,70 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             .Where(item => item.Level == "market")
             .ToListAsync(cancellationToken);
 
+        var existingLookup = existing.ToDictionary(BuildSectorReportKey, StringComparer.OrdinalIgnoreCase);
+
         _dbContext.LocalSectorReports.RemoveRange(existing);
-        _dbContext.LocalSectorReports.AddRange(reports.Select(item => new LocalSectorReport
+        _dbContext.LocalSectorReports.AddRange(reports.Select(item =>
         {
-            Symbol = item.Symbol,
-            SectorName = item.SectorName,
-            Level = item.Level,
-            Title = item.Title,
-            Source = item.Source,
-            SourceTag = item.SourceTag,
-            ExternalId = item.ExternalId,
-            PublishTime = item.PublishTime,
-            CrawledAt = item.CrawledAt,
-            Url = item.Url
+            existingLookup.TryGetValue(BuildSectorReportKey(item), out var previous);
+            return new LocalSectorReport
+            {
+                Symbol = item.Symbol,
+                SectorName = item.SectorName,
+                Level = item.Level,
+                Title = item.Title,
+                Source = item.Source,
+                SourceTag = item.SourceTag,
+                ExternalId = item.ExternalId,
+                PublishTime = item.PublishTime,
+                CrawledAt = item.CrawledAt,
+                Url = item.Url,
+                IsAiProcessed = previous?.IsAiProcessed ?? false,
+                TranslatedTitle = previous?.TranslatedTitle,
+                AiSentiment = previous?.AiSentiment ?? "中性",
+                AiTarget = previous?.AiTarget,
+                AiTags = previous?.AiTags
+            };
         }));
     }
 
-    internal static IReadOnlyList<LocalSectorReportSeed> BuildFallbackMarketReports(
+    private static string BuildStockNewsKey(LocalStockNewsSeed item)
+    {
+        return string.IsNullOrWhiteSpace(item.ExternalId)
+            ? string.IsNullOrWhiteSpace(item.Url)
+                ? $"{item.Symbol}|{item.Title}|{item.PublishTime:O}"
+                : item.Url
+            : item.ExternalId;
+    }
+
+    private static string BuildStockNewsKey(LocalStockNews item)
+    {
+        return string.IsNullOrWhiteSpace(item.ExternalId)
+            ? string.IsNullOrWhiteSpace(item.Url)
+                ? $"{item.Symbol}|{item.Title}|{item.PublishTime:O}"
+                : item.Url
+            : item.ExternalId;
+    }
+
+    private static string BuildSectorReportKey(LocalSectorReportSeed item)
+    {
+        return string.IsNullOrWhiteSpace(item.ExternalId)
+            ? string.IsNullOrWhiteSpace(item.Url)
+                ? $"{item.Level}|{item.Symbol}|{item.Title}|{item.PublishTime:O}"
+                : item.Url
+            : item.ExternalId;
+    }
+
+    private static string BuildSectorReportKey(LocalSectorReport item)
+    {
+        return string.IsNullOrWhiteSpace(item.ExternalId)
+            ? string.IsNullOrWhiteSpace(item.Url)
+                ? $"{item.Level}|{item.Symbol}|{item.Title}|{item.PublishTime:O}"
+                : item.Url
+            : item.ExternalId;
+    }
+
+    internal static IReadOnlyList<LocalSectorReportSeed> BuildDomesticMarketReports(
         IReadOnlyList<IntradayMessageDto> rollMessages,
         DateTime crawledAt)
     {
@@ -404,7 +503,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
                 "market",
                 item.Title,
                 item.Source,
-                "sina-roll-market-fallback",
+                "sina-roll-market",
                 item.Url,
                 item.PublishedAt,
                 crawledAt,

@@ -2,13 +2,16 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 public sealed record LocalNewsItemDto(
     string Title,
+    string? TranslatedTitle,
     string Source,
     string SourceTag,
     string? Category,
     string Sentiment,
     DateTime PublishTime,
     DateTime CrawledAt,
-    string? Url
+    string? Url,
+    string? AiTarget,
+    IReadOnlyList<string> AiTags
 );
 
 public sealed record LocalNewsBucketDto(

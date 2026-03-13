@@ -21,11 +21,11 @@ public sealed class RssMarketNewsParserTests
         </rss>
         """;
 
-        var result = RssMarketNewsParser.Parse(xml, "CNBC Finance", "cnbc-finance-rss", new DateTime(2026, 3, 13, 0, 0, 0, DateTimeKind.Utc));
+        var result = RssMarketNewsParser.Parse(xml, "WSJ US Business", "wsj-us-business-rss", new DateTime(2026, 3, 13, 0, 0, 0, DateTimeKind.Utc));
 
         var item = Assert.Single(result);
         Assert.Equal("market", item.Level);
-        Assert.Equal("CNBC Finance", item.Source);
+        Assert.Equal("WSJ US Business", item.Source);
         Assert.Equal("guid-1", item.ExternalId);
     }
 

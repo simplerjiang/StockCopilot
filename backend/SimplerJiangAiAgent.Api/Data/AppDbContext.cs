@@ -50,11 +50,17 @@ public sealed class AppDbContext : DbContext
         modelBuilder.Entity<LocalStockNews>()
             .HasIndex(x => new { x.Symbol, x.SourceTag });
 
+        modelBuilder.Entity<LocalStockNews>()
+            .HasIndex(x => new { x.IsAiProcessed, x.Symbol, x.PublishTime });
+
         modelBuilder.Entity<LocalSectorReport>()
             .HasIndex(x => new { x.Symbol, x.Level, x.PublishTime });
 
         modelBuilder.Entity<LocalSectorReport>()
             .HasIndex(x => new { x.Level, x.PublishTime });
+
+        modelBuilder.Entity<LocalSectorReport>()
+            .HasIndex(x => new { x.IsAiProcessed, x.Level, x.Symbol, x.PublishTime });
 
         modelBuilder.Entity<StockQueryHistory>()
             .HasIndex(x => x.Symbol)

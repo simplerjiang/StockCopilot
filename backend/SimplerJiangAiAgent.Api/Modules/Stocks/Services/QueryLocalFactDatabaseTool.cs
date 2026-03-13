@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
@@ -8,6 +9,7 @@ public interface IQueryLocalFactDatabaseTool
 {
     Task<LocalFactPackageDto> QueryAsync(string symbol, CancellationToken cancellationToken = default);
     Task<LocalNewsBucketDto> QueryLevelAsync(string symbol, string level, CancellationToken cancellationToken = default);
+    Task<LocalNewsBucketDto> QueryMarketAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
@@ -31,9 +33,13 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                 item.Name,
                 item.SectorName,
                 item.Title,
+                item.TranslatedTitle,
                 item.Source,
                 item.SourceTag,
                 item.Category,
+                item.AiSentiment,
+                item.AiTarget,
+                item.AiTags,
                 item.PublishTime,
                 item.CrawledAt,
                 item.Url
@@ -47,13 +53,16 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                 item.SectorName,
                 Dto = new LocalNewsItemDto(
                     item.Title,
+                    item.TranslatedTitle,
                     item.Source,
                     item.SourceTag,
                     item.Category,
-                    LocalNewsSentimentClassifier.Classify(item.Title, item.Category),
+                    NormalizeAiSentiment(item.AiSentiment),
                     item.PublishTime,
                     item.CrawledAt,
-                    item.Url)
+                    item.Url,
+                    item.AiTarget,
+                    ParseAiTags(item.AiTags))
             })
             .ToList();
 
@@ -65,9 +74,13 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             {
                 item.SectorName,
                 item.Title,
+                item.TranslatedTitle,
                 item.Source,
                 item.SourceTag,
                 item.Level,
+                item.AiSentiment,
+                item.AiTarget,
+                item.AiTags,
                 item.PublishTime,
                 item.CrawledAt,
                 item.Url
@@ -80,13 +93,16 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                 item.SectorName,
                 Dto = new LocalNewsItemDto(
                     item.Title,
+                    item.TranslatedTitle,
                     item.Source,
                     item.SourceTag,
                     item.Level,
-                    LocalNewsSentimentClassifier.Classify(item.Title, item.Level),
+                    NormalizeAiSentiment(item.AiSentiment),
                     item.PublishTime,
                     item.CrawledAt,
-                    item.Url)
+                    item.Url,
+                    item.AiTarget,
+                    ParseAiTags(item.AiTags))
             })
             .ToList();
 
@@ -97,9 +113,13 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             .Select(item => new
             {
                 item.Title,
+                item.TranslatedTitle,
                 item.Source,
                 item.SourceTag,
                 item.Level,
+                item.AiSentiment,
+                item.AiTarget,
+                item.AiTags,
                 item.PublishTime,
                 item.CrawledAt,
                 item.Url
@@ -109,13 +129,16 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
         var marketReports = marketReportRows
             .Select(item => new LocalNewsItemDto(
                 item.Title,
+                item.TranslatedTitle,
                 item.Source,
                 item.SourceTag,
                 item.Level,
-                LocalNewsSentimentClassifier.Classify(item.Title, item.Level),
+                NormalizeAiSentiment(item.AiSentiment),
                 item.PublishTime,
                 item.CrawledAt,
-                item.Url))
+                item.Url,
+                item.AiTarget,
+                ParseAiTags(item.AiTags)))
             .ToList();
 
         var name = stockNews.Select(item => item.Name).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
@@ -142,5 +165,52 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             "market" => new LocalNewsBucketDto(package.Symbol, "market", package.SectorName, package.MarketReports),
             _ => throw new ArgumentException("level 仅支持 stock/sector/market", nameof(level))
         };
+    }
+
+    public async Task<LocalNewsBucketDto> QueryMarketAsync(CancellationToken cancellationToken = default)
+    {
+        var marketReportRows = await _dbContext.LocalSectorReports
+            .Where(item => item.Level == "market")
+            .OrderByDescending(item => item.PublishTime)
+            .Take(12)
+            .Select(item => new LocalNewsItemDto(
+                item.Title,
+                item.TranslatedTitle,
+                item.Source,
+                item.SourceTag,
+                item.Level,
+                NormalizeAiSentiment(item.AiSentiment),
+                item.PublishTime,
+                item.CrawledAt,
+                item.Url,
+                item.AiTarget,
+                ParseAiTags(item.AiTags)))
+            .ToListAsync(cancellationToken);
+
+        return new LocalNewsBucketDto(string.Empty, "market", "大盘环境", marketReportRows);
+    }
+
+    private static string NormalizeAiSentiment(string? value)
+    {
+        return value is "利好" or "利空" or "中性" ? value : "中性";
+    }
+
+    private static IReadOnlyList<string> ParseAiTags(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var tags = JsonSerializer.Deserialize<List<string>>(value);
+            return tags?.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                ?? Array.Empty<string>();
+        }
+        catch (JsonException)
+        {
+            return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
     }
 }

@@ -27,6 +27,7 @@ public sealed class StocksModule : IModule
         services.AddTransient<IStockCrawlerSource, EastmoneyStockCrawler>();
         services.AddSingleton<IStockCrawler, CompositeStockCrawler>();
         services.AddScoped<ILocalFactIngestionService, LocalFactIngestionService>();
+        services.AddScoped<ILocalFactAiEnrichmentService, LocalFactAiEnrichmentService>();
         services.AddScoped<IQueryLocalFactDatabaseTool, QueryLocalFactDatabaseTool>();
         services.AddScoped<IStockDataService, StockDataService>();
         services.AddScoped<IStockHistoryService, StockHistoryService>();
@@ -156,17 +157,24 @@ public sealed class StocksModule : IModule
         .WithName("GetNewsImpact")
         .WithOpenApi();
 
-        app.MapGet("/api/news", async (string symbol, string? level, ILocalFactIngestionService ingestionService, IQueryLocalFactDatabaseTool queryTool) =>
+        app.MapGet("/api/news", async (string? symbol, string? level, ILocalFactIngestionService ingestionService, IQueryLocalFactDatabaseTool queryTool) =>
         {
-            if (string.IsNullOrWhiteSpace(symbol))
-            {
-                return Results.BadRequest(new { message = "symbol 不能为空" });
-            }
-
             var normalizedLevel = string.IsNullOrWhiteSpace(level) ? "stock" : level.Trim().ToLowerInvariant();
             if (normalizedLevel is not ("stock" or "sector" or "market"))
             {
                 return Results.BadRequest(new { message = "level 仅支持 stock/sector/market" });
+            }
+
+            if (normalizedLevel == "market")
+            {
+                await ingestionService.EnsureMarketFreshAsync();
+                var marketResult = await queryTool.QueryMarketAsync();
+                return Results.Ok(marketResult);
+            }
+
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
             var target = symbol.Trim();

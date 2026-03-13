@@ -601,10 +601,96 @@ describe('StockInfoTab', () => {
     await flushPromises()
 
     const localNewsCalls = fetchMock.mock.calls.filter(args => String(args[0]).startsWith('/api/news?'))
-    expect(localNewsCalls).toHaveLength(3)
+    expect(localNewsCalls.length).toBeGreaterThanOrEqual(4)
     expect(localNewsCalls.some(args => String(args[0]).includes('symbol=sh600000') && String(args[0]).includes('level=stock'))).toBe(true)
     expect(localNewsCalls.some(args => String(args[0]).includes('symbol=sh600000') && String(args[0]).includes('level=sector'))).toBe(true)
-    expect(localNewsCalls.some(args => String(args[0]).includes('symbol=sh600000') && String(args[0]).includes('level=market'))).toBe(true)
+    expect(localNewsCalls.some(args => !String(args[0]).includes('symbol=sh600000') && String(args[0]).includes('level=market'))).toBe(true)
+  })
+
+  it('loads market news without requiring a selected stock', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    const marketCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/news?') && String(args[0]).includes('level=market'))
+    expect(marketCall).toBeTruthy()
+    expect(String(marketCall[0])).not.toContain('symbol=')
+  })
+
+  it('renders full history list without slicing to 10 items', async () => {
+    const histories = Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      symbol: `sh6000${String(index).padStart(2, '0')}`,
+      name: `标的${index + 1}`,
+      changePercent: index,
+      updatedAt: '2026-03-13T00:00:00Z'
+    }))
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        if (url === '/api/stocks/history') {
+          return makeResponse({ ok: true, status: 200, json: async () => histories })
+        }
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.history-chip')).toHaveLength(12)
+    expect(wrapper.text()).toContain('标的12')
+  })
+
+  it('keeps market news visible in the floating banner when the AI sidebar is collapsed', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url) => {
+        if (url.startsWith('/api/news?')) {
+          const params = new URLSearchParams(url.split('?')[1])
+          const level = params.get('level') || 'stock'
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              symbol: 'sh600000',
+              level,
+              sectorName: level === 'sector' ? '银行' : null,
+              items: level === 'market'
+                ? [{ title: '全球宏观信号仍在左侧显示', source: 'WSJ US Business', sentiment: '中性', publishTime: '2026-03-12T09:00:00Z', url: 'https://example.com/market' }]
+                : []
+            })
+          })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.focus-toggle').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.terminal-market-banner').text()).toContain('全球宏观信号仍在左侧显示')
+    expect(wrapper.find('.workspace-grid').element.previousElementSibling?.classList.contains('terminal-market-banner')).toBe(true)
+    expect(wrapper.findComponent({ name: 'ChatWindow' }).exists()).toBe(false)
   })
 
   it('renders all local news items with sentiment tags instead of truncating the list', async () => {
@@ -622,7 +708,7 @@ describe('StockInfoTab', () => {
                 level,
                 sectorName: '银行',
                 items: [
-                  { title: '回购计划公告', source: '东方财富公告', sentiment: '利好', publishTime: '2026-03-12T09:00:00Z', url: 'https://example.com/1' },
+                  { title: 'Share buyback plan announced', translatedTitle: '回购计划公告', source: '东方财富公告', sentiment: '利好', aiTarget: '个股:浦发银行', aiTags: ['回购', '资本运作'], publishTime: '2026-03-12T09:00:00Z', url: 'https://example.com/1' },
                   { title: '年度分红预案', source: '东方财富公告', sentiment: '利好', publishTime: '2026-03-12T09:10:00Z', url: 'https://example.com/2' },
                   { title: '行业景气跟踪', source: '新浪', sentiment: '中性', publishTime: '2026-03-12T09:20:00Z', url: 'https://example.com/3' },
                   { title: '第四条完整显示', source: '新浪', sentiment: '利空', publishTime: '2026-03-12T09:30:00Z', url: 'https://example.com/4' }
@@ -662,6 +748,11 @@ describe('StockInfoTab', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('第四条完整显示')
+    expect(wrapper.text()).toContain('回购计划公告')
+    expect(wrapper.text()).toContain('原题')
+    expect(wrapper.text()).toContain('Share buyback plan announced')
+    expect(wrapper.text()).toContain('个股:浦发银行')
+    expect(wrapper.text()).toContain('回购')
     expect(wrapper.text()).toContain('利好')
     expect(wrapper.text()).toContain('利空')
   })
