@@ -647,6 +647,64 @@ describe('StockInfoTab', () => {
     expect(wrapper.text()).toContain('标的12')
   })
 
+  it('loads stock detail immediately when clicking a recent-history item', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        if (url === '/api/stocks/history') {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ([
+              {
+                id: 1,
+                symbol: '600000',
+                name: '浦发银行',
+                changePercent: 1.2,
+                updatedAt: '2026-03-13T00:00:00Z'
+              }
+            ])
+          })
+        }
+
+        if (String(url).startsWith('/api/stocks/detail?')) {
+          const params = new URLSearchParams(String(url).split('?')[1])
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: {
+                name: '浦发银行',
+                symbol: params.get('symbol') || '',
+                price: 10.1,
+                change: 0,
+                changePercent: 0
+              },
+              kLines: [],
+              minuteLines: [],
+              messages: []
+            })
+          })
+        }
+
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.history-chip').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const detailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail?'))
+    expect(detailCall).toBeTruthy()
+    expect(String(detailCall[0])).toContain('symbol=sh600000')
+    expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600000')
+  })
+
   it('keeps market news visible in the embedded panel when the AI sidebar is collapsed', async () => {
     const { fetchMock } = createChatFetchMock({
       handle: async (url) => {

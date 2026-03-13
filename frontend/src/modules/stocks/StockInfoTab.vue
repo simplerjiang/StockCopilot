@@ -75,9 +75,27 @@ const upsertAgentResult = result => {
   agentResults.value = list
 }
 
+const normalizeStockSymbol = value => {
+  const trimmed = String(value || '').trim().toLowerCase()
+  if (!trimmed) {
+    return ''
+  }
+  if (/^(sh|sz)\d{6}$/.test(trimmed)) {
+    return trimmed
+  }
+  if (/^\d{6}$/.test(trimmed)) {
+    return trimmed.startsWith('6') ? `sh${trimmed}` : `sz${trimmed}`
+  }
+  return trimmed
+}
+
+const isDirectStockSymbol = value => /^(sh|sz)\d{6}$/.test(normalizeStockSymbol(value))
+
 const applyHistorySymbol = item => {
-  selectedSymbol.value = item.symbol || item.Symbol || ''
-  symbol.value = selectedSymbol.value
+  const rawSymbol = item.symbol || item.Symbol || item.code || item.Code || ''
+  const normalizedSymbol = normalizeStockSymbol(rawSymbol)
+  selectedSymbol.value = normalizedSymbol
+  symbol.value = normalizedSymbol || String(rawSymbol || '').trim()
   if (symbol.value.trim()) {
     fetchQuote()
   }
@@ -537,12 +555,16 @@ const fetchQuote = async () => {
     return
   }
 
-  if (!/^(\d{6}|(sh|sz)\d{6})$/i.test(query)) {
+  const normalizedQuery = normalizeStockSymbol(query)
+  const targetSymbol = normalizeStockSymbol(selectedSymbol.value || normalizedQuery)
+
+  if (!isDirectStockSymbol(targetSymbol)) {
     searchStocks(query)
     return
   }
 
-  const targetSymbol = selectedSymbol.value || query
+  selectedSymbol.value = targetSymbol
+  symbol.value = targetSymbol
 
   loading.value = true
   error.value = ''
@@ -746,8 +768,10 @@ const onSymbolEnter = event => {
 
 const selectSearchResult = item => {
   isSelecting = true
-  symbol.value = item.code || item.Code || item.symbol || item.Symbol || ''
-  selectedSymbol.value = item.symbol || item.Symbol || ''
+  const rawSymbol = item.symbol || item.Symbol || item.code || item.Code || ''
+  const normalizedSymbol = normalizeStockSymbol(rawSymbol)
+  symbol.value = normalizedSymbol || item.code || item.Code || item.symbol || item.Symbol || ''
+  selectedSymbol.value = normalizedSymbol
   searchOpen.value = false
   searchResults.value = []
   setTimeout(() => {
