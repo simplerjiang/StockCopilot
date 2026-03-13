@@ -22,6 +22,10 @@ const chartMocks = vi.hoisted(() => ({
   removeMock: vi.fn()
 }))
 
+const resizeObserverState = vi.hoisted(() => ({
+  callback: null
+}))
+
 vi.mock('lightweight-charts', () => {
   let createCount = 0
   let klineLineSeriesCount = 0
@@ -122,6 +126,13 @@ describe('StockCharts', () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn()
     })
+    global.ResizeObserver = class {
+      constructor(callback) {
+        resizeObserverState.callback = callback
+      }
+      observe() {}
+      disconnect() {}
+    }
   })
 
   it('parses minute lines and renders professional minute series', async () => {
@@ -262,5 +273,43 @@ describe('StockCharts', () => {
     expect(resistanceData[1].time).toEqual({ year: 2026, month: 1, day: 10 })
     expect(resistanceData[0].value).toBe(13.5)
     expect(supportData[0].value).toBe(11.4)
+  })
+
+  it('resizes charts after ResizeObserver reports sidebar layout changes', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 300
+      }
+    })
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [{ date: '2026-01-01', open: 8, close: 9, low: 7, high: 10, volume: 800 }],
+        minuteLines: [{ date: '2026-01-01', time: '09:30:00', price: 9, volume: 500 }],
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+    chartMocks.applyOptionsMock.mockClear()
+
+    const charts = wrapper.findAll('.chart')
+    Object.defineProperty(charts[0].element, 'clientWidth', { configurable: true, get: () => 720 })
+    Object.defineProperty(charts[0].element, 'clientHeight', { configurable: true, get: () => 360 })
+    Object.defineProperty(charts[1].element, 'clientWidth', { configurable: true, get: () => 720 })
+    Object.defineProperty(charts[1].element, 'clientHeight', { configurable: true, get: () => 260 })
+
+    resizeObserverState.callback?.([{ target: charts[0].element, contentRect: { width: 720, height: 360 } }])
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(chartMocks.applyOptionsMock).toHaveBeenCalled()
+    expect(chartMocks.applyOptionsMock.mock.calls.some(([options]) => options.width === 720 && options.height === 360)).toBe(true)
   })
 })

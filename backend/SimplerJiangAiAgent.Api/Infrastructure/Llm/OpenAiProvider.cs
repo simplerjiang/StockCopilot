@@ -25,9 +25,7 @@ public sealed class OpenAiProvider : ILlmProvider
             throw new InvalidOperationException("OpenAI API Key 未配置");
         }
 
-        var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl)
-            ? "https://api.openai.com/v1"
-            : settings.BaseUrl.TrimEnd('/');
+        var baseUrl = NormalizeOpenAiBaseUrl(settings.BaseUrl);
 
         var model = string.IsNullOrWhiteSpace(request.Model) ? settings.Model : request.Model;
         if (string.IsNullOrWhiteSpace(model))
@@ -45,7 +43,7 @@ public sealed class OpenAiProvider : ILlmProvider
             return await ChatWithGeminiInternetAsync(settings, request, baseUrl, model, cancellationToken);
         }
 
-        using var message = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions");
+        using var message = new HttpRequestMessage(HttpMethod.Post, BuildOpenAiChatCompletionsUri(baseUrl));
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
         if (!string.IsNullOrWhiteSpace(settings.Organization))
         {
@@ -71,8 +69,9 @@ public sealed class OpenAiProvider : ILlmProvider
         };
 
         message.Content = JsonContent.Create(payload);
+        LogHttpRequest(message, "openai", model, request.TraceId);
 
-        using var response = await _httpClient.SendAsync(message, cancellationToken);
+        using var response = await SendWithNetworkDiagnosticsAsync(message, "OpenAI", request.TraceId, cancellationToken);
         var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -127,11 +126,7 @@ public sealed class OpenAiProvider : ILlmProvider
         string model,
         CancellationToken cancellationToken)
     {
-        var root = baseUrl;
-        if (root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) || root.EndsWith("/v1beta", StringComparison.OrdinalIgnoreCase))
-        {
-            root = root[..root.LastIndexOf('/')];
-        }
+        var root = NormalizeGeminiRoot(baseUrl);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{root}/v1beta/models/{model}:generateContent");
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
@@ -183,8 +178,9 @@ public sealed class OpenAiProvider : ILlmProvider
         }
 
         message.Content = JsonContent.Create(payload);
+        LogHttpRequest(message, "gemini", model, request.TraceId);
 
-        using var response = await _httpClient.SendAsync(message, cancellationToken);
+        using var response = await SendWithNetworkDiagnosticsAsync(message, "Gemini", request.TraceId, cancellationToken);
         var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode && request.UseInternet && responseText.Contains("tool_type", StringComparison.OrdinalIgnoreCase))
         {
@@ -196,7 +192,8 @@ public sealed class OpenAiProvider : ILlmProvider
             using var retryMessage = new HttpRequestMessage(HttpMethod.Post, $"{root}/v1beta/models/{model}:generateContent");
             retryMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
             retryMessage.Content = JsonContent.Create(retryPayload);
-            using var retryResponse = await _httpClient.SendAsync(retryMessage, cancellationToken);
+            LogHttpRequest(retryMessage, "gemini", model, request.TraceId);
+            using var retryResponse = await SendWithNetworkDiagnosticsAsync(retryMessage, "Gemini", request.TraceId, cancellationToken);
             responseText = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
             if (!retryResponse.IsSuccessStatusCode)
             {
@@ -245,9 +242,7 @@ public sealed class OpenAiProvider : ILlmProvider
             throw new InvalidOperationException("OpenAI API Key 未配置");
         }
 
-        var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl)
-            ? "https://api.openai.com/v1"
-            : settings.BaseUrl.TrimEnd('/');
+        var baseUrl = NormalizeOpenAiBaseUrl(settings.BaseUrl);
 
         var model = string.IsNullOrWhiteSpace(request.Model) ? settings.Model : request.Model;
         if (string.IsNullOrWhiteSpace(model))
@@ -283,11 +278,7 @@ public sealed class OpenAiProvider : ILlmProvider
         string model,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var root = baseUrl;
-        if (root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) || root.EndsWith("/v1beta", StringComparison.OrdinalIgnoreCase))
-        {
-            root = root[..root.LastIndexOf('/')];
-        }
+        var root = NormalizeGeminiRoot(baseUrl);
 
         var url = $"{root}/v1beta/models/{model}:streamGenerateContent?key={settings.ApiKey}&alt=sse";
         using var message = new HttpRequestMessage(HttpMethod.Post, url);
@@ -338,8 +329,9 @@ public sealed class OpenAiProvider : ILlmProvider
         }
 
         message.Content = JsonContent.Create(payload);
+        LogHttpRequest(message, "gemini-stream", model, request.TraceId);
 
-        using var response = await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await SendWithNetworkDiagnosticsAsync(message, "Gemini 流式", request.TraceId, cancellationToken, HttpCompletionOption.ResponseHeadersRead);
         if (!response.IsSuccessStatusCode)
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -352,7 +344,8 @@ public sealed class OpenAiProvider : ILlmProvider
                 };
                 using var retryMessage = new HttpRequestMessage(HttpMethod.Post, url);
                 retryMessage.Content = JsonContent.Create(retryPayload);
-                using var retryResponse = await _httpClient.SendAsync(retryMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                LogHttpRequest(retryMessage, "gemini-stream", model, request.TraceId);
+                using var retryResponse = await SendWithNetworkDiagnosticsAsync(retryMessage, "Gemini 流式", request.TraceId, cancellationToken, HttpCompletionOption.ResponseHeadersRead);
                 if (!retryResponse.IsSuccessStatusCode)
                 {
                     var retryError = await retryResponse.Content.ReadAsStringAsync(cancellationToken);
@@ -500,6 +493,122 @@ public sealed class OpenAiProvider : ILlmProvider
     private static object[] BuildGeminiToolsFallback(string model)
     {
         return new[] { new { google_search = new { } } };
+    }
+
+    internal static string NormalizeOpenAiBaseUrl(string? baseUrl)
+    {
+        var normalized = string.IsNullOrWhiteSpace(baseUrl)
+            ? "https://api.openai.com/v1"
+            : baseUrl.Trim();
+
+        normalized = normalized.TrimEnd('/');
+        if (normalized.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..^"/chat/completions".Length];
+        }
+
+        if (!normalized.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            && !normalized.EndsWith("/v1beta", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = $"{normalized}/v1";
+        }
+
+        return normalized;
+    }
+
+    private static string BuildOpenAiChatCompletionsUri(string baseUrl)
+    {
+        return $"{baseUrl.TrimEnd('/')}/chat/completions";
+    }
+
+    private static string NormalizeGeminiRoot(string baseUrl)
+    {
+        var root = baseUrl.TrimEnd('/');
+        if (root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) || root.EndsWith("/v1beta", StringComparison.OrdinalIgnoreCase))
+        {
+            root = root[..root.LastIndexOf('/')];
+        }
+
+        return root;
+    }
+
+    private async Task<HttpResponseMessage> SendWithNetworkDiagnosticsAsync(
+        HttpRequestMessage message,
+        string providerName,
+        string? traceId,
+        CancellationToken cancellationToken,
+        HttpCompletionOption completionOption = HttpCompletionOption.ResponseContentRead)
+    {
+        try
+        {
+            return await _httpClient.SendAsync(message, completionOption, cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            var reason = DescribeExceptionReason(ex);
+            LogError($"error provider={providerName} stage=send uri={message.RequestUri} headers={BuildHeaderSummary(message)} type={ex.GetType().Name} message={ex.Message} inner={reason}", traceId);
+            throw new InvalidOperationException($"{providerName} 请求发送失败，请检查 BaseUrl、代理或网络连通性。uri={message.RequestUri}，原因：{reason}", ex);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogError($"error provider={providerName} stage=send uri={message.RequestUri} headers={BuildHeaderSummary(message)} type=Timeout message={ex.Message}", traceId);
+            throw new InvalidOperationException($"{providerName} 请求超时，请检查目标网关或本机代理设置。uri={message.RequestUri}", ex);
+        }
+    }
+
+    private void LogHttpRequest(HttpRequestMessage message, string provider, string model, string? traceId)
+    {
+        LogInfo($"request-http provider={provider} model={model} method={message.Method} uri={message.RequestUri} headers={BuildHeaderSummary(message)}", traceId);
+    }
+
+    private static string BuildHeaderSummary(HttpRequestMessage message)
+    {
+        var values = new List<string>();
+        foreach (var header in message.Headers)
+        {
+            var rendered = string.Join(',', header.Value);
+            if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+            {
+                rendered = MaskAuthorization(rendered);
+            }
+            values.Add($"{header.Key}={rendered}");
+        }
+
+        return values.Count == 0 ? "<none>" : string.Join(';', values);
+    }
+
+    private static string MaskAuthorization(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var parts = value.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+        {
+            return "***";
+        }
+
+        return $"{parts[0]} ***";
+    }
+
+    private static string DescribeExceptionReason(HttpRequestException ex)
+    {
+        var outer = ex.Message?.Trim();
+        var inner = ex.InnerException?.Message?.Trim();
+
+        if (string.IsNullOrWhiteSpace(inner))
+        {
+            return string.IsNullOrWhiteSpace(outer) ? ex.GetType().Name : outer;
+        }
+
+        if (string.IsNullOrWhiteSpace(outer) || string.Equals(outer, inner, StringComparison.Ordinal))
+        {
+            return inner;
+        }
+
+        return $"{outer}; inner={inner}";
     }
 
     private JsonDocument ParseResponseDocument(string content, string providerName, string? traceId)

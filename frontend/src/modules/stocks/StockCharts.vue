@@ -29,6 +29,8 @@ const emit = defineEmits(['update:interval'])
 
 const klineRef = ref(null)
 const minuteRef = ref(null)
+const klineWrapperRef = ref(null)
+const minuteWrapperRef = ref(null)
 const klineChartRef = ref(null)
 const minuteChartRef = ref(null)
 const klineSeriesRef = ref(null)
@@ -43,6 +45,7 @@ const minuteResistanceSeriesRef = ref(null)
 const minuteSupportSeriesRef = ref(null)
 let resizeObserver = null
 let resizeHandler = null
+let resizeFrame = null
 const klineValues = ref([])
 const minuteValues = ref([])
 const minuteBasePrice = ref(null)
@@ -187,19 +190,30 @@ const calculateMovingAverage = (records, period) => {
   })
 }
 
+const applyChartSize = (container, chart, fallbackTarget = null) => {
+  if (!container || !chart) return
+  const width = Math.max(1, Math.floor(container.clientWidth || fallbackTarget?.clientWidth || 1))
+  const height = Math.max(1, Math.floor(container.clientHeight || fallbackTarget?.clientHeight || 1))
+  chart.applyOptions({ width, height })
+}
+
 const resizeCharts = () => {
-  if (klineRef.value && klineChartRef.value) {
-    klineChartRef.value.applyOptions({
-      width: Math.max(1, Math.floor(klineRef.value.clientWidth)),
-      height: Math.max(1, Math.floor(klineRef.value.clientHeight))
-    })
+  applyChartSize(klineRef.value, klineChartRef.value, klineWrapperRef.value)
+  applyChartSize(minuteRef.value, minuteChartRef.value, minuteWrapperRef.value)
+}
+
+const queueResize = () => {
+  if (typeof window === 'undefined') {
+    resizeCharts()
+    return
   }
-  if (minuteRef.value && minuteChartRef.value) {
-    minuteChartRef.value.applyOptions({
-      width: Math.max(1, Math.floor(minuteRef.value.clientWidth)),
-      height: Math.max(1, Math.floor(minuteRef.value.clientHeight))
-    })
+  if (resizeFrame) {
+    window.cancelAnimationFrame(resizeFrame)
   }
+  resizeFrame = window.requestAnimationFrame(() => {
+    resizeFrame = null
+    resizeCharts()
+  })
 }
 
 const ensureKlineChart = () => {
@@ -592,9 +606,16 @@ onMounted(() => {
   ensureMinuteChart()
   renderAll()
   if (typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(() => {
-      resizeCharts()
+    resizeObserver = new ResizeObserver(entries => {
+      if (!entries?.length) return
+      queueResize()
     })
+    if (klineWrapperRef.value) {
+      resizeObserver.observe(klineWrapperRef.value)
+    }
+    if (minuteWrapperRef.value) {
+      resizeObserver.observe(minuteWrapperRef.value)
+    }
     if (klineRef.value) {
       resizeObserver.observe(klineRef.value)
     }
@@ -603,11 +624,11 @@ onMounted(() => {
     }
   }
   resizeHandler = () => {
-    resizeCharts()
+    queueResize()
   }
   window.addEventListener('resize', resizeHandler)
   nextTick(() => {
-    resizeCharts()
+    queueResize()
   })
 })
 
@@ -615,6 +636,10 @@ onUnmounted(() => {
   if (resizeHandler) {
     window.removeEventListener('resize', resizeHandler)
     resizeHandler = null
+  }
+  if (resizeFrame && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(resizeFrame)
+    resizeFrame = null
   }
   if (resizeObserver) {
     resizeObserver.disconnect()
@@ -641,13 +666,13 @@ onUnmounted(() => {
 watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels], async () => {
   renderAll()
   await nextTick()
-  resizeCharts()
+  queueResize()
 })
 </script>
 
 <template>
   <div class="charts">
-    <div class="chart-wrapper">
+    <div ref="klineWrapperRef" class="chart-wrapper">
       <div class="chart-header">
         <h3>K 线图</h3>
         <div class="chart-tabs">
@@ -673,7 +698,7 @@ watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels], 
         <div v-for="(line, idx) in klineHover.lines" :key="idx">{{ line }}</div>
       </div>
     </div>
-    <div class="chart-wrapper">
+    <div ref="minuteWrapperRef" class="chart-wrapper">
       <h3>分时图</h3>
       <p v-if="aiLevelText()" class="ai-level-tip">{{ aiLevelText() }}</p>
       <div ref="minuteRef" class="chart" v-show="minuteLines.length" />
@@ -696,6 +721,7 @@ watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels], 
   grid-template-rows: minmax(360px, 1.25fr) minmax(280px, 0.85fr);
   gap: 1rem;
   width: 100%;
+  min-width: 0;
   min-height: min(78vh, 980px);
 }
 
@@ -724,6 +750,7 @@ watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels], 
 .chart {
   width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 280px;
   display: block;
 }

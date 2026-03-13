@@ -4,6 +4,25 @@ import fs from 'node:fs';
 const baseUrl = process.env.GOAL013_BASE_URL || 'http://localhost:5119';
 const backendLogPath = process.env.GOAL013_BACKEND_LOG || 'backend/SimplerJiangAiAgent.Api/App_Data/logs/llm-requests.txt';
 
+const measureTerminalLayout = () => {
+  const terminal = document.querySelector('.terminal-view');
+  const wrappers = Array.from(document.querySelectorAll('.chart-wrapper'));
+  const charts = Array.from(document.querySelectorAll('.chart'));
+
+  return {
+    terminalWidth: terminal?.getBoundingClientRect().width ?? 0,
+    wrapperWidths: wrappers.map(node => node.getBoundingClientRect().width),
+    chartWidths: charts.map(node => node.getBoundingClientRect().width),
+    chartOverflow: wrappers.some((wrapper, index) => {
+      const chart = charts[index];
+      if (!chart) {
+        return false;
+      }
+      return chart.getBoundingClientRect().width - wrapper.getBoundingClientRect().width > 1;
+    })
+  };
+};
+
 const run = async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true }).catch(async () => {
     return chromium.launch({ headless: true });
@@ -59,6 +78,17 @@ const run = async () => {
   await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card li').length >= 1, null, { timeout: 30000 });
   await page.waitForTimeout(2000);
 
+  const expandedLayout = await page.evaluate(measureTerminalLayout);
+  await page.getByRole('button', { name: '专注模式' }).click({ force: true });
+  await page.waitForFunction(() => document.querySelector('.workspace-grid')?.classList.contains('focused') === true, null, { timeout: 10000 });
+  await page.waitForTimeout(800);
+  const focusedLayout = await page.evaluate(measureTerminalLayout);
+
+  await page.getByRole('button', { name: '显示 AI 侧栏' }).click({ force: true });
+  await page.waitForFunction(() => document.querySelector('.workspace-grid')?.classList.contains('focused') === false, null, { timeout: 10000 });
+  await page.waitForTimeout(800);
+  const restoredLayout = await page.evaluate(measureTerminalLayout);
+
   const quoteText = await page.locator('.quote-card').first().textContent();
   const stockFactCount = await page.locator('.news-bucket-card').first().locator('li').count();
   const sentimentBadgeCount = await page.locator('.news-bucket-card .impact-tag').count();
@@ -89,6 +119,26 @@ const run = async () => {
 
   if (localNewsResponses.length < 3) {
     throw new Error(`Expected 3 local news responses, got ${localNewsResponses.length}`);
+  }
+
+  if (expandedLayout.chartOverflow || focusedLayout.chartOverflow || restoredLayout.chartOverflow) {
+    throw new Error('Detected chart overflow beyond chart-wrapper bounds after sidebar resize');
+  }
+
+  if (focusedLayout.terminalWidth <= expandedLayout.terminalWidth + 80) {
+    throw new Error(`Expected terminal width to grow after hiding AI sidebar, before=${expandedLayout.terminalWidth}, after=${focusedLayout.terminalWidth}`);
+  }
+
+  if (restoredLayout.terminalWidth >= focusedLayout.terminalWidth - 80) {
+    throw new Error(`Expected terminal width to shrink after reopening AI sidebar, focused=${focusedLayout.terminalWidth}, restored=${restoredLayout.terminalWidth}`);
+  }
+
+  if (focusedLayout.wrapperWidths.some((width, index) => width <= (expandedLayout.wrapperWidths[index] ?? 0) + 40)) {
+    throw new Error(`Expected chart wrappers to expand after hiding AI sidebar. before=${expandedLayout.wrapperWidths.join(',')} after=${focusedLayout.wrapperWidths.join(',')}`);
+  }
+
+  if (restoredLayout.wrapperWidths.some((width, index) => width >= (focusedLayout.wrapperWidths[index] ?? 0) - 40)) {
+    throw new Error(`Expected chart wrappers to shrink after reopening AI sidebar. focused=${focusedLayout.wrapperWidths.join(',')} restored=${restoredLayout.wrapperWidths.join(',')}`);
   }
 
   if (!pageContent.includes('个股事实') || !pageContent.includes('板块上下文') || !pageContent.includes('大盘环境')) {

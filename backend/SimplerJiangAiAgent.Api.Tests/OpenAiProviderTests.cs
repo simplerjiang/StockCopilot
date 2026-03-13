@@ -110,15 +110,56 @@ public sealed class OpenAiProviderTests
         Assert.Contains("非 JSON 内容", ex.Message);
     }
 
+    [Fact]
+    public async Task ChatAsync_AppendsV1WhenBaseUrlOmitsIt()
+    {
+        var handler = new CaptureHandler();
+        var httpClient = new HttpClient(handler);
+        var provider = new OpenAiProvider(httpClient, new FakeLogWriter());
+        var settings = new LlmProviderSettings
+        {
+            Provider = "openai",
+            ApiKey = "key",
+            BaseUrl = "https://api.example.com"
+        };
+
+        await provider.ChatAsync(settings, new LlmChatRequest("hello", "gpt-4o-mini", 0.1, false), CancellationToken.None);
+
+        Assert.Equal("https://api.example.com/v1/chat/completions", handler.LastRequestUri);
+    }
+
+    [Fact]
+    public async Task ChatAsync_WhenHttpRequestFails_ShouldThrowReadableNetworkError()
+    {
+        var handler = new ThrowingHandler();
+        var httpClient = new HttpClient(handler);
+        var logs = new CollectingLogWriter();
+        var provider = new OpenAiProvider(httpClient, logs);
+        var settings = new LlmProviderSettings
+        {
+            Provider = "openai",
+            ApiKey = "key",
+            BaseUrl = "https://api.example.com"
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ChatAsync(settings, new LlmChatRequest("hello", "gpt-4o-mini", 0.1, false), CancellationToken.None));
+
+        Assert.Contains("请求发送失败", ex.Message);
+        Assert.Contains("连接被拒绝", ex.Message);
+        Assert.Contains(logs.Entries, item => item.Contains("uri=https://api.example.com/v1/chat/completions", StringComparison.Ordinal));
+    }
+
     private sealed class CaptureHandler : HttpMessageHandler
     {
         public string? LastRequestBody { get; private set; }
+        public string? LastRequestUri { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             LastRequestBody = request.Content is null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
+            LastRequestUri = request.RequestUri?.AbsoluteUri;
 
             if (request.RequestUri?.AbsolutePath.Contains("streamGenerateContent", StringComparison.OrdinalIgnoreCase) == true)
             {
@@ -148,6 +189,16 @@ public sealed class OpenAiProviderTests
         }
     }
 
+    private sealed class CollectingLogWriter : IFileLogWriter
+    {
+        public List<string> Entries { get; } = new();
+
+        public void Write(string category, string message)
+        {
+            Entries.Add($"{category}:{message}");
+        }
+    }
+
     private sealed class NullPartsStreamHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -172,6 +223,14 @@ public sealed class OpenAiProviderTests
             {
                 Content = new StringContent("<html><body>gateway</body></html>")
             });
+        }
+    }
+
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            throw new HttpRequestException("连接被拒绝", new InvalidOperationException("No such host is known"));
         }
     }
 }

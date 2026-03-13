@@ -113,3 +113,54 @@
 
 ### 结论
 Step 2.1 已按 4 项整改要求修复完成，请进行重新验视。
+
+---
+
+## 🔴 Reviewer 验收指令: Step 2.1 综合打磨，启动 Step 2.2 (2026-03-13)
+
+> **致 ChatGPT-5.4**:
+> 此前你完成的 Step 2.1 修复了部分业务问题，但我作为产品经理和架构师在视察 UI 并实测环境时，发现了 **几个高优的版面与网络请求 Bug**：
+>
+> 1. **AI 侧栏展开后卡片间距巨大（排版空隙 Bug）**: 
+>    * **现象**：右侧侧栏被内容撑高时，左侧的 K线被一并拉长，产生了巨大的上下空隙。
+>    * **根因**：`TerminalView.vue` 中误用了 `min-height: 100%;`，导致其高度强行和右侧栏一致，且 `grid-template-rows: auto 1fr;` 把高度分给了图表容器。
+> 2. **K线图和分时图重叠、不重绘（Grid/Canvas 收缩 Bug）**: 
+>    * **现象**：点击“隐藏/展开 AI”切换侧栏时，左侧区域变大或变小，但图表（Lightweight Charts）自身宽度不响应，甚至超越边框发生遮挡重叠。
+>    * **根因**：不仅是 `ResizeObserver` 的触发问题，更关键的是 CSS Grid / Flexbox 在包含 `<canvas>` 时默认**不会缩小小于其内联宽度**。必须沿 Grid 的嵌套树层层加 `min-width: 0; min-height: 0;`。
+> 3. **多 Agent 请求全部 Error (大面积非 JSON 报错与连接错误)**: 
+>    * **现象**：反复抛出 `OpenAI 返回了非 JSON 内容，可能是网关或 HTML 错页`，以及底层的 `An error occurred while sending the request.`
+>    * **根因**：这说明 `OpenAiProvider.cs` 层面的 HttpClient 发出请求就直接挂了，或者返回了不可预期的反爬/网关拦截 HTML。本地 `appsettings` 的 BaseUrl 可能配错了（如缺了 `/v1/chat/completions`）或是系统代理导致连接重置。
+> 
+> **你的开发任务 (Step 2.2 - 修复排版、图表响应与底层网关报错)**:
+> 
+> **任务 1（前端重绘与响应式收缩 - `TerminalView.vue`）**:
+> 在 `<style scoped>` 选择器中：
+> * `.terminal-view`：移除 `min-height: 100%;`；增加 `height: max-content;` 及 `min-height: calc(100vh - 238px);`；并增加 `position: sticky; top: 1.5rem; z-index: 10;` 使左侧能独立悬浮吸顶。
+> * `.terminal-view-body` 及 `.terminal-view-chart` 必须增加 `min-width: 0; min-height: 0;` 破除 canvas 的最小尺寸锁定。
+> 
+> **任务 2（优化 ResizeObserver 监听 - `StockCharts.vue`）**:
+> 检查 `ResizeObserver`。当侧栏折叠导致 `.chart-wrapper` 发生尺寸异动时，利用 `entries` 取出最新宽框，或保证 `resizeCharts()` 执行到的宽高是正确的，杜绝图表不重新 resize 的现象。
+> 
+> **任务 3（后端网络防崩溃与详细报错 - `backend/SimplerJiangAiAgent.Api/Infrastructure/Llm/OpenAiProvider.cs`）**:
+> * 排查并在控制台/日志中输出完整的请求路径（Request URI）、请求头和错误原文内涵，便于诊断。
+> * 针对网络连接错误 (`HttpRequestException`)，增加 Try-Catch 并将真正的内层错误（如连接被拒绝、代理错误）通过日志打印，并向外抛出更带有人话解释的 Exception，避免前端只看到生硬的空对象或 JSON 异常。
+> * 检查 `appsettings.Development.json` 中配置的 OpenAI BaseUrl，如果缺失关键的后缀，在使用 `HttpClient` 拼接时要保证容错性。
+> 
+> 完成代码修改并自测后，请填写新的 `Step 2.2 开发完成回执` 提醒我重新验收！
+
+## ✅ Step 2.2 开发完成回执 (2026-03-13)
+
+### 已完成修复
+1. 已修复 `TerminalView.vue` 的布局耦合问题：移除 `min-height: 100%`，改为 sticky 终端布局，并补齐 `min-width: 0; min-height: 0;`，左侧看盘终端不再被 AI 侧栏高度撑开。
+2. 已修复 `StockCharts.vue` 在 AI 侧栏收起/展开时的图表重算问题：新增 wrapper 级 `ResizeObserver` 监听与 `requestAnimationFrame` 调度，K 线图和分时图会随可用宽度变化正确 resize，且不再越界重叠。
+3. 已强化 `OpenAiProvider.cs`：OpenAI 兼容 BaseUrl 会自动补齐 `/v1` 并清理重复路径；请求发送前会记录完整 Request URI 与脱敏请求头；遇到 `HttpRequestException` 或超时时会输出更清晰的人话错误，并保留底层原因。
+4. 已补充回归覆盖：前端新增图表 resize 单测，后端新增 BaseUrl 归一化与网络异常诊断单测；Edge 脚本已扩展为真实点击 AI 侧栏开关并检查图表宽度变化与越界情况。
+
+### 自测结果
+- 后端定向单测：`dotnet test backend/SimplerJiangAiAgent.Api.Tests/SimplerJiangAiAgent.Api.Tests.csproj --filter "FullyQualifiedName~OpenAiProviderTests"` 通过（6/6）
+- 前端单测：`npm --prefix frontend run test:unit -- src/modules/stocks/StockCharts.spec.js` 通过（3/3）
+- 前端构建：`npm --prefix frontend run build` 通过
+- Edge 校验：`node frontend/scripts/edge-check-goal013.mjs` 通过
+
+### 结论
+Step 2.2 已按排版修复、图表响应式修复与底层网关报错诊断三项要求完成，请进行重新验收。

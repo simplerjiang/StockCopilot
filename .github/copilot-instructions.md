@@ -111,7 +111,9 @@
 - For GOAL-012 stock terminal refinements, keep the symbol query/history controls in a compact sticky or inline toolbar and prioritize remaining vertical viewport space for K-line and minute charts.
 - For GOAL-013 database work in this repo, if a freshly generated EF migration captures schema-initializer-managed legacy tables, trim the migration back to the feature tables, then verify the final tables/columns/indexes with SQLCMD before concluding.
 - For GOAL-013 stock news pages, render local fact buckets independently from slower `/api/stocks/news/impact` analysis, and protect concurrent `/api/news` refreshes with per-symbol plus market-level locks so they do not race into 500s.
+- For `HttpRequestException` diagnostics in LLM providers, surface both the outer exception message and the inner exception message; some gateway failures only expose the actionable cause on the outer message.
 - 对于密集仪表盘布局的 Playwright Edge 校验，遇到点击被遮挡时使用稳健点击策略（必要时 `force`），并为“空数据”场景提供容错分支，保证不同种子数据下校验稳定。
+- 对于 LLM Provider 的 `HttpRequestException` 诊断，必须同时保留外层异常消息和内层异常消息；有些网关失败的关键信息只存在于外层消息里。
 - 对于前端 LLM 审计视图，只要存在“请求-返回配对”需求，就不能以前端逐行猜测 raw 日志；必须先由后端按 `traceId` 聚合，再展示确定性会话记录。
 - 对于 GOAL-012 股票终端后续优化，标的查询/历史控制必须保持紧凑的 sticky 或内联工具条形态，并优先把剩余纵向视口空间让给 K 线与分时图。
 - 对于本仓库的 GOAL-013 数据库变更，如果新生成的 EF migration 误把 schema initializer 管理的历史表也带上，必须先把 migration 收敛回本次功能表，再用 SQLCMD 校验最终表/字段/索引后才可结束任务。
