@@ -1,0 +1,5 @@
+export const CANDLE_PANE_ID = 'candle_pane'
+export const VOLUME_PANE_ID = 'volume_pane'
+export const MACD_PANE_ID = 'macd_pane'
+export const RSI_PANE_ID = 'rsi_pane'
+export const KDJ_PANE_ID = 'kdj_pane'

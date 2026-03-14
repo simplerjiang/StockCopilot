@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { dispose, init } from 'klinecharts'
 import { normalizeKlineInterval } from './chartViews'
+import { buildStrategyRenderPlan, ensureChartStrategiesRegistered } from './chartStrategyRegistry'
 import { ensureKLineChartsRegistry, syncIndicatorRegistry, syncMarkerSignalRegistry, syncOverlayRegistry } from './klinechartsRegistry'
 
 const DEFAULT_SYMBOL = {
@@ -377,6 +378,7 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
       if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') return null
 
       ensureKLineChartsRegistry()
+      ensureChartStrategiesRegistered()
       chart = init(containerRef.value)
       if (!chart) return null
 
@@ -457,7 +459,15 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
       const instance = ensureChart()
       if (!instance) return
 
-      const visibility = featureVisibilityByView?.value?.[viewType === 'minute' ? 'minute' : periodKey] ?? {}
+      const viewId = viewType === 'minute' ? 'minute' : periodKey
+      const visibility = featureVisibilityByView?.value?.[viewId] ?? {}
+      const renderPlan = buildStrategyRenderPlan({
+        viewId,
+        records,
+        visibility,
+        aiLevels,
+        basePrice
+      })
 
       dataList = toChartData(records)
       recordMap = buildRecordLookup(records)
@@ -466,15 +476,13 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
       instance.setSymbol(buildSymbol(records))
       instance.setPeriod(PERIOD_BY_VIEW[periodKey] ?? PERIOD_BY_VIEW.day)
       instance.resetData()
-      syncIndicatorRegistry(instance, viewType, visibility)
+      syncIndicatorRegistry(instance, { viewId, renderPlan })
       syncOverlayRegistry(instance, {
-        viewType,
-        aiLevels,
-        basePrice,
+        viewId,
         firstTimestamp: dataList[0]?.timestamp ?? null,
-        visibility
+        renderPlan
       })
-      syncMarkerSignalRegistry(instance, { viewType, markers: [] })
+      syncMarkerSignalRegistry(instance, { viewId, renderPlan })
       instance.scrollToRealTime?.(0)
       instance.resize()
     }

@@ -1615,8 +1615,16 @@ const setupPlanRefresh = () => {
     planRefreshTimer = null
   }
 
-  if (refreshSeconds.value > 0 && currentStockKey.value) {
+  if (refreshSeconds.value > 0) {
     planRefreshTimer = setInterval(() => {
+      if (!rootWorkspace.planListLoading && !rootWorkspace.planAlertsLoading) {
+        refreshTradingPlanBoard(true)
+      }
+
+      if (!currentStockKey.value) {
+        return
+      }
+
       const workspace = getWorkspace(currentStockKey.value)
       if (workspace && !workspace.planListLoading && !workspace.planAlertsLoading) {
         refreshTradingPlanSection(currentStockKey.value, true)

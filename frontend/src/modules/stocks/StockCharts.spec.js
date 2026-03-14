@@ -20,7 +20,8 @@ const chartMocks = vi.hoisted(() => ({
   minuteResizeMock: vi.fn(),
   klineSubscribeActionMock: vi.fn(),
   minuteSubscribeActionMock: vi.fn(),
-  disposeMock: vi.fn()
+  disposeMock: vi.fn(),
+  registerIndicatorMock: vi.fn()
 }))
 
 const resizeObserverState = vi.hoisted(() => ({
@@ -101,6 +102,7 @@ vi.mock('klinecharts', () => {
   }
 
   return {
+    registerIndicator: chartMocks.registerIndicatorMock,
     init: vi.fn(() => {
       createCount += 1
       return createCount % 2 === 1 ? makeChart('kline') : makeChart('minute')
@@ -128,6 +130,7 @@ describe('StockCharts', () => {
     chartMocks.klineSubscribeActionMock.mockClear()
     chartMocks.minuteSubscribeActionMock.mockClear()
     chartMocks.disposeMock.mockClear()
+    chartMocks.registerIndicatorMock.mockClear()
     window.matchMedia = vi.fn().mockReturnValue({
       matches: false,
       media: '',
@@ -269,7 +272,7 @@ describe('StockCharts', () => {
     expect(klineIndicators.some(item => item?.name === 'MA' && item?.calcParams?.join(',') === '5,10')).toBe(true)
     expect(klineIndicators.some(item => item?.name === 'VOL')).toBe(true)
 
-    const aiOverlays = chartMocks.klineOverlayCalls.filter(item => item.groupId === 'kline-ai-levels')
+    const aiOverlays = chartMocks.klineOverlayCalls.filter(item => item.groupId === 'day-ai-levels')
     expect(aiOverlays).toHaveLength(2)
     expect(aiOverlays[0].points[0].value).toBe(13.5)
     expect(aiOverlays[1].points[0].value).toBe(11.4)
@@ -388,7 +391,7 @@ describe('StockCharts', () => {
     expect(volumeChip.classes()).not.toContain('active')
     expect(baseLineChip.classes()).not.toContain('active')
     expect(priceChip.classes()).not.toContain('active')
-    expect(chartMocks.minuteRemoveIndicatorCalls.at(-1)).toEqual({ paneId: 'volume_pane', name: 'VOL' })
+    expect(chartMocks.minuteRemoveIndicatorCalls.some(item => item?.paneId === 'volume_pane' && item?.name === 'VOL')).toBe(true)
     expect(chartMocks.minuteRemoveOverlayCalls.some(item => item?.groupId === 'minute-base-line')).toBe(true)
     expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.lineColor).toBe('rgba(37, 99, 235, 0)')
   })
@@ -436,7 +439,111 @@ describe('StockCharts', () => {
     expect(aiChip.classes()).not.toContain('active')
     const lastMaCall = chartMocks.klineIndicatorCalls.filter(item => item.value?.name === 'MA').at(-1)
     expect(lastMaCall?.value?.calcParams).toEqual([5])
-    expect(chartMocks.klineRemoveOverlayCalls.some(item => item?.groupId === 'kline-ai-levels')).toBe(true)
+    expect(chartMocks.klineRemoveOverlayCalls.some(item => item?.groupId === 'day-ai-levels')).toBe(true)
+  })
+
+  it('renders grouped strategy controls and enables additional kline indicators', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 320
+      }
+    })
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [
+          { date: '2026-01-01', open: 8, close: 9, low: 7, high: 10, volume: 800 },
+          { date: '2026-01-02', open: 10, close: 11, low: 9, high: 12, volume: 1200 },
+          { date: '2026-01-03', open: 11, close: 10, low: 9.8, high: 11.5, volume: 900 },
+          { date: '2026-01-04', open: 10, close: 10.8, low: 9.7, high: 11.1, volume: 880 },
+          { date: '2026-01-05', open: 10.8, close: 11.6, low: 10.4, high: 11.8, volume: 1360 },
+          { date: '2026-01-06', open: 11.6, close: 12.1, low: 11.2, high: 12.4, volume: 1500 },
+          { date: '2026-01-07', open: 12.1, close: 12.4, low: 11.9, high: 12.8, volume: 1320 },
+          { date: '2026-01-08', open: 12.4, close: 12.0, low: 11.7, high: 12.6, volume: 1210 },
+          { date: '2026-01-09', open: 12.0, close: 12.8, low: 11.8, high: 13.0, volume: 1680 },
+          { date: '2026-01-10', open: 12.8, close: 13.1, low: 12.4, high: 13.3, volume: 1750 },
+          { date: '2026-01-11', open: 13.1, close: 13.5, low: 12.8, high: 13.7, volume: 1850 },
+          { date: '2026-01-12', open: 13.5, close: 13.9, low: 13.2, high: 14.1, volume: 1960 },
+          { date: '2026-01-13', open: 13.9, close: 14.0, low: 13.5, high: 14.3, volume: 1880 },
+          { date: '2026-01-14', open: 14.0, close: 14.4, low: 13.8, high: 14.8, volume: 2020 },
+          { date: '2026-01-15', open: 14.4, close: 14.9, low: 14.1, high: 15.2, volume: 2150 },
+          { date: '2026-01-16', open: 14.9, close: 15.1, low: 14.5, high: 15.4, volume: 2080 },
+          { date: '2026-01-17', open: 15.1, close: 15.3, low: 14.8, high: 15.7, volume: 2160 },
+          { date: '2026-01-18', open: 15.3, close: 15.6, low: 15.0, high: 15.9, volume: 2220 },
+          { date: '2026-01-19', open: 15.6, close: 15.8, low: 15.2, high: 16.0, volume: 2280 },
+          { date: '2026-01-20', open: 15.8, close: 16.1, low: 15.4, high: 16.4, volume: 2350 }
+        ],
+        minuteLines: [],
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+
+    expect(wrapper.text()).toContain('基础图层')
+    expect(wrapper.text()).toContain('趋势策略')
+    expect(wrapper.text()).toContain('动量指标')
+
+    const ma60Chip = wrapper.findAll('.chart-chip-button').find(button => button.text() === 'MA60')
+    const bollChip = wrapper.findAll('.chart-chip-button').find(button => button.text() === 'BOLL')
+
+    await ma60Chip.trigger('click')
+    await bollChip.trigger('click')
+    await nextTick()
+
+    const lastMaCall = chartMocks.klineIndicatorCalls.filter(item => item.value?.name === 'MA').at(-1)
+    expect(lastMaCall?.value?.calcParams).toEqual([5, 10, 60])
+    expect(chartMocks.klineIndicatorCalls.some(item => item.value?.name === 'BOLL')).toBe(true)
+  })
+
+  it('enables minute vwap and orb strategies from grouped controls', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 300
+      }
+    })
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [],
+        minuteLines: [
+          { date: '2026-01-01', time: '09:30:00', price: 10, volume: 100 },
+          { date: '2026-01-01', time: '09:35:00', price: 10.2, volume: 180 },
+          { date: '2026-01-01', time: '09:40:00', price: 10.4, volume: 260 },
+          { date: '2026-01-01', time: '09:45:00', price: 10.1, volume: 320 }
+        ],
+        basePrice: 9.9,
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+
+    await wrapper.findAll('.tab')[0].trigger('click')
+    await nextTick()
+
+    const orbChip = wrapper.findAll('.chart-chip-button').find(button => button.text() === 'ORB')
+    expect(wrapper.findAll('.chart-chip-button').some(button => button.text() === 'VWAP')).toBe(true)
+
+    await orbChip.trigger('click')
+    await nextTick()
+
+    expect(chartMocks.minuteIndicatorCalls.some(item => item.value?.name === 'VWAP')).toBe(true)
+    expect(chartMocks.minuteOverlayCalls.some(item => item.groupId === 'minute-orb-range')).toBe(true)
   })
 
   it('resizes charts after ResizeObserver reports sidebar layout changes', async () => {

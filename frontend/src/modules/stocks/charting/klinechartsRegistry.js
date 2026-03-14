@@ -1,29 +1,5 @@
-const CANDLE_PANE_ID = 'candle_pane'
-const VOLUME_PANE_ID = 'volume_pane'
-
-const REGISTRY = Object.freeze({
-  minute: {
-    indicators: [
-      { name: 'VOL', paneId: VOLUME_PANE_ID, paneOptions: { id: VOLUME_PANE_ID, height: 96, minHeight: 72 } }
-    ],
-    overlays: ['ai-levels', 'base-line'],
-    markerMount: 'reserved'
-  },
-  kline: {
-    indicators: [
-      { name: 'MA', paneId: CANDLE_PANE_ID, calcParams: [5, 10], paneOptions: { id: CANDLE_PANE_ID } },
-      { name: 'VOL', paneId: VOLUME_PANE_ID, paneOptions: { id: VOLUME_PANE_ID, height: 96, minHeight: 72 } }
-    ],
-    overlays: ['ai-levels'],
-    markerMount: 'reserved'
-  }
-})
-
-const parseLevelValue = value => {
-  if (value == null || value === '') return null
-  const number = Number(value)
-  return Number.isFinite(number) ? number : null
-}
+import { getIndicatorFiltersForView, getOverlayGroupIdsForView } from './chartStrategyRegistry'
+import { CANDLE_PANE_ID, VOLUME_PANE_ID } from './chartPanes'
 
 const buildPriceLineOverlay = ({ groupId, value, timestamp, color }) => ({
   name: 'priceLine',
@@ -47,107 +23,59 @@ const buildPriceLineOverlay = ({ groupId, value, timestamp, color }) => ({
 })
 
 export function ensureKLineChartsRegistry() {
-  return REGISTRY
+  return {
+    candlePaneId: CANDLE_PANE_ID,
+    volumePaneId: VOLUME_PANE_ID
+  }
 }
 
-export function syncIndicatorRegistry(chart, viewType, visibility = {}) {
-  const registry = ensureKLineChartsRegistry()[viewType]
-  chart.removeIndicator({ paneId: CANDLE_PANE_ID, name: 'MA' })
-  chart.removeIndicator({ paneId: VOLUME_PANE_ID, name: 'VOL' })
-
-  registry.indicators.forEach(item => {
-    if (item.name === 'MA') {
-      const calcParams = []
-      if (visibility.ma5 !== false) {
-        calcParams.push(5)
-      }
-      if (visibility.ma10 !== false) {
-        calcParams.push(10)
-      }
-      if (!calcParams.length) {
-        return
-      }
-
-      chart.createIndicator(
-        {
-          name: 'MA',
-          shortName: 'MA',
-          calcParams,
-          series: 'price'
-        },
-        false,
-        item.paneOptions
-      )
-      return
-    }
-
-    if (item.name === 'VOL' && visibility.volume === false) {
-      return
-    }
-
-    chart.createIndicator(
-      {
-        name: item.name,
-        shortName: item.name,
-        series: 'volume'
-      },
-      true,
-      item.paneOptions
-    )
+export function syncIndicatorRegistry(chart, { viewId, renderPlan }) {
+  getIndicatorFiltersForView(viewId).forEach(filter => {
+    chart.removeIndicator(filter)
   })
 
-  return registry
+  renderPlan.indicators.forEach(item => {
+    const indicator = {
+      name: item.name,
+      shortName: item.shortName ?? item.name
+    }
+    if (Array.isArray(item.calcParams) && item.calcParams.length) {
+      indicator.calcParams = item.calcParams
+    }
+    if (item.series) {
+      indicator.series = item.series
+    }
+
+    chart.createIndicator(indicator, item.isStack === true, item.paneOptions)
+  })
 }
 
-export function syncOverlayRegistry(chart, { viewType, aiLevels, basePrice, firstTimestamp, visibility = {} }) {
-  const aiGroupId = `${viewType}-ai-levels`
-  const baseLineGroupId = `${viewType}-base-line`
-  chart.removeOverlay({ groupId: aiGroupId })
-  chart.removeOverlay({ groupId: baseLineGroupId })
+export function syncOverlayRegistry(chart, { viewId, firstTimestamp, renderPlan }) {
+  getOverlayGroupIdsForView(viewId).forEach(groupId => {
+    chart.removeOverlay({ groupId })
+  })
 
   if (!Number.isFinite(firstTimestamp)) {
     return
   }
 
-  const overlays = []
-  const resistance = parseLevelValue(aiLevels?.resistance)
-  const support = parseLevelValue(aiLevels?.support)
-
-  if (visibility.aiLevels !== false && Number.isFinite(resistance)) {
-    overlays.push(buildPriceLineOverlay({
-      groupId: aiGroupId,
+  const overlays = renderPlan.overlays
+    .filter(item => item.type === 'priceLine' && Number.isFinite(item.value))
+    .map(item => buildPriceLineOverlay({
+      groupId: item.groupId,
       timestamp: firstTimestamp,
-      value: resistance,
-      color: '#f97316'
+      value: item.value,
+      color: item.color
     }))
-  }
-
-  if (visibility.aiLevels !== false && Number.isFinite(support)) {
-    overlays.push(buildPriceLineOverlay({
-      groupId: aiGroupId,
-      timestamp: firstTimestamp,
-      value: support,
-      color: '#10b981'
-    }))
-  }
-
-  if (viewType === 'minute' && visibility.baseLine !== false && Number.isFinite(basePrice)) {
-    overlays.push(buildPriceLineOverlay({
-      groupId: baseLineGroupId,
-      timestamp: firstTimestamp,
-      value: basePrice,
-      color: '#64748b'
-    }))
-  }
 
   if (overlays.length) {
     chart.createOverlay(overlays)
   }
 }
 
-export function syncMarkerSignalRegistry(chart, { viewType, markers = [] }) {
-  chart.removeOverlay({ groupId: `${viewType}-markers` })
-  return Array.isArray(markers) ? markers : []
+export function syncMarkerSignalRegistry(chart, { viewId, renderPlan }) {
+  chart.removeOverlay({ groupId: `${viewId}-markers` })
+  return Array.isArray(renderPlan.markers) ? renderPlan.markers : []
 }
 
 export { CANDLE_PANE_ID, VOLUME_PANE_ID }

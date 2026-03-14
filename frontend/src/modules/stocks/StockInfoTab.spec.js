@@ -2182,4 +2182,45 @@ describe('StockInfoTab', () => {
     expect(boardCard.text()).toContain('Invalidated')
     expect(boardCard.text()).toContain('价格跌破失效位')
   })
+
+  it('polls the trading plan board even when no stock is active', async () => {
+    vi.useFakeTimers()
+    let boardPlanCalls = 0
+    let boardAlertCalls = 0
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        if (url.startsWith('/api/stocks/plans?take=20')) {
+          boardPlanCalls += 1
+          return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+        }
+
+        if (url.startsWith('/api/stocks/plans/alerts?take=20')) {
+          boardAlertCalls += 1
+          return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      mount(StockInfoTab)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(boardPlanCalls).toBe(1)
+      expect(boardAlertCalls).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(30000)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(boardPlanCalls).toBeGreaterThanOrEqual(2)
+      expect(boardAlertCalls).toBeGreaterThanOrEqual(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -31,8 +31,20 @@ public sealed class TradingPlanTriggerService : ITradingPlanTriggerService
             return 0;
         }
 
+        var activeSymbols = await _dbContext.ActiveWatchlists
+            .AsNoTracking()
+            .Where(item => item.IsEnabled)
+            .Select(item => item.Symbol)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+
+        if (activeSymbols.Length == 0)
+        {
+            return 0;
+        }
+
         var pendingPlans = await _dbContext.TradingPlans
-            .Where(item => item.Status == TradingPlanStatus.Pending)
+            .Where(item => item.Status == TradingPlanStatus.Pending && activeSymbols.Contains(item.Symbol))
             .OrderBy(item => item.CreatedAt)
             .Take(Math.Max(1, _options.MaxPlansPerPass))
             .ToListAsync(cancellationToken);
@@ -120,12 +132,14 @@ public sealed class TradingPlanTriggerService : ITradingPlanTriggerService
 
             var metadataJson = JsonSerializer.Serialize(new
             {
+                warningWindowKey = BuildWarningWindowKey(divergence.LatestPointAt, Math.Max(5, _options.DivergenceLookbackMinutes)),
                 latestMinuteAt = divergence.LatestPointAt,
                 priceSlope = divergence.PriceSlope,
                 volumeSlope = divergence.VolumeSlope
             });
 
-            if (latestWarningMap.TryGetValue(plan.Id, out var latestWarning) && string.Equals(latestWarning.MetadataJson, metadataJson, StringComparison.Ordinal))
+            if (latestWarningMap.TryGetValue(plan.Id, out var latestWarning)
+                && string.Equals(TryGetWarningWindowKey(latestWarning.MetadataJson), TryGetWarningWindowKey(metadataJson), StringComparison.Ordinal))
             {
                 continue;
             }
@@ -291,6 +305,38 @@ public sealed class TradingPlanTriggerService : ITradingPlanTriggerService
     private static DateTime CombinePointTimestamp(MinuteLinePointEntity point)
     {
         return point.Date.ToDateTime(TimeOnly.FromTimeSpan(point.Time), DateTimeKind.Unspecified);
+    }
+
+    private static string BuildWarningWindowKey(DateTime occurredAt, int lookbackMinutes)
+    {
+        var minutes = Math.Max(5, lookbackMinutes);
+        var utc = occurredAt.Kind == DateTimeKind.Utc ? occurredAt : occurredAt.ToUniversalTime();
+        var bucketTicks = TimeSpan.FromMinutes(minutes).Ticks;
+        var normalizedTicks = utc.Ticks - (utc.Ticks % bucketTicks);
+        return new DateTime(normalizedTicks, DateTimeKind.Utc).ToString("O");
+    }
+
+    private static string? TryGetWarningWindowKey(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(metadataJson);
+            if (document.RootElement.TryGetProperty("warningWindowKey", out var property) && property.ValueKind == JsonValueKind.String)
+            {
+                return property.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
     }
 
     private sealed record TradingPlanTransition(

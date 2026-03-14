@@ -14,6 +14,7 @@ public sealed class TradingPlanTriggerServiceTests
     {
         await using var dbContext = CreateDbContext();
         var plan = await SeedPlanAsync(dbContext, triggerPrice: 10.2m, invalidPrice: 9.6m);
+        await SeedActiveWatchlistAsync(dbContext, plan.Symbol, plan.Name);
         dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
         {
             Symbol = plan.Symbol,
@@ -42,6 +43,7 @@ public sealed class TradingPlanTriggerServiceTests
     {
         await using var dbContext = CreateDbContext();
         var plan = await SeedPlanAsync(dbContext, triggerPrice: 10.2m, invalidPrice: 9.6m);
+        await SeedActiveWatchlistAsync(dbContext, plan.Symbol, plan.Name);
         dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
         {
             Symbol = plan.Symbol,
@@ -70,6 +72,7 @@ public sealed class TradingPlanTriggerServiceTests
     {
         await using var dbContext = CreateDbContext();
         var plan = await SeedPlanAsync(dbContext, triggerPrice: 10.0m, invalidPrice: 10.5m);
+        await SeedActiveWatchlistAsync(dbContext, plan.Symbol, plan.Name);
         dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
         {
             Symbol = plan.Symbol,
@@ -94,6 +97,7 @@ public sealed class TradingPlanTriggerServiceTests
     {
         await using var dbContext = CreateDbContext();
         var plan = await SeedPlanAsync(dbContext, triggerPrice: 10.2m, invalidPrice: 9.6m);
+        await SeedActiveWatchlistAsync(dbContext, plan.Symbol, plan.Name);
         dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
         {
             Symbol = plan.Symbol,
@@ -119,6 +123,7 @@ public sealed class TradingPlanTriggerServiceTests
     {
         await using var dbContext = CreateDbContext();
         var plan = await SeedPlanAsync(dbContext, triggerPrice: 11.5m, invalidPrice: 9.2m);
+        await SeedActiveWatchlistAsync(dbContext, plan.Symbol, plan.Name);
         dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
         {
             Symbol = plan.Symbol,
@@ -150,6 +155,82 @@ public sealed class TradingPlanTriggerServiceTests
         Assert.Single(events);
         Assert.Equal(TradingPlanEventType.VolumeDivergenceWarning, events[0].EventType);
         Assert.Equal(TradingPlanEventSeverity.Warning, events[0].Severity);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_SkipsPendingPlansOutsideActiveWatchlist()
+    {
+        await using var dbContext = CreateDbContext();
+        var plan = await SeedPlanAsync(dbContext, triggerPrice: 10.2m, invalidPrice: 9.6m);
+        dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
+        {
+            Symbol = plan.Symbol,
+            Name = plan.Name,
+            Price = 10.3m,
+            Timestamp = new DateTime(2026, 3, 16, 2, 0, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+
+        var changes = await service.EvaluateAsync(new DateTimeOffset(2026, 3, 16, 2, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(0, changes);
+        Assert.Equal(TradingPlanStatus.Pending, plan.Status);
+        Assert.Empty(await dbContext.TradingPlanEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_DeduplicatesVolumeDivergenceWarningsWithinSameWindow()
+    {
+        await using var dbContext = CreateDbContext();
+        var plan = await SeedPlanAsync(dbContext, triggerPrice: 11.5m, invalidPrice: 9.2m);
+        await SeedActiveWatchlistAsync(dbContext, plan.Symbol, plan.Name);
+        dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
+        {
+            Symbol = plan.Symbol,
+            Name = plan.Name,
+            Price = 10.8m,
+            Timestamp = new DateTime(2026, 3, 16, 2, 20, 0, DateTimeKind.Utc)
+        });
+        SeedMinutePoints(dbContext, plan.Symbol, new DateOnly(2026, 3, 16), new[]
+        {
+            (new TimeSpan(9, 30, 0), 10.00m, 100m),
+            (new TimeSpan(9, 35, 0), 10.15m, 185m),
+            (new TimeSpan(9, 40, 0), 10.30m, 255m),
+            (new TimeSpan(9, 45, 0), 10.45m, 310m),
+            (new TimeSpan(9, 50, 0), 10.60m, 350m),
+            (new TimeSpan(9, 56, 0), 10.78m, 380m)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+
+        var first = await service.EvaluateAsync(new DateTimeOffset(2026, 3, 16, 2, 20, 0, TimeSpan.Zero));
+
+        dbContext.MinuteLinePoints.Add(new MinuteLinePointEntity
+        {
+            Symbol = plan.Symbol,
+            Date = new DateOnly(2026, 3, 16),
+            Time = new TimeSpan(9, 58, 0),
+            Price = 10.82m,
+            AveragePrice = 10.82m,
+            Volume = 398m
+        });
+        dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
+        {
+            Symbol = plan.Symbol,
+            Name = plan.Name,
+            Price = 10.82m,
+            Timestamp = new DateTime(2026, 3, 16, 2, 22, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var second = await service.EvaluateAsync(new DateTimeOffset(2026, 3, 16, 2, 22, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, first);
+        Assert.Equal(0, second);
+        Assert.Single(await dbContext.TradingPlanEvents.Where(item => item.EventType == TradingPlanEventType.VolumeDivergenceWarning).ToListAsync());
     }
 
     private static TradingPlanTriggerService CreateService(AppDbContext dbContext)
@@ -208,5 +289,20 @@ public sealed class TradingPlanTriggerServiceTests
                 Volume = point.Volume
             });
         }
+    }
+
+    private static async Task SeedActiveWatchlistAsync(AppDbContext dbContext, string symbol, string name)
+    {
+        dbContext.ActiveWatchlists.Add(new ActiveWatchlist
+        {
+            Symbol = symbol,
+            Name = name,
+            SourceTag = "trading-plan",
+            Note = "plan:test",
+            IsEnabled = true,
+            CreatedAt = new DateTime(2026, 3, 16, 1, 45, 0, DateTimeKind.Utc),
+            UpdatedAt = new DateTime(2026, 3, 16, 1, 45, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
     }
 }
