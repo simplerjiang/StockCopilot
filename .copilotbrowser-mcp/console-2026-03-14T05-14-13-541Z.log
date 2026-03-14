@@ -1,0 +1,2 @@
+[     550ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5119/api/stocks/plans?take=20:0
+[   68427ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5119/api/stocks/plans?take=20:0

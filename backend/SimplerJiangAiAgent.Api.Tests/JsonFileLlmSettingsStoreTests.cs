@@ -11,6 +11,7 @@ public sealed class JsonFileLlmSettingsStoreTests
     [Fact]
     public async Task GetProviderAsync_ShouldPreferLocalSecretFile()
     {
+    using var envScope = ApiKeyEnvironmentScope.Clear();
         var rootPath = CreateTempRoot();
         var appDataPath = Path.Combine(rootPath, "App_Data");
         Directory.CreateDirectory(appDataPath);
@@ -19,9 +20,11 @@ public sealed class JsonFileLlmSettingsStoreTests
             Path.Combine(appDataPath, "llm-settings.json"),
             """
             {
+              "activeProviderKey": "default",
               "providers": {
-                "openai": {
-                  "provider": "openai",
+                "default": {
+                  "provider": "default",
+                  "providerType": "openai",
                   "apiKey": "tracked-key",
                   "baseUrl": "https://api.bltcy.ai",
                   "model": "gemini-test"
@@ -35,8 +38,9 @@ public sealed class JsonFileLlmSettingsStoreTests
             """
             {
               "providers": {
-                "openai": {
-                  "provider": "openai",
+                "default": {
+                  "provider": "default",
+                  "providerType": "openai",
                   "apiKey": "local-key"
                 }
               }
@@ -45,7 +49,7 @@ public sealed class JsonFileLlmSettingsStoreTests
 
         var store = new JsonFileLlmSettingsStore(new FakeWebHostEnvironment(rootPath));
 
-        var settings = await store.GetProviderAsync("openai");
+        var settings = await store.GetProviderAsync("default");
 
         Assert.NotNull(settings);
         Assert.Equal("local-key", settings!.ApiKey);
@@ -56,12 +60,14 @@ public sealed class JsonFileLlmSettingsStoreTests
     [Fact]
     public async Task UpsertAsync_ShouldWriteApiKeyToIgnoredLocalFileOnly()
     {
+      using var envScope = ApiKeyEnvironmentScope.Clear();
         var rootPath = CreateTempRoot();
         var store = new JsonFileLlmSettingsStore(new FakeWebHostEnvironment(rootPath));
 
         var result = await store.UpsertAsync(new LlmProviderSettings
         {
-            Provider = "openai",
+          Provider = "default",
+          ProviderType = "openai",
             ApiKey = "local-secret-key",
             BaseUrl = "https://api.bltcy.ai",
             Model = "gemini-test",
@@ -79,8 +85,48 @@ public sealed class JsonFileLlmSettingsStoreTests
         Assert.DoesNotContain("local-secret-key", defaultsJson, StringComparison.Ordinal);
         Assert.Contains("local-secret-key", localJson, StringComparison.Ordinal);
         Assert.NotNull(defaultsDocument);
-        Assert.True(defaultsDocument!.Providers.TryGetValue("openai", out var defaultsSettings));
+        Assert.Equal("default", defaultsDocument!.ActiveProviderKey);
+        Assert.True(defaultsDocument.Providers.TryGetValue("default", out var defaultsSettings));
         Assert.Equal(string.Empty, defaultsSettings!.ApiKey);
+    }
+
+    [Fact]
+    public async Task ResolveProviderKeyAsync_ShouldMigrateLegacyOpenAiToDefaultAndPersistActiveProvider()
+    {
+      using var envScope = ApiKeyEnvironmentScope.Clear();
+        var rootPath = CreateTempRoot();
+        var appDataPath = Path.Combine(rootPath, "App_Data");
+        Directory.CreateDirectory(appDataPath);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(appDataPath, "llm-settings.json"),
+            """
+            {
+              "providers": {
+                "openai": {
+                  "provider": "openai",
+                  "baseUrl": "https://api.example.com",
+                  "model": "gpt-test"
+                },
+                "gemini_official": {
+                  "provider": "gemini_official",
+                  "providerType": "openai",
+                  "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                  "model": "gemini-test"
+                }
+              }
+            }
+            """);
+
+        var store = new JsonFileLlmSettingsStore(new FakeWebHostEnvironment(rootPath));
+
+        var resolvedDefault = await store.ResolveProviderKeyAsync("openai");
+        var active = await store.SetActiveProviderKeyAsync("gemini_official");
+        var activeRead = await store.GetActiveProviderKeyAsync();
+
+        Assert.Equal("default", resolvedDefault);
+        Assert.Equal("gemini_official", active);
+        Assert.Equal("gemini_official", activeRead);
     }
 
     private static string CreateTempRoot()
@@ -88,6 +134,46 @@ public sealed class JsonFileLlmSettingsStoreTests
         var path = Path.Combine(Path.GetTempPath(), "SimplerJiangAiAgent.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private sealed class ApiKeyEnvironmentScope : IDisposable
+    {
+      private static readonly string[] VariableNames =
+      [
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "LLM__DEFAULT__APIKEY",
+        "LLM__GEMINI_OFFICIAL__APIKEY",
+        "LLM__OPENAI__APIKEY"
+      ];
+
+      private readonly Dictionary<string, string?> _originalValues;
+
+      private ApiKeyEnvironmentScope(Dictionary<string, string?> originalValues)
+      {
+        _originalValues = originalValues;
+      }
+
+      public static ApiKeyEnvironmentScope Clear()
+      {
+        var originalValues = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var variableName in VariableNames)
+        {
+          originalValues[variableName] = Environment.GetEnvironmentVariable(variableName);
+          Environment.SetEnvironmentVariable(variableName, null);
+        }
+
+        return new ApiKeyEnvironmentScope(originalValues);
+      }
+
+      public void Dispose()
+      {
+        foreach (var (variableName, originalValue) in _originalValues)
+        {
+          Environment.SetEnvironmentVariable(variableName, originalValue);
+        }
+      }
     }
 
     private sealed class FakeWebHostEnvironment : IWebHostEnvironment

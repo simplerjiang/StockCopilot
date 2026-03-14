@@ -32,5 +32,7 @@ public sealed class EastmoneyCompanyProfileParserTests
         Assert.Equal("浦发银行", profile.Name);
         Assert.Equal("银行", profile.SectorName);
         Assert.Equal(119099, profile.ShareholderCount);
+        Assert.Contains(profile.Facts, item => item.Label == "所属行业" && item.Value == "银行");
+        Assert.Contains(profile.Facts, item => item.Label == "股东户数" && item.Value == "119099");
     }
 }

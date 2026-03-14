@@ -68,6 +68,33 @@ public sealed class LlmModule : IModule
         .WithName("GetLlmSettings")
         .WithOpenApi();
 
+        secureAdminGroup.MapGet("/llm/settings/active", async (ILlmSettingsStore store) =>
+        {
+            var activeProviderKey = await store.GetActiveProviderKeyAsync();
+            var providers = await store.GetAllAsync();
+            return Results.Ok(new ActiveLlmProviderResponse(
+                activeProviderKey,
+                providers.Select(item => item.Provider).OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray()));
+        })
+        .WithName("GetActiveLlmProvider")
+        .WithOpenApi();
+
+        secureAdminGroup.MapPut("/llm/settings/active", async (ActiveLlmProviderRequest request, ILlmSettingsStore store) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.ActiveProviderKey))
+            {
+                return Results.BadRequest(new { message = "ActiveProviderKey 不能为空" });
+            }
+
+            var activeProviderKey = await store.SetActiveProviderKeyAsync(request.ActiveProviderKey);
+            var providers = await store.GetAllAsync();
+            return Results.Ok(new ActiveLlmProviderResponse(
+                activeProviderKey,
+                providers.Select(item => item.Provider).OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray()));
+        })
+        .WithName("SetActiveLlmProvider")
+        .WithOpenApi();
+
         secureAdminGroup.MapGet("/llm/settings/{provider}", async (string provider, ILlmSettingsStore store) =>
         {
             var settings = await store.GetProviderAsync(provider);
@@ -83,9 +110,11 @@ public sealed class LlmModule : IModule
 
         secureAdminGroup.MapPut("/llm/settings/{provider}", async (string provider, LlmSettingsRequest request, ILlmSettingsStore store) =>
         {
+            var existing = await store.GetProviderAsync(provider);
             var updated = await store.UpsertAsync(new LlmProviderSettings
             {
                 Provider = provider,
+                ProviderType = existing?.ProviderType ?? "openai",
                 ApiKey = request.ApiKey ?? string.Empty,
                 BaseUrl = request.BaseUrl ?? string.Empty,
                 Model = request.Model ?? string.Empty,
@@ -275,6 +304,7 @@ public sealed class LlmModule : IModule
         var masked = MaskKey(settings.ApiKey);
         return new LlmSettingsResponse(
             settings.Provider,
+            settings.ProviderType,
             settings.BaseUrl,
             settings.Model,
             settings.SystemPrompt,

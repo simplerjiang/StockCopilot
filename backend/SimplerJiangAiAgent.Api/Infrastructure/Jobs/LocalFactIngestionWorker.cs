@@ -28,13 +28,24 @@ public sealed class LocalFactIngestionWorker : BackgroundService
                 var service = scope.ServiceProvider.GetRequiredService<ILocalFactIngestionService>();
                 await service.SyncAsync(stoppingToken);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "同步本地事实库失败");
             }
 
             var delay = TimeSpan.FromSeconds(Math.Max(30, _options.IntervalSeconds));
-            await Task.Delay(delay, stoppingToken);
+            try
+            {
+                await Task.Delay(delay, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 }

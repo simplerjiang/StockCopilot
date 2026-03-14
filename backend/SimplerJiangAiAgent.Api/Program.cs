@@ -58,6 +58,7 @@ else
 }
 
 builder.Services.AddHostedService<StockSyncWorker>();
+builder.Services.AddHostedService<HighFrequencyQuoteService>();
 builder.Services.AddHostedService<LocalFactIngestionWorker>();
 builder.Services.AddHostedService<SourceGovernanceWorker>();
 
@@ -73,6 +74,7 @@ using (var scope = app.Services.CreateScope())
     await StockMarketDataSchemaInitializer.EnsureAsync(dbContext);
     await LocalFactSchemaInitializer.EnsureAsync(dbContext);
     await SourceGovernanceSchemaInitializer.EnsureAsync(dbContext);
+    await TradingPlanSchemaInitializer.EnsureAsync(dbContext);
 }
 
 // 中间件管道

@@ -28,13 +28,33 @@ public sealed class SourceGovernanceWorker : BackgroundService
                 var service = scope.ServiceProvider.GetRequiredService<ISourceGovernanceService>();
                 await service.RunOnceAsync(stoppingToken);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (ObjectDisposedException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (ObjectDisposedException ex) when (string.Equals(ex.ObjectName, "IServiceProvider", StringComparison.Ordinal))
+            {
+                _logger.LogInformation("来源治理任务在宿主释放服务提供器后停止。");
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "来源治理任务执行失败");
             }
 
             var delay = TimeSpan.FromSeconds(Math.Max(300, _options.IntervalSeconds));
-            await Task.Delay(delay, stoppingToken);
+            try
+            {
+                await Task.Delay(delay, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 }

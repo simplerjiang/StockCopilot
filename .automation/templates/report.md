@@ -19,8 +19,9 @@
 2) Unit tests (frontend):
    - Command: cd frontend && npm run test:unit
    - Result:
-3) Edge MCP (if UI changes):
-   - Browser: msedge
+3) Browser MCP (if UI changes):
+   - Preferred tool: CopilotBrowser MCP
+   - Fallback browser: msedge (Playwright MCP only when trace/video/profile is needed)
    - Steps:
    - Result:
 
@@ -41,8 +42,9 @@
 2) 前端单元测试：
    - 命令：cd frontend && npm run test:unit
    - 结果：
-3) Edge MCP（如涉及 UI 变更）：
-   - 浏览器：msedge
+3) Browser MCP（如涉及 UI 变更）：
+   - 首选工具：CopilotBrowser MCP
+   - 回退浏览器：msedge（仅在需要 trace/video/profile 时使用 Playwright MCP）
    - 步骤：
    - 结果：
 

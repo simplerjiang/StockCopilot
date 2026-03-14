@@ -89,6 +89,10 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
                 await _dbContext.SaveChangesAsync(cancellationToken);
                 await _aiEnrichmentService.ProcessSymbolPendingAsync(symbol, cancellationToken);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "同步本地事实失败: {Symbol}", symbol);
@@ -286,6 +290,10 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
 
             return reports;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Array.Empty<LocalSectorReportSeed>();
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "抓取板块资讯失败: {SectorName}", sectorName);
@@ -327,6 +335,10 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         {
             return await FetchRollMessagesAsync(cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Array.Empty<IntradayMessageDto>();
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "抓取新浪滚动大盘资讯失败");
@@ -353,6 +365,10 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             return RssMarketNewsParser.Parse(content, source, sourceTag, crawledAt)
                 .Where(item => !IsBlockedSource(item.Source))
                 .ToArray();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Array.Empty<LocalSectorReportSeed>();
         }
         catch (Exception ex)
         {

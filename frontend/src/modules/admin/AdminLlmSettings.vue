@@ -1,16 +1,35 @@
 <script setup>
 import { computed, ref } from 'vue'
 
+const providerPresets = {
+  default: {
+    label: 'Default 通道',
+    baseUrl: 'https://api.bltcy.ai',
+    model: 'gemini-3.1-flash-lite-preview-thinking-high'
+  },
+  gemini_official: {
+    label: 'Gemini 官方',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-3.1-flash-lite-preview-thinking-high'
+  }
+}
+
+const providerOptions = Object.entries(providerPresets).map(([value, preset]) => ({
+  value,
+  label: preset.label
+}))
+
 const username = ref('')
 const password = ref('')
 const token = ref(localStorage.getItem('admin_token') || '')
 const loginError = ref('')
 const loginLoading = ref(false)
 
-const provider = ref('openai')
+const activeProviderKey = ref('default')
+const provider = ref('default')
 const apiKey = ref('')
-const baseUrl = ref('https://api.openai.com/v1')
-const model = ref('gpt-4o-mini')
+const baseUrl = ref(providerPresets.default.baseUrl)
+const model = ref(providerPresets.default.model)
 const organization = ref('')
 const project = ref('')
 const enabled = ref(true)
@@ -52,7 +71,10 @@ const login = async () => {
     const data = await response.json()
     token.value = data.token
     localStorage.setItem('admin_token', token.value)
-    await loadSettings()
+    const loaded = await loadActiveProvider()
+    if (loaded) {
+      await loadSettings()
+    }
   } catch (error) {
     loginError.value = error.message || '登录失败'
   } finally {
@@ -65,12 +87,46 @@ const logout = () => {
   localStorage.removeItem('admin_token')
 }
 
+const applyProviderPreset = selectedProvider => {
+  const preset = providerPresets[selectedProvider] || providerPresets.default
+  baseUrl.value = preset.baseUrl
+  model.value = preset.model
+  systemPrompt.value = ''
+  forceChinese.value = true
+  organization.value = ''
+  project.value = ''
+  enabled.value = true
+  apiKeyMasked.value = ''
+  hasApiKey.value = false
+}
+
+const loadActiveProvider = async () => {
+  const response = await fetch('/api/admin/llm/settings/active', {
+    headers: authHeaders()
+  })
+
+  if (response.status === 401 || response.status === 403) {
+    handleUnauthorized()
+    return false
+  }
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || '获取激活通道失败')
+  }
+
+  const data = await response.json()
+  activeProviderKey.value = data.activeProviderKey || 'default'
+  return true
+}
+
 const loadSettings = async () => {
   if (!token.value) return
   settingsLoading.value = true
   settingsError.value = ''
 
   try {
+    applyProviderPreset(provider.value)
     const response = await fetch(`/api/admin/llm/settings/${provider.value}`, {
       headers: authHeaders()
     })
@@ -81,8 +137,7 @@ const loadSettings = async () => {
     }
 
     if (response.status === 404) {
-      apiKeyMasked.value = ''
-      hasApiKey.value = false
+      applyProviderPreset(provider.value)
       settingsLoading.value = false
       return
     }
@@ -156,8 +211,49 @@ const saveSettings = async () => {
   }
 }
 
+const saveActiveProvider = async () => {
+  if (!token.value) return
+
+  settingsLoading.value = true
+  settingsError.value = ''
+  saveMessage.value = ''
+
+  try {
+    const response = await fetch('/api/admin/llm/settings/active', {
+      method: 'PUT',
+      headers: {
+        ...authHeaders(),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ activeProviderKey: activeProviderKey.value })
+    })
+
+    if (response.status === 401 || response.status === 403) {
+      handleUnauthorized()
+      return
+    }
+
+    if (!response.ok) {
+      const message = await response.text()
+      throw new Error(message || '切换激活通道失败')
+    }
+
+    const data = await response.json()
+    activeProviderKey.value = data.activeProviderKey || activeProviderKey.value
+    saveMessage.value = '激活通道已切换'
+  } catch (error) {
+    settingsError.value = error.message || '切换激活通道失败'
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
 if (token.value) {
-  loadSettings()
+  loadActiveProvider().then(loaded => {
+    if (loaded) {
+      loadSettings()
+    }
+  })
 }
 </script>
 
@@ -185,10 +281,20 @@ if (token.value) {
         <button class="secondary" @click="logout">退出登录</button>
       </div>
 
+      <div class="field compact-row">
+        <div class="field grow">
+          <label>激活通道</label>
+          <select v-model="activeProviderKey">
+            <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </div>
+        <button class="secondary compact-action" @click="saveActiveProvider" :disabled="settingsLoading">{{ settingsLoading ? '切换中...' : '切换激活通道' }}</button>
+      </div>
+
       <div class="field">
-        <label>Provider</label>
+        <label>编辑 Provider</label>
         <select v-model="provider" @change="loadSettings">
-          <option value="openai">OpenAI</option>
+          <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </div>
 
@@ -257,12 +363,28 @@ if (token.value) {
   margin-bottom: 0.8rem;
 }
 
+.compact-row {
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.grow {
+  flex: 1;
+  margin-bottom: 0;
+}
+
 .field input,
-.field select {
+.field select,
+.field textarea {
   padding: 0.6rem 0.75rem;
   border-radius: 10px;
   border: 1px solid #e2e8f0;
   font-size: 0.95rem;
+}
+
+.field textarea {
+  resize: vertical;
 }
 
 .field label.inline {
@@ -283,6 +405,10 @@ button {
 button.secondary {
   background: #e2e8f0;
   color: #1f2937;
+}
+
+.compact-action {
+  white-space: nowrap;
 }
 
 button:disabled {

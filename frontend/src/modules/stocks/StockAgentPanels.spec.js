@@ -75,4 +75,29 @@ describe('StockAgentPanels', () => {
     expect(wrapper.text()).toContain('放量突破 12.60')
     expect(wrapper.text()).toContain('跌破 11.90')
   })
+
+  it('emits draft-plan from commander card', async () => {
+    const wrapper = mount(StockAgentPanels, {
+      props: {
+        agents: [
+          {
+            agentId: 'commander',
+            agentName: '指挥Agent',
+            success: true,
+            data: {
+              summary: '偏多',
+              analysis_opinion: '等待确认',
+              triggers: [],
+              invalidations: [],
+              riskLimits: []
+            }
+          }
+        ]
+      }
+    })
+
+    await wrapper.find('.draft-plan-button').trigger('click')
+
+    expect(wrapper.emitted('draft-plan')).toEqual([[]])
+  })
 })

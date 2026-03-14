@@ -1,14 +1,20 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SimplerJiangAiAgent.Api.Data.Entities;
 
 namespace SimplerJiangAiAgent.Api.Data;
 
 public sealed class AppDbContext : DbContext
 {
+    private static readonly ValueConverter<TradingPlanStatus, string> TradingPlanStatusConverter = new(
+        status => status.ToString(),
+        value => ParseTradingPlanStatus(value));
+
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
     }
 
+    public DbSet<ActiveWatchlist> ActiveWatchlists => Set<ActiveWatchlist>();
     public DbSet<StockQuoteSnapshot> StockQuoteSnapshots => Set<StockQuoteSnapshot>();
     public DbSet<StockCompanyProfile> StockCompanyProfiles => Set<StockCompanyProfile>();
     public DbSet<MarketIndexSnapshot> MarketIndexSnapshots => Set<MarketIndexSnapshot>();
@@ -19,6 +25,7 @@ public sealed class AppDbContext : DbContext
     public DbSet<LocalSectorReport> LocalSectorReports => Set<LocalSectorReport>();
     public DbSet<StockQueryHistory> StockQueryHistories => Set<StockQueryHistory>();
     public DbSet<StockAgentAnalysisHistory> StockAgentAnalysisHistories => Set<StockAgentAnalysisHistory>();
+    public DbSet<TradingPlan> TradingPlans => Set<TradingPlan>();
     public DbSet<StockChatSession> StockChatSessions => Set<StockChatSession>();
     public DbSet<StockChatMessage> StockChatMessages => Set<StockChatMessage>();
     public DbSet<NewsSourceRegistry> NewsSourceRegistries => Set<NewsSourceRegistry>();
@@ -30,6 +37,29 @@ public sealed class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<ActiveWatchlist>()
+            .HasIndex(x => x.Symbol)
+            .IsUnique();
+
+        modelBuilder.Entity<ActiveWatchlist>()
+            .HasIndex(x => new { x.IsEnabled, x.UpdatedAt });
+
+        modelBuilder.Entity<ActiveWatchlist>()
+            .Property(x => x.Symbol)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<ActiveWatchlist>()
+            .Property(x => x.Name)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<ActiveWatchlist>()
+            .Property(x => x.SourceTag)
+            .HasMaxLength(64);
+
+        modelBuilder.Entity<ActiveWatchlist>()
+            .Property(x => x.Note)
+            .HasMaxLength(256);
+
         modelBuilder.Entity<StockQuoteSnapshot>()
             .HasIndex(x => new { x.Symbol, x.Timestamp });
 
@@ -60,6 +90,10 @@ public sealed class AppDbContext : DbContext
         modelBuilder.Entity<StockCompanyProfile>()
             .Property(x => x.SectorName)
             .HasMaxLength(128);
+
+        modelBuilder.Entity<StockCompanyProfile>()
+            .Property(x => x.FundamentalFactsJson)
+            .HasColumnType("nvarchar(max)");
 
         modelBuilder.Entity<MarketIndexSnapshot>()
             .HasIndex(x => new { x.Symbol, x.Timestamp });
@@ -97,6 +131,40 @@ public sealed class AppDbContext : DbContext
 
         modelBuilder.Entity<StockAgentAnalysisHistory>()
             .HasIndex(x => new { x.Symbol, x.CreatedAt });
+
+        modelBuilder.Entity<TradingPlan>()
+            .HasIndex(x => new { x.Symbol, x.CreatedAt });
+
+        modelBuilder.Entity<TradingPlan>()
+            .HasIndex(x => x.AnalysisHistoryId);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.Symbol)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.Name)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.Direction)
+            .HasConversion<string>()
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.Status)
+            .HasConversion(TradingPlanStatusConverter)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.SourceAgent)
+            .HasMaxLength(64);
+
+        modelBuilder.Entity<TradingPlan>()
+            .HasOne(x => x.AnalysisHistory)
+            .WithMany()
+            .HasForeignKey(x => x.AnalysisHistoryId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<StockChatSession>()
             .HasIndex(x => x.SessionKey)
@@ -162,5 +230,20 @@ public sealed class AppDbContext : DbContext
                 }
             }
         }
+    }
+
+    internal static TradingPlanStatus ParseTradingPlanStatus(string? value)
+    {
+        if (Enum.TryParse<TradingPlanStatus>(value, true, out var parsed))
+        {
+            return parsed;
+        }
+
+        if (string.Equals(value, "Archived", StringComparison.OrdinalIgnoreCase))
+        {
+            return TradingPlanStatus.Cancelled;
+        }
+
+        return TradingPlanStatus.Cancelled;
     }
 }

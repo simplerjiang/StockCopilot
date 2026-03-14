@@ -7,5 +7,7 @@ public sealed class StockCompanyProfile
     public string Name { get; set; } = string.Empty;
     public string? SectorName { get; set; }
     public int? ShareholderCount { get; set; }
+    public string? FundamentalFactsJson { get; set; }
+    public DateTime? FundamentalUpdatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

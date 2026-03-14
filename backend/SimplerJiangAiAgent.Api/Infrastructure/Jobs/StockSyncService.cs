@@ -42,7 +42,7 @@ public sealed class StockSyncService : IStockSyncService
             var messages = await _crawler.GetIntradayMessagesAsync(target, cancellationToken);
 
             _dbContext.StockQuoteSnapshots.Add(MapQuote(quote));
-            await UpsertCompanyProfileAsync(_dbContext, quote, cancellationToken);
+            await UpsertCompanyProfileAsync(_dbContext, quote, null, cancellationToken);
             await UpsertKLineAsync(_dbContext, target, "day", kline, cancellationToken);
             await UpsertMinuteLineAsync(_dbContext, target, minute, cancellationToken);
             await UpsertMessagesAsync(_dbContext, target, messages, cancellationToken);
@@ -61,7 +61,7 @@ public sealed class StockSyncService : IStockSyncService
         var symbol = StockSymbolNormalizer.Normalize(detail.Quote.Symbol);
 
         _dbContext.StockQuoteSnapshots.Add(MapQuote(detail.Quote with { Symbol = symbol }));
-    await UpsertCompanyProfileAsync(_dbContext, detail.Quote with { Symbol = symbol }, cancellationToken);
+        await UpsertCompanyProfileAsync(_dbContext, detail.Quote with { Symbol = symbol }, detail.FundamentalSnapshot, cancellationToken);
         await UpsertKLineAsync(_dbContext, symbol, interval, detail.KLines, cancellationToken);
         await UpsertMinuteLineAsync(_dbContext, symbol, detail.MinuteLines, cancellationToken);
         await UpsertMessagesAsync(_dbContext, symbol, detail.Messages, cancellationToken);
@@ -100,14 +100,15 @@ public sealed class StockSyncService : IStockSyncService
         };
     }
 
-    private static async Task UpsertCompanyProfileAsync(AppDbContext dbContext, StockQuoteDto quote, CancellationToken cancellationToken)
+    private static async Task UpsertCompanyProfileAsync(AppDbContext dbContext, StockQuoteDto quote, StockFundamentalSnapshotDto? fundamentalSnapshot, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(quote.SectorName) && !quote.ShareholderCount.HasValue)
+        if (string.IsNullOrWhiteSpace(quote.SectorName) && !quote.ShareholderCount.HasValue && (fundamentalSnapshot?.Facts.Count ?? 0) == 0)
         {
             return;
         }
 
         var symbol = StockSymbolNormalizer.Normalize(quote.Symbol);
+        var serializedFacts = StockFundamentalSnapshotMapper.SerializeFacts(fundamentalSnapshot?.Facts);
         var existing = await dbContext.StockCompanyProfiles.FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
         if (existing is null)
         {
@@ -117,6 +118,8 @@ public sealed class StockSyncService : IStockSyncService
                 Name = quote.Name,
                 SectorName = quote.SectorName,
                 ShareholderCount = quote.ShareholderCount,
+                FundamentalFactsJson = serializedFacts,
+                FundamentalUpdatedAt = fundamentalSnapshot?.UpdatedAt,
                 UpdatedAt = quote.Timestamp
             });
             return;
@@ -125,6 +128,8 @@ public sealed class StockSyncService : IStockSyncService
         existing.Name = quote.Name;
         existing.SectorName = quote.SectorName ?? existing.SectorName;
         existing.ShareholderCount = quote.ShareholderCount ?? existing.ShareholderCount;
+        existing.FundamentalFactsJson = serializedFacts ?? existing.FundamentalFactsJson;
+        existing.FundamentalUpdatedAt = fundamentalSnapshot?.UpdatedAt ?? existing.FundamentalUpdatedAt;
         existing.UpdatedAt = quote.Timestamp;
     }
 

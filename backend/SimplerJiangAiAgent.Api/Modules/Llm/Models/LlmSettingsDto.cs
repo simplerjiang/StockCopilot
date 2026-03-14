@@ -12,6 +12,7 @@ public sealed record LlmSettingsRequest(
 
 public sealed record LlmSettingsResponse(
     string Provider,
+    string ProviderType,
     string BaseUrl,
     string Model,
     string SystemPrompt,
@@ -22,3 +23,10 @@ public sealed record LlmSettingsResponse(
     bool HasApiKey,
     string ApiKeyMasked,
     DateTimeOffset UpdatedAt);
+
+public sealed record ActiveLlmProviderResponse(
+    string ActiveProviderKey,
+    string[] ProviderKeys);
+
+public sealed record ActiveLlmProviderRequest(
+    string ActiveProviderKey);

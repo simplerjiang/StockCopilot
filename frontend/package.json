@@ -12,7 +12,7 @@
   "dependencies": {
     "dompurify": "^3.1.7",
     "echarts": "^6.0.0",
-    "lightweight-charts": "^5.0.0",
+    "klinecharts": "10.0.0-beta1",
     "marked": "^16.2.1",
     "vue": "^3.5.24"
   },

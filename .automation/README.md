@@ -27,16 +27,17 @@ prepare the workspace and record state so Copilot can follow the prompts reliabl
 4) Rollback if needed:
    - .\ .automation\scripts\rollback.ps1 -Force
 
-## Playwright MCP (Edge)
-Use Edge for UI validation with MCP Playwright. If the MCP server supports channel selection,
-choose "msedge" and prefer a persistent context with your existing Edge profile.
+## Browser MCP
+Use CopilotBrowser MCP as the default UI validation tool against the backend-served frontend.
+It provides structured page snapshots, targeted clicks, console logs, and network request evidence with less setup than the Playwright Edge flow.
+Use Playwright MCP with Edge only when you explicitly need trace/video capture, channel selection, or persistent-profile behavior.
 See prompts/tester.md for the exact checklist.
-Typical Edge profile path (Windows):
+Typical Edge profile path for the fallback flow (Windows):
 - %LOCALAPPDATA%\Microsoft\Edge\User Data
 
 ## Mandatory Rules (Bilingual Logging & Tests)
 - After planning and after development, record all actions in a bilingual report
    (English for agents, Chinese for you).
-- After planning and after development, run unit tests and Edge MCP checks in order.
+- After planning and after development, run unit tests and Browser MCP checks in order.
 - If any test fails, fix and re-run both tests until they pass.
 - After both tests pass, update git (commit + push).

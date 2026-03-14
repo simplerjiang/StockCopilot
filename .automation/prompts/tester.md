@@ -4,8 +4,8 @@ Goal: validate changes and record results.
 
 Rules:
 - Run required unit tests or scripts.
-- For UI changes, use Playwright MCP with Edge.
-- Run tests in this order: unit tests -> Edge MCP.
+- For UI changes, use Browser MCP.
+- Run tests in this order: unit tests -> Browser MCP.
 - If any test fails, fix and re-run both tests until they pass.
 - Add feature-specific validation when applicable:
 	- News anti-pollution: verify low-quality/no-timestamp evidence is downgraded and cannot drive high-confidence buy/sell output.
@@ -16,9 +16,10 @@ Rules:
 Checklist:
 - dotnet test backend/SimplerJiangAiAgent.Api.Tests/SimplerJiangAiAgent.Api.Tests.csproj
 - cd frontend && npm run test:unit
-- UI changes: Playwright MCP with Edge (msedge channel), prefer persistent profile
-- Edge profile path (Windows): %LOCALAPPDATA%\Microsoft\Edge\User Data
-- Edge MCP: enable trace/video capture and note the output directory
+- UI changes: prefer CopilotBrowser MCP on the backend-served frontend (`http://localhost:<port>`)
+- Playwright Edge fallback: use only when trace/video capture, channel selection, or persistent-profile behavior is required
+- Edge profile path for fallback (Windows): %LOCALAPPDATA%\Microsoft\Edge\User Data
+- Browser MCP: record the page snapshot, key interactions, console errors, and network evidence
 - Backend logs: check for errors after UI run and note results
 - Record ports used (backend + MCP, plus frontend if applicable)
 - Record test steps + results in .automation/reports/<TASK_ID>-<TIMESTAMP>.md

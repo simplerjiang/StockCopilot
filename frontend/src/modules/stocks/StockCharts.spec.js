@@ -4,118 +4,107 @@ import { nextTick } from 'vue'
 import StockCharts from './StockCharts.vue'
 
 const chartMocks = vi.hoisted(() => ({
-  klineSetDataMock: vi.fn(),
-  volumeSetDataMock: vi.fn(),
-  ma5SetDataMock: vi.fn(),
-  ma10SetDataMock: vi.fn(),
-  klineResistanceSetDataMock: vi.fn(),
-  klineSupportSetDataMock: vi.fn(),
-  minuteSetDataMock: vi.fn(),
-  minuteVolumeSetDataMock: vi.fn(),
-  minuteResistanceSetDataMock: vi.fn(),
-  minuteSupportSetDataMock: vi.fn(),
-  minuteCreatePriceLineMock: vi.fn(),
-  minuteRemovePriceLineMock: vi.fn(),
-  subscribeCrosshairMoveMock: vi.fn(),
-  applyOptionsMock: vi.fn(),
-  fitContentMock: vi.fn(),
-  removeMock: vi.fn()
+  klineDataLoads: [],
+  minuteDataLoads: [],
+  klineIndicatorCalls: [],
+  minuteIndicatorCalls: [],
+  klineOverlayCalls: [],
+  minuteOverlayCalls: [],
+  klineResizeMock: vi.fn(),
+  minuteResizeMock: vi.fn(),
+  klineSubscribeActionMock: vi.fn(),
+  minuteSubscribeActionMock: vi.fn(),
+  disposeMock: vi.fn()
 }))
 
 const resizeObserverState = vi.hoisted(() => ({
   callback: null
 }))
 
-vi.mock('lightweight-charts', () => {
+vi.mock('klinecharts', () => {
   let createCount = 0
-  let klineLineSeriesCount = 0
-  let minuteLineSeriesCount = 0
 
-  const klineChart = {
-    addSeries: vi.fn(seriesType => {
-      if (seriesType === 'CandlestickSeries') {
-        return { setData: chartMocks.klineSetDataMock }
-      }
-      if (seriesType === 'HistogramSeries') {
-        return { setData: chartMocks.volumeSetDataMock }
-      }
-      if (seriesType === 'LineSeries') {
-        klineLineSeriesCount += 1
-        if (klineLineSeriesCount === 1) return { setData: chartMocks.ma5SetDataMock }
-        if (klineLineSeriesCount === 2) return { setData: chartMocks.ma10SetDataMock }
-        if (klineLineSeriesCount === 3) return { setData: chartMocks.klineResistanceSetDataMock }
-        return { setData: chartMocks.klineSupportSetDataMock }
-      }
-      return { setData: vi.fn() }
-    }),
-    priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
-    subscribeCrosshairMove: chartMocks.subscribeCrosshairMoveMock,
-    applyOptions: chartMocks.applyOptionsMock,
-    timeScale: vi.fn(() => ({ fitContent: chartMocks.fitContentMock })),
-    remove: chartMocks.removeMock
-  }
+  const makeChart = kind => {
+    const targetLoads = kind === 'kline' ? chartMocks.klineDataLoads : chartMocks.minuteDataLoads
+    const targetIndicators = kind === 'kline' ? chartMocks.klineIndicatorCalls : chartMocks.minuteIndicatorCalls
+    const targetOverlays = kind === 'kline' ? chartMocks.klineOverlayCalls : chartMocks.minuteOverlayCalls
+    const targetResize = kind === 'kline' ? chartMocks.klineResizeMock : chartMocks.minuteResizeMock
+    const targetSubscribe = kind === 'kline' ? chartMocks.klineSubscribeActionMock : chartMocks.minuteSubscribeActionMock
+    let loader = null
+    let symbol = { ticker: 'A-SHARE', pricePrecision: 2, volumePrecision: 0 }
+    let period = kind === 'minute' ? { type: 'minute', span: 1 } : { type: 'day', span: 1 }
 
-  const minuteChart = {
-    addSeries: vi.fn(seriesType => {
-      if (seriesType === 'AreaSeries') {
-        return {
-          setData: chartMocks.minuteSetDataMock,
-          createPriceLine: chartMocks.minuteCreatePriceLineMock,
-          removePriceLine: chartMocks.minuteRemovePriceLineMock
+    const invokeLoad = () => {
+      if (!loader?.getBars) return
+      loader.getBars({
+        type: 'init',
+        timestamp: null,
+        symbol,
+        period,
+        callback: data => {
+          targetLoads.push(data)
         }
-      }
-      if (seriesType === 'HistogramSeries') {
-        return { setData: chartMocks.minuteVolumeSetDataMock }
-      }
-      if (seriesType === 'LineSeries') {
-        minuteLineSeriesCount += 1
-        return { setData: minuteLineSeriesCount === 1 ? chartMocks.minuteResistanceSetDataMock : chartMocks.minuteSupportSetDataMock }
-      }
-      return { setData: vi.fn() }
-    }),
-    priceScale: vi.fn(() => ({ applyOptions: vi.fn() })),
-    subscribeCrosshairMove: chartMocks.subscribeCrosshairMoveMock,
-    applyOptions: chartMocks.applyOptionsMock,
-    timeScale: vi.fn(() => ({ fitContent: chartMocks.fitContentMock })),
-    remove: chartMocks.removeMock
+      })
+    }
+
+    return {
+      setStyles: vi.fn(),
+      setFormatter: vi.fn(),
+      setDataLoader: vi.fn(nextLoader => {
+        loader = nextLoader
+      }),
+      setSymbol: vi.fn(nextSymbol => {
+        symbol = { ...symbol, ...nextSymbol }
+        invokeLoad()
+      }),
+      setPeriod: vi.fn(nextPeriod => {
+        period = nextPeriod
+        invokeLoad()
+      }),
+      resetData: vi.fn(() => {
+        invokeLoad()
+      }),
+      createIndicator: vi.fn((value, isStack, paneOptions) => {
+        targetIndicators.push({ value, isStack, paneOptions })
+        return `${kind}-indicator-${targetIndicators.length}`
+      }),
+      removeIndicator: vi.fn(() => true),
+      createOverlay: vi.fn(value => {
+        targetOverlays.push(...(Array.isArray(value) ? value : [value]))
+        return `${kind}-overlay-${targetOverlays.length}`
+      }),
+      removeOverlay: vi.fn(() => true),
+      subscribeAction: vi.fn((type, callback) => {
+        targetSubscribe(type, callback)
+      }),
+      unsubscribeAction: vi.fn(),
+      scrollToRealTime: vi.fn(),
+      resize: targetResize
+    }
   }
 
   return {
-    createChart: vi.fn(() => {
+    init: vi.fn(() => {
       createCount += 1
-      if (createCount % 2 === 1) {
-        klineLineSeriesCount = 0
-      } else {
-        minuteLineSeriesCount = 0
-      }
-      return createCount % 2 === 1 ? klineChart : minuteChart
+      return createCount % 2 === 1 ? makeChart('kline') : makeChart('minute')
     }),
-    ColorType: { Solid: 'solid' },
-    CandlestickSeries: 'CandlestickSeries',
-    HistogramSeries: 'HistogramSeries',
-    AreaSeries: 'AreaSeries',
-    LineSeries: 'LineSeries'
+    dispose: chartMocks.disposeMock
   }
 })
 
 describe('StockCharts', () => {
   beforeEach(() => {
-    chartMocks.klineSetDataMock.mockClear()
-    chartMocks.volumeSetDataMock.mockClear()
-    chartMocks.ma5SetDataMock.mockClear()
-    chartMocks.ma10SetDataMock.mockClear()
-    chartMocks.klineResistanceSetDataMock.mockClear()
-    chartMocks.klineSupportSetDataMock.mockClear()
-    chartMocks.minuteSetDataMock.mockClear()
-    chartMocks.minuteVolumeSetDataMock.mockClear()
-    chartMocks.minuteResistanceSetDataMock.mockClear()
-    chartMocks.minuteSupportSetDataMock.mockClear()
-    chartMocks.minuteCreatePriceLineMock.mockClear()
-    chartMocks.minuteRemovePriceLineMock.mockClear()
-    chartMocks.subscribeCrosshairMoveMock.mockClear()
-    chartMocks.applyOptionsMock.mockClear()
-    chartMocks.fitContentMock.mockClear()
-    chartMocks.removeMock.mockClear()
+    chartMocks.klineDataLoads.length = 0
+    chartMocks.minuteDataLoads.length = 0
+    chartMocks.klineIndicatorCalls.length = 0
+    chartMocks.minuteIndicatorCalls.length = 0
+    chartMocks.klineOverlayCalls.length = 0
+    chartMocks.minuteOverlayCalls.length = 0
+    chartMocks.klineResizeMock.mockClear()
+    chartMocks.minuteResizeMock.mockClear()
+    chartMocks.klineSubscribeActionMock.mockClear()
+    chartMocks.minuteSubscribeActionMock.mockClear()
+    chartMocks.disposeMock.mockClear()
     window.matchMedia = vi.fn().mockReturnValue({
       matches: false,
       media: '',
@@ -165,7 +154,7 @@ describe('StockCharts', () => {
       { date: '2026-01-29', time: '09:30:00', price: 31.1, volume: 1800 }
     ]
 
-    mount(StockCharts, {
+    const wrapper = mount(StockCharts, {
       props: {
         kLines: [],
         minuteLines,
@@ -176,25 +165,24 @@ describe('StockCharts', () => {
 
     await nextTick()
 
-    expect(chartMocks.minuteSetDataMock).toHaveBeenCalled()
-    const minuteSeriesData = chartMocks.minuteSetDataMock.mock.calls.at(-1)?.[0] ?? []
+    expect(wrapper.text()).toContain('分时图')
+    const minuteSeriesData = chartMocks.minuteDataLoads.at(-1) ?? []
     expect(minuteSeriesData.length).toBe(2)
-    expect(minuteSeriesData[0].value).toBe(31.1)
-    expect(minuteSeriesData[0].time).toBeLessThan(minuteSeriesData[1].time)
+    expect(minuteSeriesData[0].close).toBe(31.1)
+    expect(minuteSeriesData[0].timestamp).toBeGreaterThan(1700000000000)
+    expect(minuteSeriesData[0].timestamp).toBeLessThan(minuteSeriesData[1].timestamp)
+    expect(minuteSeriesData[0].volume).toBe(1800)
+    expect(minuteSeriesData[1].volume).toBe(500)
 
-    expect(chartMocks.minuteVolumeSetDataMock).toHaveBeenCalled()
-    const minuteVolumeData = chartMocks.minuteVolumeSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    expect(minuteVolumeData[0].value).toBe(1800)
-    expect(minuteVolumeData[1].value).toBe(2300)
-    expect(chartMocks.minuteCreatePriceLineMock).toHaveBeenCalled()
+    const minuteIndicators = chartMocks.minuteIndicatorCalls.map(item => item.value?.name)
+    expect(minuteIndicators).toContain('VOL')
 
-    const minuteResistanceData = chartMocks.minuteResistanceSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    const minuteSupportData = chartMocks.minuteSupportSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    expect(minuteResistanceData).toHaveLength(2)
-    expect(minuteSupportData).toHaveLength(2)
-    expect(minuteResistanceData[0].value).toBe(32)
-    expect(minuteSupportData[0].value).toBe(30.5)
-    expect(minuteResistanceData[0].time).toBeLessThan(minuteResistanceData[1].time)
+    const minuteAiOverlays = chartMocks.minuteOverlayCalls.filter(item => item.groupId === 'minute-ai-levels')
+    const minuteBaseOverlay = chartMocks.minuteOverlayCalls.find(item => item.groupId === 'minute-base-line')
+    expect(minuteAiOverlays).toHaveLength(2)
+    expect(minuteAiOverlays[0].points[0].value).toBe(32)
+    expect(minuteAiOverlays[1].points[0].value).toBe(30.5)
+    expect(minuteBaseOverlay?.points[0].value).toBe(31.1)
   })
 
   it('sorts kline data and includes candlestick + volume + MA overlays', async () => {
@@ -223,8 +211,8 @@ describe('StockCharts', () => {
     })
 
     const kLines = [
-      { date: '2026-01-01', open: 8, close: 9, low: 7, high: 10, volume: 800 },
-      { date: '2026-01-02', open: 10, close: 11, low: 9, high: 12, volume: 1200 },
+      { date: '2026-01-01T00:00:00', open: 8, close: 9, low: 7, high: 10, volume: 800 },
+      { date: '2026-01-02T00:00:00', open: 10, close: 11, low: 9, high: 12, volume: 1200 },
       { date: '2026-01-03', open: 11, close: 10, low: 9.8, high: 11.5, volume: 900 },
       { date: '2026-01-04', open: 10, close: 10.8, low: 9.7, high: 11.1, volume: 880 },
       { date: '2026-01-05', open: 10.8, close: 11.6, low: 10.4, high: 11.8, volume: 1360 },
@@ -235,7 +223,7 @@ describe('StockCharts', () => {
       { date: '2026-01-10', open: 12.8, close: 13.1, low: 12.4, high: 13.3, volume: 1750 }
     ]
 
-    mount(StockCharts, {
+    const wrapper = mount(StockCharts, {
       props: {
         kLines,
         minuteLines: [],
@@ -246,33 +234,92 @@ describe('StockCharts', () => {
 
     await nextTick()
 
-    expect(chartMocks.klineSetDataMock).toHaveBeenCalled()
-    expect(chartMocks.volumeSetDataMock).toHaveBeenCalled()
-    expect(chartMocks.ma5SetDataMock).toHaveBeenCalled()
-    expect(chartMocks.ma10SetDataMock).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('专业图表终端')
 
-    const klineData = chartMocks.klineSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    expect(klineData[0].time).toEqual({ year: 2026, month: 1, day: 1 })
+    const klineData = chartMocks.klineDataLoads.at(-1) ?? []
+    expect(klineData[0].timestamp).toBeLessThan(klineData[1].timestamp)
+    expect(klineData[0].timestamp).toBeGreaterThan(1700000000000)
     expect(klineData[0].open).toBe(8)
     expect(klineData[1].close).toBe(11)
 
-    const volumeData = chartMocks.volumeSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    expect(volumeData[0].value).toBe(800)
-    expect(volumeData.at(-1).value).toBe(1750)
+    const klineIndicators = chartMocks.klineIndicatorCalls.map(item => item.value)
+    expect(klineIndicators.some(item => item?.name === 'MA' && item?.calcParams?.join(',') === '5,10')).toBe(true)
+    expect(klineIndicators.some(item => item?.name === 'VOL')).toBe(true)
 
-    const ma5Data = chartMocks.ma5SetDataMock.mock.calls.at(-1)?.[0] ?? []
-    const ma10Data = chartMocks.ma10SetDataMock.mock.calls.at(-1)?.[0] ?? []
-    const resistanceData = chartMocks.klineResistanceSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    const supportData = chartMocks.klineSupportSetDataMock.mock.calls.at(-1)?.[0] ?? []
-    expect(ma5Data.length).toBe(6)
-    expect(ma10Data.length).toBe(1)
-    expect(ma10Data[0].time).toEqual({ year: 2026, month: 1, day: 10 })
-    expect(resistanceData).toHaveLength(2)
-    expect(supportData).toHaveLength(2)
-    expect(resistanceData[0].time).toEqual({ year: 2026, month: 1, day: 1 })
-    expect(resistanceData[1].time).toEqual({ year: 2026, month: 1, day: 10 })
-    expect(resistanceData[0].value).toBe(13.5)
-    expect(supportData[0].value).toBe(11.4)
+    const aiOverlays = chartMocks.klineOverlayCalls.filter(item => item.groupId === 'kline-ai-levels')
+    expect(aiOverlays).toHaveLength(2)
+    expect(aiOverlays[0].points[0].value).toBe(13.5)
+    expect(aiOverlays[1].points[0].value).toBe(11.4)
+  })
+
+  it('keeps monthly and yearly kline timestamps renderable for higher timeframes', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 300
+      }
+    })
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [
+          { date: '2025-01-01T00:00:00', open: 100, close: 110, low: 90, high: 115, volume: 240000 },
+          { date: '2026-01-01T00:00:00', open: 111, close: 125, low: 105, high: 130, volume: 360000 }
+        ],
+        minuteLines: [],
+        interval: 'year'
+      }
+    })
+
+    await nextTick()
+
+    const klineData = chartMocks.klineDataLoads.at(-1) ?? []
+    expect(klineData).toHaveLength(2)
+    expect(klineData[0].timestamp).toBeGreaterThan(1700000000000)
+    expect(klineData[1].timestamp).toBeGreaterThan(klineData[0].timestamp)
+    expect(wrapper.find('.chart-mode').text()).toContain('年K图')
+  })
+
+  it('switches to unified chart tabs and only emits interval updates for K-line tabs', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 320
+      }
+    })
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [{ date: '2026-01-01', open: 8, close: 9, low: 7, high: 10, volume: 800 }],
+        minuteLines: [{ date: '2026-01-01', time: '09:30:00', price: 9, volume: 500 }],
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+
+    const tabs = wrapper.findAll('.tab')
+    expect(tabs.map(tab => tab.text())).toEqual(['分时图', '日K图', '月K图', '年K图'])
+
+    await tabs[0].trigger('click')
+    expect(wrapper.emitted('update:interval') ?? []).toHaveLength(0)
+    expect(wrapper.find('.tab.active').text()).toBe('分时图')
+
+    await tabs[2].trigger('click')
+    expect(wrapper.find('.tab.active').text()).toBe('月K图')
+    expect(wrapper.emitted('update:interval')).toEqual([['month']])
   })
 
   it('resizes charts after ResizeObserver reports sidebar layout changes', async () => {
@@ -298,7 +345,8 @@ describe('StockCharts', () => {
     })
 
     await nextTick()
-    chartMocks.applyOptionsMock.mockClear()
+  chartMocks.klineResizeMock.mockClear()
+  chartMocks.minuteResizeMock.mockClear()
 
     const charts = wrapper.findAll('.chart')
     Object.defineProperty(charts[0].element, 'clientWidth', { configurable: true, get: () => 720 })
@@ -309,7 +357,7 @@ describe('StockCharts', () => {
     resizeObserverState.callback?.([{ target: charts[0].element, contentRect: { width: 720, height: 360 } }])
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(chartMocks.applyOptionsMock).toHaveBeenCalled()
-    expect(chartMocks.applyOptionsMock.mock.calls.some(([options]) => options.width === 720 && options.height === 360)).toBe(true)
+    expect(chartMocks.klineResizeMock).toHaveBeenCalled()
+    expect(chartMocks.minuteResizeMock).toHaveBeenCalled()
   })
 })

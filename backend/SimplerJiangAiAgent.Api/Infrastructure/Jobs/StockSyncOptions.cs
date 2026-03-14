@@ -3,8 +3,8 @@ namespace SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 public sealed class StockSyncOptions
 {
     public const string SectionName = "StockSync";
-    public const string DefaultAiProvider = "openai";
-    public const string DefaultAiModel = "gemini-2.0-flash-lite";
+    public const string DefaultAiProvider = "active";
+    public const string DefaultAiModel = "gpt-4.1-nano";
 
     // 同步间隔（秒）
     public int IntervalSeconds { get; set; } = 60;

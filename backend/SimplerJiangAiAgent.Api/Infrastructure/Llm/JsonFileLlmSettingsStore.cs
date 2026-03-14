@@ -5,6 +5,9 @@ namespace SimplerJiangAiAgent.Api.Infrastructure.Llm;
 
 public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
 {
+    private const string DefaultProviderKey = "default";
+    private const string ActiveProviderAlias = "active";
+    private const string LegacyOpenAiProviderKey = "openai";
     private readonly string _defaultsFilePath;
     private readonly string _localSecretsFilePath;
     private readonly SemaphoreSlim _mutex = new(1, 1);
@@ -27,6 +30,47 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
         return document.Providers.Values.ToArray();
     }
 
+    public async Task<string> GetActiveProviderKeyAsync(CancellationToken cancellationToken = default)
+    {
+        var document = await LoadMergedAsync(cancellationToken);
+        return ResolveProviderKey(document.ActiveProviderKey, document);
+    }
+
+    public async Task<string> SetActiveProviderKeyAsync(string provider, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            throw new ArgumentException("Provider 不能为空", nameof(provider));
+        }
+
+        await _mutex.WaitAsync(cancellationToken);
+        try
+        {
+            var defaultsDocument = NormalizeDocument(await LoadDocumentAsync(_defaultsFilePath, cancellationToken, requireLock: false));
+            var localSecretsDocument = NormalizeDocument(await LoadDocumentAsync(_localSecretsFilePath, cancellationToken, requireLock: false));
+            var merged = MergeDocuments(defaultsDocument, localSecretsDocument);
+            var resolved = ResolveProviderKey(provider, merged);
+            if (!merged.Providers.ContainsKey(resolved))
+            {
+                throw new InvalidOperationException($"未找到 provider: {provider}");
+            }
+
+            defaultsDocument.ActiveProviderKey = resolved;
+            await SaveDocumentAsync(_defaultsFilePath, defaultsDocument, cancellationToken);
+            return resolved;
+        }
+        finally
+        {
+            _mutex.Release();
+        }
+    }
+
+    public async Task<string> ResolveProviderKeyAsync(string? provider, CancellationToken cancellationToken = default)
+    {
+        var document = await LoadMergedAsync(cancellationToken);
+        return ResolveProviderKey(provider, document);
+    }
+
     public async Task<LlmProviderSettings?> GetProviderAsync(string provider, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(provider))
@@ -35,7 +79,8 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
         }
 
         var document = await LoadMergedAsync(cancellationToken);
-        document.Providers.TryGetValue(provider.Trim(), out var settings);
+        var resolvedProvider = ResolveProviderKey(provider, document);
+        document.Providers.TryGetValue(resolvedProvider, out var settings);
         return settings;
     }
 
@@ -50,23 +95,31 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
         await _mutex.WaitAsync(cancellationToken);
         try
         {
-            var defaultsDocument = await LoadDocumentAsync(_defaultsFilePath, cancellationToken, requireLock: false);
-            var localSecretsDocument = await LoadDocumentAsync(_localSecretsFilePath, cancellationToken, requireLock: false);
+            var defaultsDocument = NormalizeDocument(await LoadDocumentAsync(_defaultsFilePath, cancellationToken, requireLock: false));
+            var localSecretsDocument = NormalizeDocument(await LoadDocumentAsync(_localSecretsFilePath, cancellationToken, requireLock: false));
+            var providerKey = NormalizeProviderKey(settings.Provider);
 
-            if (!defaultsDocument.Providers.TryGetValue(settings.Provider, out var existingDefaults))
+            if (!defaultsDocument.Providers.TryGetValue(providerKey, out var existingDefaults))
             {
-                existingDefaults = new LlmProviderSettings { Provider = settings.Provider };
+                existingDefaults = new LlmProviderSettings { Provider = providerKey, ProviderType = "openai" };
             }
 
-            if (!localSecretsDocument.Providers.TryGetValue(settings.Provider, out var existingSecrets))
+            if (!localSecretsDocument.Providers.TryGetValue(providerKey, out var existingSecrets))
             {
-                existingSecrets = new LlmProviderSettings { Provider = settings.Provider };
+                existingSecrets = new LlmProviderSettings { Provider = providerKey, ProviderType = existingDefaults.ProviderType };
             }
 
             if (!string.IsNullOrWhiteSpace(settings.ApiKey))
             {
                 existingSecrets.ApiKey = settings.ApiKey.Trim();
             }
+
+            existingDefaults.Provider = providerKey;
+            existingDefaults.ProviderType = string.IsNullOrWhiteSpace(settings.ProviderType)
+                ? NormalizeProviderType(existingDefaults.ProviderType)
+                : NormalizeProviderType(settings.ProviderType);
+            existingSecrets.Provider = providerKey;
+            existingSecrets.ProviderType = existingDefaults.ProviderType;
 
             if (!string.IsNullOrWhiteSpace(settings.BaseUrl))
             {
@@ -98,22 +151,24 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
             existingDefaults.Enabled = settings.Enabled;
             existingDefaults.UpdatedAt = DateTimeOffset.UtcNow;
             existingDefaults.ApiKey = string.Empty;
-            existingSecrets.Provider = settings.Provider;
 
-            defaultsDocument.Providers[settings.Provider] = existingDefaults;
+            defaultsDocument.Providers[providerKey] = existingDefaults;
             if (!string.IsNullOrWhiteSpace(existingSecrets.ApiKey))
             {
-                localSecretsDocument.Providers[settings.Provider] = new LlmProviderSettings
+                localSecretsDocument.Providers[providerKey] = new LlmProviderSettings
                 {
-                    Provider = settings.Provider,
+                    Provider = providerKey,
+                    ProviderType = existingDefaults.ProviderType,
                     ApiKey = existingSecrets.ApiKey,
                     UpdatedAt = existingDefaults.UpdatedAt
                 };
             }
             else
             {
-                localSecretsDocument.Providers.Remove(settings.Provider);
+                localSecretsDocument.Providers.Remove(providerKey);
             }
+
+            defaultsDocument.ActiveProviderKey = ResolveProviderKey(defaultsDocument.ActiveProviderKey, MergeDocuments(defaultsDocument, localSecretsDocument));
 
             await SaveDocumentAsync(_defaultsFilePath, defaultsDocument, cancellationToken);
             await SaveDocumentAsync(_localSecretsFilePath, localSecretsDocument, cancellationToken, deleteWhenEmpty: true);
@@ -199,7 +254,12 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
 
     private static LlmSettingsDocument MergeDocuments(LlmSettingsDocument defaultsDocument, LlmSettingsDocument localSecretsDocument)
     {
-        var merged = new LlmSettingsDocument();
+        defaultsDocument = NormalizeDocument(defaultsDocument);
+        localSecretsDocument = NormalizeDocument(localSecretsDocument);
+        var merged = new LlmSettingsDocument
+        {
+            ActiveProviderKey = defaultsDocument.ActiveProviderKey
+        };
 
         foreach (var (provider, settings) in defaultsDocument.Providers)
         {
@@ -210,7 +270,7 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
         {
             if (!merged.Providers.TryGetValue(provider, out var mergedSettings))
             {
-                mergedSettings = new LlmProviderSettings { Provider = provider };
+                mergedSettings = new LlmProviderSettings { Provider = provider, ProviderType = settings.ProviderType };
                 merged.Providers[provider] = mergedSettings;
             }
 
@@ -229,6 +289,8 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
             }
         }
 
+        merged.ActiveProviderKey = ResolveProviderKey(merged.ActiveProviderKey, merged);
+
         return merged;
     }
 
@@ -246,6 +308,7 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
         return new LlmProviderSettings
         {
             Provider = source.Provider,
+            ProviderType = NormalizeProviderType(source.ProviderType),
             ApiKey = string.Empty,
             BaseUrl = source.BaseUrl,
             Model = source.Model,
@@ -273,7 +336,8 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
             return providerScopedValue.Trim();
         }
 
-        if (string.Equals(provider, "openai", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(provider, DefaultProviderKey, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(provider, LegacyOpenAiProviderKey, StringComparison.OrdinalIgnoreCase))
         {
             var openAiValue = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
             if (!string.IsNullOrWhiteSpace(openAiValue))
@@ -282,6 +346,126 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
             }
         }
 
+        if (string.Equals(provider, "gemini_official", StringComparison.OrdinalIgnoreCase))
+        {
+            var geminiValue = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+            if (!string.IsNullOrWhiteSpace(geminiValue))
+            {
+                return geminiValue.Trim();
+            }
+
+            var googleValue = Environment.GetEnvironmentVariable("GOOGLE_API_KEY");
+            if (!string.IsNullOrWhiteSpace(googleValue))
+            {
+                return googleValue.Trim();
+            }
+        }
+
         return string.Empty;
+    }
+
+    private static LlmSettingsDocument NormalizeDocument(LlmSettingsDocument? document)
+    {
+        document ??= new LlmSettingsDocument();
+        var normalized = new LlmSettingsDocument
+        {
+            ActiveProviderKey = string.IsNullOrWhiteSpace(document.ActiveProviderKey)
+                ? DefaultProviderKey
+                : document.ActiveProviderKey.Trim()
+        };
+
+        foreach (var (provider, settings) in document.Providers)
+        {
+            var key = NormalizeProviderKey(provider);
+            var clone = CloneWithSecret(settings);
+            clone.Provider = key;
+            clone.ProviderType = NormalizeProviderType(clone.ProviderType);
+            normalized.Providers[key] = clone;
+        }
+
+        if (!normalized.Providers.ContainsKey(DefaultProviderKey) && normalized.Providers.TryGetValue(LegacyOpenAiProviderKey, out var legacy))
+        {
+            var migrated = CloneWithSecret(legacy);
+            migrated.Provider = DefaultProviderKey;
+            migrated.ProviderType = NormalizeProviderType(migrated.ProviderType);
+            normalized.Providers[DefaultProviderKey] = migrated;
+            normalized.Providers.Remove(LegacyOpenAiProviderKey);
+        }
+
+        normalized.ActiveProviderKey = ResolveProviderKey(normalized.ActiveProviderKey, normalized);
+        return normalized;
+    }
+
+    private static LlmProviderSettings CloneWithSecret(LlmProviderSettings source)
+    {
+        return new LlmProviderSettings
+        {
+            Provider = source.Provider,
+            ProviderType = NormalizeProviderType(source.ProviderType),
+            ApiKey = source.ApiKey,
+            BaseUrl = source.BaseUrl,
+            Model = source.Model,
+            SystemPrompt = source.SystemPrompt,
+            ForceChinese = source.ForceChinese,
+            Organization = source.Organization,
+            Project = source.Project,
+            Enabled = source.Enabled,
+            UpdatedAt = source.UpdatedAt
+        };
+    }
+
+    private static string NormalizeProviderKey(string provider)
+    {
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            return DefaultProviderKey;
+        }
+
+        var trimmed = provider.Trim();
+        if (string.Equals(trimmed, LegacyOpenAiProviderKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return DefaultProviderKey;
+        }
+
+        return trimmed;
+    }
+
+    private static string NormalizeProviderType(string? providerType)
+    {
+        return string.IsNullOrWhiteSpace(providerType)
+            ? "openai"
+            : providerType.Trim().ToLowerInvariant();
+    }
+
+    private static string ResolveProviderKey(string? provider, LlmSettingsDocument document)
+    {
+        var requested = string.IsNullOrWhiteSpace(provider)
+            ? ActiveProviderAlias
+            : provider.Trim();
+
+        if (string.Equals(requested, ActiveProviderAlias, StringComparison.OrdinalIgnoreCase))
+        {
+            requested = string.IsNullOrWhiteSpace(document.ActiveProviderKey)
+                ? DefaultProviderKey
+                : document.ActiveProviderKey.Trim();
+        }
+
+        requested = NormalizeProviderKey(requested);
+        if (document.Providers.ContainsKey(requested))
+        {
+            return requested;
+        }
+
+        if (document.Providers.Count == 0)
+        {
+            return requested;
+        }
+
+        if (document.Providers.ContainsKey(DefaultProviderKey))
+        {
+            return DefaultProviderKey;
+        }
+
+        return document.Providers.Keys.First();
     }
 }

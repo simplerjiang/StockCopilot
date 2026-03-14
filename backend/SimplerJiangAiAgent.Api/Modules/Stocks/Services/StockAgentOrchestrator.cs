@@ -154,7 +154,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
     {
         var definition = StockAgentCatalog.GetDefinition(kind);
         var prompt = StockAgentPromptBuilder.BuildPrompt(kind, contextJson, dependencyResults);
-        var provider = string.IsNullOrWhiteSpace(request.Provider) ? "openai" : request.Provider.Trim();
+        var provider = string.IsNullOrWhiteSpace(request.Provider) ? "active" : request.Provider.Trim();
         var allowInternet = StockAgentInternetRoutingPolicy.ResolveUseInternet(request.Symbol, kind, request.UseInternet);
         var model = StockAgentModelRoutingPolicy.ResolveModel(request.Model, request.IsPro);
 

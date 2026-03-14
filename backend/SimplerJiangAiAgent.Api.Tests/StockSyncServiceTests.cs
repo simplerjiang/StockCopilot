@@ -67,6 +67,33 @@ public class StockSyncServiceTests
         Assert.Single(dbContext.IntradayMessages);
     }
 
+    [Fact]
+    public async Task SaveDetailAsync_ShouldPersistRealtimePayloadWithoutKLine()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var dbContext = new AppDbContext(options);
+        var crawler = new FakeCrawler();
+        var syncOptions = Options.Create(new StockSyncOptions());
+
+        var service = new StockSyncService(dbContext, crawler, syncOptions);
+        var detail = new StockDetailDto(
+            new StockQuoteDto("sh600000", "示例", 1m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, DateTime.UtcNow, Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(), 100000000m, 1.1m, 8888, "银行"),
+            Array.Empty<KLinePointDto>(),
+            new List<MinuteLinePointDto> { new(DateOnly.FromDateTime(DateTime.Today), new TimeSpan(9, 30, 0), 1m, 1m, 10m) },
+            new List<IntradayMessageDto> { new("消息", "来源", DateTime.UtcNow, null) }
+        );
+
+        await service.SaveDetailAsync(detail, "day");
+
+        Assert.Single(dbContext.StockQuoteSnapshots);
+        Assert.Empty(dbContext.KLinePoints);
+        Assert.Single(dbContext.MinuteLinePoints);
+        Assert.Single(dbContext.IntradayMessages);
+    }
+
     private sealed class FakeCrawler : IStockCrawler
     {
         public string SourceName => "Fake";

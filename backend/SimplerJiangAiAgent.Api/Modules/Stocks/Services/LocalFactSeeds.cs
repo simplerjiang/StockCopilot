@@ -1,3 +1,5 @@
+using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
+
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 internal sealed record LocalStockNewsSeed(
@@ -31,5 +33,6 @@ internal sealed record EastmoneyCompanyProfileDto(
     string Symbol,
     string Name,
     string? SectorName,
-    int? ShareholderCount
+    int? ShareholderCount,
+    IReadOnlyList<StockFundamentalFactDto> Facts
 );

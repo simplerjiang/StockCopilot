@@ -26,4 +26,17 @@ public class EastmoneyStockParserTests
         Assert.Single(list);
         Assert.Equal(11.12m, list[0].Price);
     }
+
+    [Fact]
+    public void ParseIntradayMessages_ShouldBuildRecentEastmoneyTapeMessages()
+    {
+        var json = "{\"data\":{\"details\":[\"14:56:37,10.26,164,24,1\",\"14:56:40,10.27,298,27,2\"]}}";
+
+        var list = EastmoneyStockParser.ParseIntradayMessages("sh600000", json, new DateTimeOffset(2026, 3, 14, 7, 0, 0, TimeSpan.Zero));
+
+        Assert.Equal(2, list.Count);
+        Assert.Equal("东方财富逐笔", list[0].Source);
+        Assert.Contains("14:56:40 买盘 298手 @ 10.27", list[0].Title);
+        Assert.Contains("14:56:37 卖盘 164手 @ 10.26", list[1].Title);
+    }
 }

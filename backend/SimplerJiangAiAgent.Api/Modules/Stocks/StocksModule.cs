@@ -25,7 +25,10 @@ public sealed class StocksModule : IModule
         services.AddTransient<IStockCrawlerSource, SinaStockCrawler>();
         services.AddTransient<IStockCrawlerSource, BaiduStockCrawler>();
         services.AddTransient<IStockCrawlerSource, EastmoneyStockCrawler>();
+        services.AddTransient<IStockFundamentalSnapshotService, EastmoneyFundamentalSnapshotService>();
         services.AddSingleton<IStockCrawler, CompositeStockCrawler>();
+        services.Configure<HighFrequencyQuoteOptions>(configuration.GetSection(HighFrequencyQuoteOptions.SectionName));
+        services.AddScoped<IActiveWatchlistService, ActiveWatchlistService>();
         services.AddScoped<ILocalFactIngestionService, LocalFactIngestionService>();
         services.AddScoped<ILocalFactAiEnrichmentService, LocalFactAiEnrichmentService>();
         services.AddScoped<IQueryLocalFactDatabaseTool, QueryLocalFactDatabaseTool>();
@@ -34,6 +37,8 @@ public sealed class StocksModule : IModule
         services.AddTransient<IStockSearchService, StockSearchService>();
         services.AddScoped<IStockAgentOrchestrator, StockAgentOrchestrator>();
         services.AddScoped<IStockAgentHistoryService, StockAgentHistoryService>();
+        services.AddScoped<ITradingPlanDraftService, TradingPlanDraftService>();
+        services.AddScoped<ITradingPlanService, TradingPlanService>();
         services.AddScoped<IStockChatHistoryService, StockChatHistoryService>();
         services.AddScoped<IStockNewsImpactService, StockNewsImpactService>();
         services.AddScoped<IStockSignalService, StockSignalService>();
@@ -43,6 +48,89 @@ public sealed class StocksModule : IModule
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/stocks");
+
+        group.MapGet("/watchlist", async (IActiveWatchlistService watchlistService) =>
+        {
+            var items = await watchlistService.GetAllAsync();
+            var result = items
+                .Select(item => new ActiveWatchlistItemDto(
+                    item.Id,
+                    item.Symbol,
+                    item.Name,
+                    item.SourceTag,
+                    item.Note,
+                    item.IsEnabled,
+                    item.CreatedAt,
+                    item.UpdatedAt,
+                    item.LastQuoteSyncAt))
+                .ToArray();
+            return Results.Ok(result);
+        })
+        .WithName("GetActiveWatchlist")
+        .WithOpenApi();
+
+        group.MapPost("/watchlist", async (ActiveWatchlistUpsertDto request, IActiveWatchlistService watchlistService) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var item = await watchlistService.UpsertAsync(
+                request.Symbol,
+                request.Name,
+                request.SourceTag,
+                request.Note,
+                request.IsEnabled ?? true);
+
+            return Results.Ok(new ActiveWatchlistItemDto(
+                item.Id,
+                item.Symbol,
+                item.Name,
+                item.SourceTag,
+                item.Note,
+                item.IsEnabled,
+                item.CreatedAt,
+                item.UpdatedAt,
+                item.LastQuoteSyncAt));
+        })
+        .WithName("UpsertActiveWatchlist")
+        .WithOpenApi();
+
+        group.MapPost("/watchlist/{symbol}/touch", async (string symbol, ActiveWatchlistTouchDto? request, IActiveWatchlistService watchlistService) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var item = await watchlistService.TouchAsync(symbol, request?.Name, request?.SourceTag, request?.Note);
+            return Results.Ok(new ActiveWatchlistItemDto(
+                item.Id,
+                item.Symbol,
+                item.Name,
+                item.SourceTag,
+                item.Note,
+                item.IsEnabled,
+                item.CreatedAt,
+                item.UpdatedAt,
+                item.LastQuoteSyncAt));
+        })
+        .WithName("TouchActiveWatchlist")
+        .WithOpenApi();
+
+        group.MapDelete("/watchlist/{symbol}", async (string symbol, IActiveWatchlistService watchlistService) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var removed = await watchlistService.RemoveAsync(symbol);
+            return removed ? Results.NoContent() : Results.NotFound();
+        })
+        .WithName("DeleteActiveWatchlist")
+        .WithOpenApi();
 
         // 查询单个股票信息（包含新闻与指标）
         group.MapGet("/quote", async (string symbol, string? source, IStockDataService dataService) =>
@@ -273,7 +361,7 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // 获取组合详情
-        group.MapGet("/detail", async (string symbol, string? interval, int? count, string? source, bool? persist, IStockDataService dataService, IStockSyncService syncService, IStockHistoryService historyService) =>
+        group.MapGet("/detail", async (string symbol, string? interval, int? count, string? source, bool? persist, IStockDataService dataService, IStockFundamentalSnapshotService fundamentalSnapshotService, IStockSyncService syncService, IStockHistoryService historyService, HttpContext httpContext) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
             {
@@ -282,16 +370,26 @@ public sealed class StocksModule : IModule
 
             var target = symbol.Trim();
             var selectedInterval = interval ?? "day";
-            var quote = await dataService.GetQuoteAsync(target, source);
-            var kline = await dataService.GetKLineAsync(target, selectedInterval, count ?? 60, source);
-            var minute = await dataService.GetMinuteLineAsync(target, source);
-            var messages = await dataService.GetIntradayMessagesAsync(target, source);
+            var cancellationToken = httpContext.RequestAborted;
+            var quoteTask = dataService.GetQuoteAsync(target, source, cancellationToken);
+            var klineTask = dataService.GetKLineAsync(target, selectedInterval, count ?? 60, source, cancellationToken);
+            var minuteTask = dataService.GetMinuteLineAsync(target, source, cancellationToken);
+            var messagesTask = dataService.GetIntradayMessagesAsync(target, source, cancellationToken);
+            var fundamentalSnapshotTask = fundamentalSnapshotService.GetSnapshotAsync(target, cancellationToken);
 
-            var detail = new StockDetailDto(quote, kline, minute, messages);
+            await Task.WhenAll(quoteTask, klineTask, minuteTask, messagesTask, fundamentalSnapshotTask);
+
+            var quote = await quoteTask;
+            var kline = await klineTask;
+            var minute = await minuteTask;
+            var messages = await messagesTask;
+            var fundamentalSnapshot = await fundamentalSnapshotTask;
+
+            var detail = new StockDetailDto(quote, kline, minute, messages, fundamentalSnapshot);
             if (persist is null || persist.Value)
             {
-                await syncService.SaveDetailAsync(detail, selectedInterval);
-                await historyService.UpsertAsync(quote);
+                await syncService.SaveDetailAsync(detail, selectedInterval, cancellationToken);
+                await historyService.UpsertAsync(quote, cancellationToken);
             }
             return Results.Ok(detail);
         })
@@ -411,6 +509,103 @@ public sealed class StocksModule : IModule
         .WithName("CreateStockAgentHistory")
         .WithOpenApi();
 
+        group.MapGet("/plans", async (string? symbol, int? take, ITradingPlanService tradingPlanService) =>
+        {
+            var list = await tradingPlanService.GetListAsync(symbol, take ?? 20);
+            return Results.Ok(list.Select(item => MapTradingPlanDto(item)).ToArray());
+        })
+        .WithName("GetTradingPlans")
+        .WithOpenApi();
+
+        group.MapGet("/plans/{id:long}", async (long id, ITradingPlanService tradingPlanService) =>
+        {
+            var item = await tradingPlanService.GetByIdAsync(id);
+            return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+        })
+        .WithName("GetTradingPlanById")
+        .WithOpenApi();
+
+        group.MapPost("/plans/draft", async (TradingPlanDraftRequestDto request, ITradingPlanDraftService draftService) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            if (request.AnalysisHistoryId <= 0)
+            {
+                return Results.BadRequest(new { message = "analysisHistoryId 无效" });
+            }
+
+            try
+            {
+                var draft = await draftService.BuildDraftAsync(request.Symbol, request.AnalysisHistoryId);
+                return Results.Ok(draft);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("BuildTradingPlanDraft")
+        .WithOpenApi();
+
+        group.MapPost("/plans", async (TradingPlanCreateDto request, ITradingPlanService tradingPlanService) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            if (request.AnalysisHistoryId <= 0)
+            {
+                return Results.BadRequest(new { message = "analysisHistoryId 无效" });
+            }
+
+            try
+            {
+                var result = await tradingPlanService.CreateAsync(request);
+                return Results.Ok(MapTradingPlanDto(result.Plan, result.WatchlistEnsured));
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("CreateTradingPlan")
+        .WithOpenApi();
+
+        group.MapPut("/plans/{id:long}", async (long id, TradingPlanUpdateDto request, ITradingPlanService tradingPlanService) =>
+        {
+            try
+            {
+                var item = await tradingPlanService.UpdateAsync(id, request);
+                return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("UpdateTradingPlan")
+        .WithOpenApi();
+
+        group.MapPost("/plans/{id:long}/cancel", async (long id, ITradingPlanService tradingPlanService) =>
+        {
+            var item = await tradingPlanService.CancelAsync(id);
+            return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+        })
+        .WithName("CancelTradingPlan")
+        .WithOpenApi();
+
+        group.MapDelete("/plans/{id:long}", async (long id, ITradingPlanService tradingPlanService) =>
+        {
+            var removed = await tradingPlanService.DeleteAsync(id);
+            return removed ? Results.NoContent() : Results.NotFound();
+        })
+        .WithName("DeleteTradingPlan")
+        .WithOpenApi();
+
         // 查询历史记录
         group.MapGet("/history", async (IStockHistoryService historyService) =>
         {
@@ -523,20 +718,11 @@ public sealed class StocksModule : IModule
             var intervalValue = string.IsNullOrWhiteSpace(interval) ? "day" : interval.Trim().ToLowerInvariant();
             var take = Math.Max(10, count ?? 60);
 
-            var kline = await dbContext.KLinePoints
-                .Where(x => x.Symbol == target && x.Interval == intervalValue)
-                .OrderBy(x => x.Date)
-                .Take(take)
-                .Select(x => new KLinePointDto(x.Date, x.Open, x.Close, x.High, x.Low, x.Volume))
-                .ToListAsync();
-
-            var minute = await dbContext.MinuteLinePoints
-                .Where(x => x.Symbol == target)
-                .OrderBy(x => x.Time)
-                .Select(x => new MinuteLinePointDto(x.Date, x.Time, x.Price, x.AveragePrice, x.Volume))
-                .ToListAsync();
+            var kline = await StockDetailCacheQueries.GetRecentKLinesAsync(dbContext, target, intervalValue, take);
+            var minute = await StockDetailCacheQueries.GetLatestMinuteLinesAsync(dbContext, target);
 
             var messages = await dbContext.IntradayMessages
+                .AsNoTracking()
                 .Where(x => x.Symbol == target)
                 .OrderByDescending(x => x.PublishedAt)
                 .Take(20)
@@ -546,8 +732,9 @@ public sealed class StocksModule : IModule
             var quoteDto = new StockQuoteDto(quote.Symbol, quote.Name, quote.Price, quote.Change, quote.ChangePercent,
                 0m, quote.PeRatio, 0m, 0m, 0m, quote.Timestamp, Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(),
                 quote.FloatMarketCap, quote.VolumeRatio, quote.ShareholderCount ?? companyProfile?.ShareholderCount, quote.SectorName ?? companyProfile?.SectorName);
+            var fundamentalSnapshot = StockFundamentalSnapshotMapper.FromProfile(companyProfile);
 
-            return Results.Ok(new StockDetailDto(quoteDto, kline, minute, messages));
+            return Results.Ok(new StockDetailDto(quoteDto, kline, minute, messages, fundamentalSnapshot));
         })
         .WithName("GetStockDetailCache")
         .WithOpenApi();
@@ -596,5 +783,40 @@ public sealed class StocksModule : IModule
         }
 
         return null;
+    }
+
+    private static TradingPlanItemDto MapTradingPlanDto(Data.Entities.TradingPlan item, bool? watchlistEnsured = null)
+    {
+        return new TradingPlanItemDto(
+            item.Id,
+            item.Symbol,
+            item.Name,
+            item.Direction.ToString(),
+            NormalizeTradingPlanStatus(item.Status).ToString(),
+            item.TriggerPrice,
+            item.InvalidPrice,
+            item.StopLossPrice,
+            item.TakeProfitPrice,
+            item.TargetPrice,
+            item.ExpectedCatalyst,
+            item.InvalidConditions,
+            item.RiskLimits,
+            item.AnalysisSummary,
+            item.AnalysisHistoryId,
+            item.SourceAgent,
+            item.UserNote,
+            item.CreatedAt,
+            item.UpdatedAt,
+            item.TriggeredAt,
+            item.InvalidatedAt,
+            item.CancelledAt,
+            watchlistEnsured);
+    }
+
+    private static Data.Entities.TradingPlanStatus NormalizeTradingPlanStatus(Data.Entities.TradingPlanStatus status)
+    {
+        return status == Data.Entities.TradingPlanStatus.Draft
+            ? Data.Entities.TradingPlanStatus.Pending
+            : status;
     }
 }

@@ -6,6 +6,8 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 internal static class EastmoneyStockParser
 {
+    private static readonly TimeZoneInfo ChinaTimeZone = ResolveChinaTimeZone();
+
     public static StockQuoteDto ParseQuote(string symbol, string json)
     {
         using var document = JsonDocument.Parse(json);
@@ -71,6 +73,66 @@ internal static class EastmoneyStockParser
         return points;
     }
 
+    public static IReadOnlyList<IntradayMessageDto> ParseIntradayMessages(string symbol, string json, DateTimeOffset fetchedAtUtc, int take = 20)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("data", out var dataNode))
+        {
+            return Array.Empty<IntradayMessageDto>();
+        }
+
+        if (!dataNode.TryGetProperty("details", out var detailsNode) || detailsNode.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<IntradayMessageDto>();
+        }
+
+        var localDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(fetchedAtUtc, ChinaTimeZone).DateTime);
+        var messages = new List<IntradayMessageDto>();
+        foreach (var item in detailsNode.EnumerateArray().Reverse())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var raw = item.GetString() ?? string.Empty;
+            var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 5)
+            {
+                continue;
+            }
+
+            if (!TimeOnly.TryParse(parts[0], CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
+            {
+                continue;
+            }
+
+            var price = ParseDecimal(parts[1]);
+            var volume = ParseDecimal(parts[2]);
+            var side = parts[4] switch
+            {
+                "1" => "卖",
+                "2" => "买",
+                _ => "中性"
+            };
+
+            var localDateTime = localDate.ToDateTime(time, DateTimeKind.Unspecified);
+            var publishedAt = new DateTimeOffset(localDateTime, ChinaTimeZone.GetUtcOffset(localDateTime)).UtcDateTime;
+            messages.Add(new IntradayMessageDto(
+                $"{parts[0]} {side}盘 {volume:0.##}手 @ {price:0.00}",
+                "东方财富逐笔",
+                publishedAt,
+                null));
+
+            if (messages.Count >= take)
+            {
+                break;
+            }
+        }
+
+        return messages;
+    }
+
     private static decimal ParseScaledDecimal(JsonElement dataNode, string field)
     {
         if (!dataNode.TryGetProperty(field, out var node))
@@ -124,5 +186,17 @@ internal static class EastmoneyStockParser
     {
         return new StockQuoteDto(symbol, symbol, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, DateTime.UtcNow,
             Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>());
+    }
+
+    private static TimeZoneInfo ResolveChinaTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.CreateCustomTimeZone("China Standard Time", TimeSpan.FromHours(8), "China Standard Time", "China Standard Time");
+        }
     }
 }

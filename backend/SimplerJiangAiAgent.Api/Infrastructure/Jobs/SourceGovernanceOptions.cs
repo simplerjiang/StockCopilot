@@ -12,7 +12,7 @@ public sealed class SourceGovernanceOptions
     public decimal CandidatePromotionScore { get; set; } = 0.80m;
     public bool EnableLlmDiscovery { get; set; } = true;
     public bool EnableCrawlerAutoFix { get; set; } = true;
-    public string LlmProvider { get; set; } = "openai";
+    public string LlmProvider { get; set; } = "active";
     public string LlmModel { get; set; } = "";
     public string RepositoryRoot { get; set; } = string.Empty;
     public int MaxDailyDiscoveryCandidates { get; set; } = 10;

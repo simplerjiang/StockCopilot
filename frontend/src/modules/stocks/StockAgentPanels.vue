@@ -14,7 +14,7 @@ const props = defineProps({
   historyError: { type: String, default: '' }
 })
 
-const emit = defineEmits(['run', 'select-history'])
+const emit = defineEmits(['run', 'select-history', 'draft-plan'])
 const rawVisible = ref({})
 
 const getAgentId = agent => agent?.agentId ?? agent?.AgentId ?? ''
@@ -104,6 +104,8 @@ const getCellText = (section, row, col) => {
   if (!isEvidencePublishedAtColumn(section, col)) return value
   return isExpiredPublishedAt(row?.[col]) ? `${value || '未知'}（过期风险）` : value
 }
+
+const canDraftPlan = agent => getAgentId(agent) === 'commander' && getAgentSuccess(agent) && !!getAgentData(agent)
 </script>
 
 <template>
@@ -231,6 +233,10 @@ const getCellText = (section, row, col) => {
               <span v-for="(item, idx) in getAgentData(agent).risks" :key="idx" class="pill risk">{{ item }}</span>
             </div>
           </div>
+
+          <button v-if="canDraftPlan(agent)" class="draft-plan-button" @click="emit('draft-plan')">
+            基于此分析起草交易计划
+          </button>
         </div>
 
         <p v-else class="muted empty">暂无数据</p>
@@ -290,6 +296,16 @@ const getCellText = (section, row, col) => {
 .agent-panel-actions button:disabled {
   background: #94a3b8;
   cursor: not-allowed;
+}
+
+.draft-plan-button {
+  border-radius: 12px;
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  padding: 0.6rem 0.85rem;
+  background: linear-gradient(135deg, rgba(12, 74, 110, 0.96), rgba(8, 145, 178, 0.92));
+  color: #f8fafc;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .agent-grid {

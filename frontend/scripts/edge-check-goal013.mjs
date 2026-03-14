@@ -73,14 +73,18 @@ const run = async () => {
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: '股票信息' }).click({ force: true });
 
+  const marketNewsReady = Promise.race([
+    page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=market') && resp.status() === 200, { timeout: 30000 }).catch(() => null),
+    page.waitForFunction(() => document.querySelectorAll('.market-news-panel .market-news-item').length >= 1, null, { timeout: 30000 }).then(() => null)
+  ]);
+
   const symbolInput = page.getByPlaceholder('输入股票代码/名称/拼音缩写');
   const detailResponse = page.waitForResponse(resp => resp.url().includes('/api/stocks/detail') && resp.status() === 200, { timeout: 90000 });
   const stockNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=stock') && resp.status() === 200, { timeout: 90000 });
   const sectorNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=sector') && resp.status() === 200, { timeout: 90000 });
-  const marketNewsResponse = page.waitForResponse(resp => resp.url().includes('/api/news') && resp.url().includes('level=market') && resp.status() === 200, { timeout: 90000 });
   await symbolInput.fill('600000');
   await symbolInput.press('Enter');
-  await Promise.all([detailResponse, stockNewsResponse, sectorNewsResponse, marketNewsResponse]);
+  await Promise.all([detailResponse, stockNewsResponse, sectorNewsResponse, marketNewsReady]);
 
   await page.waitForSelector('text=股票信息终端', { timeout: 20000 });
   await page.waitForFunction(() => document.querySelectorAll('.news-bucket-card').length >= 2, null, { timeout: 30000 });

@@ -57,7 +57,19 @@ public sealed record StockDetailDto(
     StockQuoteDto Quote,
     IReadOnlyList<KLinePointDto> KLines,
     IReadOnlyList<MinuteLinePointDto> MinuteLines,
-    IReadOnlyList<IntradayMessageDto> Messages
+    IReadOnlyList<IntradayMessageDto> Messages,
+    StockFundamentalSnapshotDto? FundamentalSnapshot = null
+);
+
+public sealed record StockFundamentalSnapshotDto(
+    DateTime UpdatedAt,
+    IReadOnlyList<StockFundamentalFactDto> Facts
+);
+
+public sealed record StockFundamentalFactDto(
+    string Label,
+    string Value,
+    string Source
 );
 
 public sealed record StockNewsDto(

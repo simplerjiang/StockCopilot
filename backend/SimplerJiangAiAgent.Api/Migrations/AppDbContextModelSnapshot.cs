@@ -22,6 +22,54 @@ namespace SimplerJiangAiAgent.Api.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("SimplerJiangAiAgent.Api.Data.Entities.ActiveWatchlist", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastQuoteSyncAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("SourceTag")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Symbol")
+                        .IsUnique();
+
+                    b.HasIndex("IsEnabled", "UpdatedAt");
+
+                    b.ToTable("ActiveWatchlists");
+                });
+
             modelBuilder.Entity("SimplerJiangAiAgent.Api.Data.Entities.CrawlerChangeQueue", b =>
                 {
                     b.Property<long>("Id")
@@ -794,6 +842,12 @@ namespace SimplerJiangAiAgent.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<string>("FundamentalFactsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("FundamentalUpdatedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -936,6 +990,93 @@ namespace SimplerJiangAiAgent.Api.Migrations
                     b.ToTable("StockQuoteSnapshots");
                 });
 
+            modelBuilder.Entity("SimplerJiangAiAgent.Api.Data.Entities.TradingPlan", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("AnalysisHistoryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AnalysisSummary")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("ExpectedCatalyst")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvalidConditions")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("InvalidPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("InvalidatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("RiskLimits")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SourceAgent")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<decimal?>("StopLossPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<decimal?>("TriggerPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("TriggeredAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UserNote")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnalysisHistoryId");
+
+                    b.HasIndex("Symbol", "CreatedAt");
+
+                    b.ToTable("TradingPlans");
+                });
+
             modelBuilder.Entity("SimplerJiangAiAgent.Api.Data.Entities.NewsSourceHealthDaily", b =>
                 {
                     b.HasOne("SimplerJiangAiAgent.Api.Data.Entities.NewsSourceRegistry", "Source")
@@ -956,6 +1097,17 @@ namespace SimplerJiangAiAgent.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("SimplerJiangAiAgent.Api.Data.Entities.TradingPlan", b =>
+                {
+                    b.HasOne("SimplerJiangAiAgent.Api.Data.Entities.StockAgentAnalysisHistory", "AnalysisHistory")
+                        .WithMany()
+                        .HasForeignKey("AnalysisHistoryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AnalysisHistory");
                 });
 
             modelBuilder.Entity("SimplerJiangAiAgent.Api.Data.Entities.NewsSourceRegistry", b =>

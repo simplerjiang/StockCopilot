@@ -33,7 +33,7 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
         var surveyJson = await surveyTask;
         var shareholderJson = await shareholderTask;
         var profile = surveyJson is null
-            ? new EastmoneyCompanyProfileDto(quote.Symbol, quote.Name, null, null)
+            ? new EastmoneyCompanyProfileDto(quote.Symbol, quote.Name, null, null, Array.Empty<StockFundamentalFactDto>())
             : EastmoneyCompanyProfileParser.Parse(normalized, surveyJson, shareholderJson);
 
         return quote with
@@ -71,11 +71,12 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
         return EastmoneyStockParser.ParseTrends(symbol, json);
     }
 
-    public Task<IReadOnlyList<IntradayMessageDto>> GetIntradayMessagesAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<IntradayMessageDto>> GetIntradayMessagesAsync(string symbol, CancellationToken cancellationToken = default)
     {
-        // 暂无稳定接口
-        IReadOnlyList<IntradayMessageDto> result = Array.Empty<IntradayMessageDto>();
-        return Task.FromResult(result);
+        var secId = ToEastmoneySecId(symbol);
+        var url = $"https://push2.eastmoney.com/api/qt/stock/details/get?secid={secId}&fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55";
+        var json = await _httpClient.GetStringAsync(url, cancellationToken);
+        return EastmoneyStockParser.ParseIntradayMessages(symbol, json, DateTimeOffset.UtcNow);
     }
 
     private static string ToEastmoneySecId(string symbol)

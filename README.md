@@ -19,6 +19,8 @@
 - /api/stocks/messages 盘中消息（占位）
 - /api/stocks/detail 组合详情
 - /api/stocks/detail/cache 组合详情（缓存）
+- /api/stocks/plans 交易计划查询/创建/更新/删除/取消，以及 /api/stocks/plans/draft 后端草稿生成；支持不传 `symbol` 直接获取最近交易计划总览
+- `StockCompanyProfiles` 现支持持久化基本面快照事实 JSON 与刷新时间，`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 再做实时东财刷新并回写数据库
 - /api/stocks/sync 手动触发同步
 - /api/news 本地事实新闻查询（按 symbol + level=stock/sector/market 精准过滤，前端展示使用批量 AI 清洗后的翻译/情绪/标签）
 - /api/stocks/news/impact 资讯影响评估（公告/研报/新闻分级、来源可信度、同主题合并去重）
@@ -35,6 +37,9 @@
 - LLM 设置页签（管理员配置）
 - K线/分时图 AI 关键价位叠加（突破线/支撑线，来源于多Agent分析）
 - 股票信息页多Agent面板支持双档位触发：标准分析 / Pro 深度分析
+- 股票终端切股加载优化：优先使用 `/api/stocks/detail/cache` 秒开缓存详情，后台再补最新详情，并阻断旧请求覆盖新标的
+- 股票信息页“基本面快照”已支持展示东财公司概况/股东研究抽取出的富文本事实；首次打开先读数据库缓存，实时刷新完成后自动回写，下一次打开可直接秒开
+- 股票信息页已支持从 commander 历史分析一键起草交易计划：后端基于 `StockAgentAnalysisHistory` 生成草稿，确定性预填止损/止盈/目标价，用户在弹窗中确认/补录价格后可保存为 `Pending`；已保存计划支持继续编辑、硬删除，并会同时显示在“当前交易计划”和跨股票“交易计划总览”区块，同时自动加入 `ActiveWatchlist`
 - 治理开发者模式：参数说明、治理链路 Trace 查询、以及按 traceId 聚合的 LLM 对话会话前端可视化（请求/返回/异常一一对应，支持 JSON 美化）
 - 全量资讯库：支持按关键字、层级（大盘/板块/个股）和情绪筛选本地 AI 清洗资讯，并可直接跳转原文
 
@@ -78,6 +83,12 @@ $env:GLM_API_KEY="你的GLM-5_API_KEY"
 - 受控默认配置：`backend/SimplerJiangAiAgent.Api/App_Data/llm-settings.json`，只保存非敏感参数
 - 本地忽略覆盖：`backend/SimplerJiangAiAgent.Api/App_Data/llm-settings.local.json`，只保存 `apiKey`
 
+当前支持两个可切换通道：
+- `default`：现有默认 OpenAI 兼容通道
+- `gemini_official`：Google Gemini 官方 OpenAI 兼容通道
+
+通过 `activeProviderKey` 控制当前激活通道；管理员页面也可直接切换，无需手工改文件。
+
 也支持环境变量覆盖：
 
 ```powershell
@@ -87,17 +98,25 @@ $env:OPENAI_API_KEY="你的运行时_API_KEY"
 或按 provider 名称使用更明确的变量：
 
 ```powershell
-$env:LLM__OPENAI__APIKEY="你的运行时_API_KEY"
+$env:LLM__DEFAULT__APIKEY="你的默认通道_API_KEY"
+$env:LLM__GEMINI_OFFICIAL__APIKEY="你的 Gemini 官方_API_KEY"
 ```
 
 本地忽略文件示例：
 
 ```json
 {
+	"activeProviderKey": "default",
 	"providers": {
-		"openai": {
-			"provider": "openai",
-			"apiKey": "你的运行时_API_KEY"
+		"default": {
+			"provider": "default",
+			"providerType": "openai",
+			"apiKey": "你的默认通道_API_KEY"
+		},
+		"gemini_official": {
+			"provider": "gemini_official",
+			"providerType": "openai",
+			"apiKey": "你的 Gemini 官方_API_KEY"
 		}
 	}
 }
@@ -130,8 +149,10 @@ opencode
 - [x] GOAL-005 专业行情图升级（K线+成交量副图、分时专业渲染、数据精确映射）
 - [x] GOAL-006 图表增强（二期：分时成交量副图 + K线 MA5/MA10 叠加线）
 - [x] GOAL-012 界面重构与“专业看盘/AI辅屏”解耦（股票信息页已拆为 TerminalView 主终端 + CopilotPanel 侧栏，并支持专注模式）
+- [x] GOAL-012-R1 图表终端扩展性升级（Dev2 并行任务已完成：分时图已并入“分时图 / 日K图 / 月K图 / 年K图”统一 Tab 单主图终端，并新增 `frontend/src/modules/stocks/charting/**` 适配层作为未来神奇九转、KDJ 金叉等策略叠加扩展点；选型结论为保留 `lightweight-charts` 并以自建 adapter 获得 TradingView 风格可扩展性，且已通过前端单测、build 与 Browser MCP 交互验收，同时继续与 Dev1 的 Step 4.2 交易计划主线隔离推进）
+- [x] GOAL-012-R2 `klinecharts` 受控替换试验（已在 `frontend/src/modules/stocks/charting/**` 内完成底层引擎从 `lightweight-charts` 到 `klinecharts` 的受控替换，保持 `minuteLines` / `kLines` / `interval` / `aiLevels` / `update:interval` 父层 contract 不变，并补齐 `klinechartsRegistry.js` 作为 MA/VOL/AI 价位线与后续策略标记层的 registry 入口；`frontend/package.json` / lockfile 已精确锁定 `10.0.0-beta1` 且移除旧 `lightweight-charts` 依赖，前端单测、build 与后端托管页面的查股 + 分时/月K 切换 Browser MCP 验收已通过）
 - [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤、Step 2.2 Task 4 的标准/Pro 模型分流、Step 2.3 的新浪板块资讯抓取/大盘多源聚合/无选股即可查看的大盘资讯与完整查询历史展示、Step 2.4 的本地事实批量 AI 清洗/翻译/标签隔离投喂、Step 2.5 的大盘资讯内嵌交互/外媒 RSS 时效清洗/本地事实 AI 重试补漏，以及 Step 2.6 的纯财经大盘源切换、活跃 RSS 替换与 `全量资讯库` 归档工作台）
-- [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 代码、单测、build 与 migration 已完成：补齐流通市值/动态市盈率/量比/股东人数/所属板块，升级东财实时与 F10 基本面抓取，重构多 Agent 上下文与最终输出 schema，并同步股票信息页与 AI 面板展示；剩余本机 SQL Server 恢复后的启动 / SQLCMD / Edge 验收）
+- [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 已继续完成“基本面快照富事实 + 数据库缓存优先刷新”增强：`StockCompanyProfiles` 新增 `FundamentalFactsJson/FundamentalUpdatedAt`，详情页先读 `/api/stocks/detail/cache` 的数据库快照，再由 `/api/stocks/detail` 实时抓东财公司概况/股东研究并回写；已完成 migration、SQLCMD 校验、后端定向单测、前端定向单测、前端 build 与运行时接口验证。剩余主要是 Edge/UI 验收与更大范围联调。）
 - [x] ISSUE-20260310 提示词增强（新闻抗污染策略 + 新闻库定时采集约束 + 白盒 MCP/Skill 任务执行规范）
 - [x] ISSUE-20260310-P0 动态来源治理基座（LLM每日候选源发现 + 自动新增爬取地址/流程 + 爬虫失效自动修复发布 + 程序化验证与自动隔离）
 - [x] ISSUE-20260310-P0-R1 P0剩余计划：开发者模式可视化收口（治理仪表盘 + 最小查询接口 + 过滤/详情展开/trace跳转 + 可观测审计）
@@ -149,6 +170,11 @@ opencode
 	- 图表联动增强：K线与分时图叠加 AI 突破线/支撑线（优先 commander 目标/止损，缺失时回退 trend 预测区间）。
 	- 阶段验收标准：多Agent结果在后端统一补齐结构字段；前端可展示操作计划/证据/触发失效/风险上限；自动化测试需验证点击交互、响应等待与日志无异常。
 - [ ] GOAL-008 交易计划引擎（盘前计划、盘中触发、失效条件）
+	- Step 4.0 已完成：股票切换与加载性能深度优化，后端 `/api/stocks/detail` 并发化，前端先读 `/api/stocks/detail/cache` 做秒开渲染，并加入快速切股的旧响应抑制。
+	- Step 4.1 已完成：新增 `ActiveWatchlist` 高频白名单与 `HighFrequencyQuoteService`，仅在 A 股交易时段轮询白名单股票并持续回写 quote/minute/messages 到本地缓存表，为后续交易计划触发与纪律执行提供稳定底座；已通过后端全量单测、EF migration 应用与 SQLCMD 表/索引校验。
+	- Step 4.2 已完成，并在同日补齐 R1 可用性增强：新增 `TradingPlan` 实体、`/api/stocks/plans*` 接口、后端基于 commander 历史结果的交易计划草稿生成、前端“基于此分析起草交易计划”按钮与可编辑弹窗、当前计划列表，以及保存后自动 upsert `ActiveWatchlist`；R1 进一步补齐已保存计划编辑/删除、跨股票“交易计划总览”，并将止损/止盈/目标价按 commander 图表字段 -> financial `institutionTargetPrice` -> trend forecast 极值的优先级做确定性默认填充。同时补齐对本地旧版 `TradingPlans` 表的兼容补列、索引和 `PlanKey`/`Title` 默认约束，已通过后端定向单测、前端定向单测、前端 build、SQLCMD 结构校验与后端托管页面 Browser MCP 实测保存。
+	- Step 4.3 作为当前下一步：仅实现纯 C# 的盘中确定性触发/失效状态机，消费 `ActiveWatchlist` 与本地 quote/minute 缓存，不新增外部行情抓取；新增计划事件/告警落库与查询接口，并优先采用前端短轮询展示状态变化，不在该步引入 SignalR 或 LLM 语义复核。
+	- Dev2 并行前端支线：图表终端将独立升级为高扩展性组件方案，分时图与 K 线多周期整合到同一组 Tab 切换中，且不干扰 Dev1 的 Step 4.2 开发。
 	- 盘前自动生成候选池：主线板块、关键价位、预期催化、风险提示。
 	- 盘中只执行“已定义触发”：避免临时主观冲动单。
 	- 计划失效自动提示：跌破条件、量价背离、消息反转时触发撤销或降级。

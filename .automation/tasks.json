@@ -20,7 +20,7 @@
         "dev": "done",
         "test": "todo"
       },
-      "notes": "Step 3 开发已完成：扩充流通市值/动态市盈率/量比/股东人数/所属板块，补齐东财实时 + F10 + 股东研究抓取与缓存，重构 commander schema 为 analysis_opinion + confidence_score + trigger_conditions + invalid_conditions + risk_warning，并同步股票信息页与 AI 面板。已通过后端单测 92/92、前端定向单测 28/28、前端 build、EF migration 生成；本机已完成 SQLCMD 建库、`dotnet ef database update`、表字段校验与 `/api/health` 启动验证。剩余主要是 Edge/UI 验收，以及本地 LLM provider 定价配置未补齐时后台 AI/资讯任务仍会报配置告警。"
+      "notes": "Step 3 已继续收口：在既有流通市值/动态市盈率/量比/股东人数/所属板块基础上，新增“基本面快照富事实 + 数据库缓存优先刷新”能力。`StockCompanyProfiles` 已持久化 `FundamentalFactsJson` 与 `FundamentalUpdatedAt`；`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 会实时抓取东财公司概况/股东研究并回写数据库；前端 StockInfoTab 已渲染快照刷新时间与事实列表。已通过本轮 EF migration、`dotnet ef database update`、SQLCMD 列级校验、后端定向单测 7/7、前端定向单测 30/30、前端 build 与运行时 `/api/health` + `/api/stocks/detail/cache` + `/api/stocks/detail` 验证。剩余主要是 Edge/UI 验收，以及本地 LLM provider 定价配置未补齐时后台 AI/资讯任务仍会报配置告警。"
     },
     {
       "id": "GOAL-002",
@@ -76,6 +76,17 @@
         "test": "todo"
       },
       "notes": "由 OpenCode 执行者完成项目启动与端到端联调；执行者先自测并汇报，再由我按既有规则复测验收"
+    },
+    {
+      "id": "OPS-008",
+      "title": "LLM active provider switching",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "已完成紧急插队任务：后端新增 activeProviderKey + providerType，支持 default 与 gemini_official 两个通道动态切换；管理端新增激活通道切换 UI；忽略的本地 llm-settings.local.json 已支持 Gemini 官方 key；后端定向单测 11/11、前端管理页单测 4/4 通过。"
     },
     {
       "id": "GOAL-005",
@@ -203,11 +214,11 @@
       "title": "Trading plan engine",
       "status": "todo",
       "stages": {
-        "plan": "todo",
+        "plan": "done",
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "盘前候选池与计划模板；盘中触发与失效管理；防冲动交易"
+      "notes": "Step 4 已按架构指令拆解；Step 4.0（股票切换与加载性能深度优化）已完成：后端 /api/stocks/detail 改为并发拉取 quote/kline/minute/messages，前端优先命中 /api/stocks/detail/cache 实现缓存秒开，并用 request token 防止快速切股时旧响应覆盖新标的；同时移除股票终端 agent/history 对 openai 的前端硬编码，改为跟随后端 active provider。Step 4.1 reviewer 阻塞项已于 2026-03-14 收口：`ChinaAStockMarketClock` 已补齐 2026 法定休市日门控，`EastmoneyStockCrawler.GetIntradayMessagesAsync(...)` 已接入东财 `details/get` 逐笔明细，`HighFrequencyQuoteService` 已支持消息源失败降级为空结果而不影响 quote/minute 落库；后端全量单测 105/105、前端 `StockInfoTab` 单测 33/33、frontend build 与 Edge 校验脚本均已通过。Step 4.2 已于 2026-03-14 完成：新增 `TradingPlan` 实体、后端 `/api/stocks/plans` 与 `/api/stocks/plans/draft`、基于 `StockAgentAnalysisHistory` commander 结果的确定性草稿生成、前端 commander 起草按钮/可编辑弹窗/当前计划列表，以及保存后自动 upsert `ActiveWatchlist`。同日 R1 可用性增强也已完成：计划新增 `TakeProfitPrice` / `TargetPrice`、已保存 `Pending` 计划支持编辑与硬删除、`/api/stocks/plans` 支持无 `symbol` 的总览查询，前端新增跨股票“交易计划总览”，并按 commander 图表字段 -> financial `institutionTargetPrice` -> trend forecast 极值优先级确定性预填止损/止盈/目标价。由于本地库存在旧版 `TradingPlans` 表，本轮同时补齐了兼容补列、索引以及 `PlanKey`/`Title` 默认约束；本次复核已再次通过后端 `TradingPlanServicesTests` 9/9、前端 `StockAgentPanels.spec.js` + `StockInfoTab.spec.js` 39/39、SQLCMD 的 `TradingPlans` 字段/索引校验。下一步主线聚焦 Step 4.3：仅做确定性价格触发/失效状态机、计划事件审计落库与前端短轮询告警，不在该步引入 SignalR 或 LLM 语义复核。"
     },
     {
       "id": "GOAL-009",
@@ -252,6 +263,28 @@
         "test": "done"
       },
       "notes": "已完成 Step 1 与 Step 1.1 返工：股票信息页改造成 Grid 终端布局，新增 TerminalView 与 CopilotPanel 两个独立组件；顶部查询区进一步压缩为 sticky toolbar + history ribbon，把更多纵向空间让给 K 线/分时图；支持一键专注模式隐藏 AI 侧栏；前端单测与构建均通过（`npm --prefix frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js`，13/13；`npm --prefix frontend run build` 通过）。"
+    },
+    {
+      "id": "GOAL-012-R1",
+      "title": "Chart terminal extensibility upgrade",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "Dev2 并行任务，必须与 Dev1 的 Step 4.2 隔离：已完成前端图表层改造，在 `frontend/src/modules/stocks/StockCharts.vue` 内将原先上下双图改为单主图 Tab 终端，按钮统一为“分时图 / 日K图 / 月K图 / 年K图”，并新增 `frontend/src/modules/stocks/charting/chartViews.js` 与 `frontend/src/modules/stocks/charting/useStockChartAdapter.js` 作为扩展适配层。组件选型结论：本轮保留 `lightweight-charts`，不引入额外 TradingView-vue 依赖，而通过内部 adapter 获得未来神奇九转、KDJ 金叉等叠加能力并避免冲击 Dev1 的交易计划流；验证已通过 `npm --prefix frontend run test:unit -- --run src/modules/stocks/StockCharts.spec.js`、`npm --prefix frontend run test:unit -- --run src/modules/stocks/StockInfoTab.spec.js`、`npm --prefix frontend run build`，以及 Browser MCP 切股 + 月K图/分时图交互验收。"
+    },
+    {
+      "id": "GOAL-012-R2",
+      "title": "KLineCharts controlled replacement spike",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "Dev2 并行任务已完成：在不干扰 Dev1 Step 4.2 的前提下，将 `frontend/src/modules/stocks/charting/useStockChartAdapter.js` 底层实现替换为 `klinecharts`，新增 `klinechartsRegistry.js` 统一管理 MA/VOL 指标与 AI 价位线 overlay，并为后续策略标记层预留 `syncMarkerSignalRegistry(...)` 入口；`StockCharts.vue` 父层 contract 保持不变，仍支持“分时图 / 日K图 / 月K图 / 年K图”统一切换。依赖已精确锁定 `klinecharts@10.0.0-beta1`，并已从前端依赖中移除旧 `lightweight-charts` 包。后续回归已修复三项图表问题：`klinecharts` 时间戳统一改为毫秒制以消除日K 1971 横轴错误；月线/年线在真实页面重新验证为可见且接口分别返回 60/26 根 K 线；分时成交量改为累计量差值并统一按“手/万手/亿手”格式显示。验证已通过 `npm --prefix frontend run test:unit -- --run src/modules/stocks/StockCharts.spec.js`、`npm --prefix frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js`、`npm --prefix frontend run build`，以及后端托管页面 `http://localhost:5119/` 的 Browser MCP 查股 + 日K/月K/年K 切换验收；当前结论是该引擎替换已可作为现行生产路径继续使用，但仍需后续关注 beta 版本稳定性。"
     },
     {
       "id": "GOAL-013",

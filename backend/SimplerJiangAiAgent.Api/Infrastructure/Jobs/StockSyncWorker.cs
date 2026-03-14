@@ -26,13 +26,24 @@ public sealed class StockSyncWorker : BackgroundService
             {
                 await SyncOnceAsync(stoppingToken);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "同步股票数据失败");
             }
 
             var delay = TimeSpan.FromSeconds(Math.Max(10, _options.IntervalSeconds));
-            await Task.Delay(delay, stoppingToken);
+            try
+            {
+                await Task.Delay(delay, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 

@@ -27,23 +27,20 @@ public sealed class LlmService : ILlmService
         var traceId = Guid.NewGuid().ToString("N");
         var stopwatch = Stopwatch.StartNew();
 
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            throw new ArgumentException("provider 不能为空", nameof(provider));
-        }
-
-        var settings = await _settingsStore.GetProviderAsync(provider, cancellationToken)
-            ?? new LlmProviderSettings { Provider = provider, Enabled = true };
+        var resolvedProvider = await _settingsStore.ResolveProviderKeyAsync(provider, cancellationToken);
+        var settings = await _settingsStore.GetProviderAsync(resolvedProvider, cancellationToken)
+            ?? new LlmProviderSettings { Provider = resolvedProvider, ProviderType = "openai", Enabled = true };
 
         if (!settings.Enabled)
         {
-            throw new InvalidOperationException($"Provider {provider} 未启用");
+            throw new InvalidOperationException($"Provider {resolvedProvider} 未启用");
         }
 
-        var target = _providers.FirstOrDefault(item => string.Equals(item.Name, provider, StringComparison.OrdinalIgnoreCase));
+        var providerType = string.IsNullOrWhiteSpace(settings.ProviderType) ? settings.Provider : settings.ProviderType;
+        var target = _providers.FirstOrDefault(item => string.Equals(item.Name, providerType, StringComparison.OrdinalIgnoreCase));
         if (target is null)
         {
-            throw new InvalidOperationException($"未找到 provider: {provider}");
+            throw new InvalidOperationException($"未找到 provider: {providerType}");
         }
 
         var finalRequest = request;
@@ -59,7 +56,7 @@ public sealed class LlmService : ILlmService
         finalRequest = finalRequest with { TraceId = traceId };
 
         WriteAudit(
-            $"traceId={traceId} stage=request provider={provider} model={finalRequest.Model ?? settings.Model ?? string.Empty} " +
+            $"traceId={traceId} stage=request provider={resolvedProvider} providerType={providerType} model={finalRequest.Model ?? settings.Model ?? string.Empty} " +
             $"temp={(finalRequest.Temperature?.ToString("0.###") ?? "default")} useInternet={finalRequest.UseInternet} prompt={EscapeForLog(finalRequest.Prompt)}");
 
         try
@@ -68,7 +65,7 @@ public sealed class LlmService : ILlmService
             stopwatch.Stop();
 
             WriteAudit(
-                $"traceId={traceId} stage=response provider={provider} elapsedMs={stopwatch.ElapsedMilliseconds} " +
+                $"traceId={traceId} stage=response provider={resolvedProvider} providerType={providerType} elapsedMs={stopwatch.ElapsedMilliseconds} " +
                 $"content={EscapeForLog(result.Content)}");
 
             return result;
@@ -77,7 +74,7 @@ public sealed class LlmService : ILlmService
         {
             stopwatch.Stop();
             WriteAudit(
-                $"traceId={traceId} stage=error provider={provider} elapsedMs={stopwatch.ElapsedMilliseconds} " +
+                $"traceId={traceId} stage=error provider={resolvedProvider} providerType={providerType} elapsedMs={stopwatch.ElapsedMilliseconds} " +
                 $"type={ex.GetType().Name} message={EscapeForLog(ex.Message)}");
             throw;
         }

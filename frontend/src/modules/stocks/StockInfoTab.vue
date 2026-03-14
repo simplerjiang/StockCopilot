@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import StockCharts from './StockCharts.vue'
 import StockAgentPanels from './StockAgentPanels.vue'
 import TerminalView from './TerminalView.vue'
@@ -7,9 +7,6 @@ import CopilotPanel from './CopilotPanel.vue'
 import ChatWindow from '../../components/ChatWindow.vue'
 
 const symbol = ref('')
-const loading = ref(false)
-const error = ref('')
-const detail = ref(null)
 const interval = ref(localStorage.getItem('stock_interval') || 'day')
 const refreshSeconds = ref(Number(localStorage.getItem('stock_refresh_seconds') || 30))
 const autoRefresh = ref(localStorage.getItem('stock_auto_refresh') === 'true')
@@ -33,34 +30,147 @@ const contextMenu = ref({ visible: false, x: 0, y: 0, item: null })
 const sortKey = ref('id')
 const sortAsc = ref(true)
 const monochromeMode = ref(localStorage.getItem('stock_monochrome_mode') === 'true')
-const chatRef = ref(null)
-const chatSessions = ref([])
-const chatSessionsLoading = ref(false)
-const chatSessionsError = ref('')
-const selectedChatSession = ref('')
-const agentResults = ref([])
-const agentLoading = ref(false)
-const agentError = ref('')
-const agentUpdatedAt = ref('')
-const agentHistoryList = ref([])
-const agentHistoryLoading = ref(false)
-const agentHistoryError = ref('')
-const selectedAgentHistoryId = ref('')
-const newsImpact = ref(null)
-const newsImpactLoading = ref(false)
-const newsImpactError = ref('')
-const localNewsBuckets = ref({ stock: null, sector: null, market: null })
-const localNewsLoading = ref(false)
-const localNewsError = ref('')
 const copilotPanelOpen = ref(localStorage.getItem('stock_copilot_panel_open') !== 'false')
 const marketNewsModalOpen = ref(false)
+const chatWindowRefs = new Map()
+
+const createWorkspace = symbolKey => reactive({
+  symbolKey,
+  detail: null,
+  loading: false,
+  error: '',
+  quoteRequestToken: 0,
+  detailAbortController: null,
+  chatSessions: [],
+  chatSessionsLoading: false,
+  chatSessionsError: '',
+  selectedChatSession: '',
+  chatSessionsLoaded: false,
+  chatSessionsRequestToken: 0,
+  chatSessionsAbortController: null,
+  agentResults: [],
+  agentLoading: false,
+  agentError: '',
+  agentUpdatedAt: '',
+  agentHistoryList: [],
+  agentHistoryLoading: false,
+  agentHistoryError: '',
+  selectedAgentHistoryId: '',
+  agentHistoryLoaded: false,
+  agentHistoryRequestToken: 0,
+  agentHistoryAbortController: null,
+  newsImpact: null,
+  newsImpactLoading: false,
+  newsImpactError: '',
+  newsImpactLoaded: false,
+  newsImpactRequestToken: 0,
+  newsImpactAbortController: null,
+  localNewsBuckets: { stock: null, sector: null, market: null },
+  localNewsLoading: false,
+  localNewsError: '',
+  localNewsLoaded: false,
+  localNewsRequestToken: 0,
+  localNewsAbortController: null,
+  planDraftLoading: false,
+  planSaving: false,
+  planError: '',
+  planModalOpen: false,
+  planForm: null,
+  planList: [],
+  planListLoading: false,
+  planListLoaded: false,
+  planListRequestToken: 0,
+  planListAbortController: null
+})
+
+const stockWorkspaces = reactive({})
+const rootWorkspace = createWorkspace('__root__')
+const currentStockKey = ref('')
+
+const getWorkspace = symbolKey => {
+  const normalized = normalizeStockSymbol(symbolKey)
+  if (!normalized) {
+    return null
+  }
+  if (!stockWorkspaces[normalized]) {
+    stockWorkspaces[normalized] = createWorkspace(normalized)
+  }
+  return stockWorkspaces[normalized]
+}
+
+const currentWorkspace = computed(() => getWorkspace(currentStockKey.value) ?? rootWorkspace)
+const sidebarWorkspaces = computed(() =>
+  Object.values(stockWorkspaces).filter(workspace => Boolean(workspace?.detail?.quote?.symbol))
+)
+
+const bindWorkspaceField = (key, fallbackValue) => computed({
+  get: () => (currentWorkspace.value ? currentWorkspace.value[key] : fallbackValue),
+  set: value => {
+    if (currentWorkspace.value) {
+      currentWorkspace.value[key] = value
+    }
+  }
+})
+
+const loading = bindWorkspaceField('loading', false)
+const error = bindWorkspaceField('error', '')
+const detail = computed({
+  get: () => currentWorkspace.value?.detail ?? null,
+  set: value => {
+    const symbolKey = normalizeStockSymbol(value?.quote?.symbol)
+    if (symbolKey) {
+      const workspace = getWorkspace(symbolKey)
+      if (!workspace) {
+        return
+      }
+      workspace.detail = value
+      currentStockKey.value = symbolKey
+      selectedSymbol.value = symbolKey
+      return
+    }
+
+    if (currentWorkspace.value) {
+      currentWorkspace.value.detail = value
+    }
+  }
+})
+const chatSessions = bindWorkspaceField('chatSessions', [])
+const chatSessionsLoading = bindWorkspaceField('chatSessionsLoading', false)
+const chatSessionsError = bindWorkspaceField('chatSessionsError', '')
+const selectedChatSession = bindWorkspaceField('selectedChatSession', '')
+const agentResults = bindWorkspaceField('agentResults', [])
+const agentLoading = bindWorkspaceField('agentLoading', false)
+const agentError = bindWorkspaceField('agentError', '')
+const agentUpdatedAt = bindWorkspaceField('agentUpdatedAt', '')
+const agentHistoryList = bindWorkspaceField('agentHistoryList', [])
+const agentHistoryLoading = bindWorkspaceField('agentHistoryLoading', false)
+const agentHistoryError = bindWorkspaceField('agentHistoryError', '')
+const selectedAgentHistoryId = bindWorkspaceField('selectedAgentHistoryId', '')
+const newsImpact = bindWorkspaceField('newsImpact', null)
+const newsImpactLoading = bindWorkspaceField('newsImpactLoading', false)
+const newsImpactError = bindWorkspaceField('newsImpactError', '')
+const localNewsBuckets = bindWorkspaceField('localNewsBuckets', { stock: null, sector: null, market: null })
+const localNewsLoading = bindWorkspaceField('localNewsLoading', false)
+const localNewsError = bindWorkspaceField('localNewsError', '')
+const marketNewsBucket = computed(() => rootWorkspace.localNewsBuckets.market ?? null)
+const marketNewsLoading = computed(() => rootWorkspace.localNewsLoading)
+const marketNewsError = computed(() => rootWorkspace.localNewsError)
+const deletingPlanId = ref('')
+
+const isBlockingQuoteLoad = computed(() => loading.value && !detail.value)
+const isBackgroundQuoteRefresh = computed(() => loading.value && !!detail.value)
 
 const sidebarNewsSections = [
   { key: 'stock', title: '个股事实' },
   { key: 'sector', title: '板块上下文' }
 ]
 
-const requestedNewsSections = [...sidebarNewsSections, { key: 'market', title: '大盘环境' }]
+const isAbortError = err => err?.name === 'AbortError'
+
+const replaceAbortController = currentController => {
+  currentController?.abort()
+  return new AbortController()
+}
 
 const upsertAgentResult = result => {
   const agentId = result?.agentId ?? result?.AgentId ?? ''
@@ -96,9 +206,30 @@ const applyHistorySymbol = item => {
   const normalizedSymbol = normalizeStockSymbol(rawSymbol)
   selectedSymbol.value = normalizedSymbol
   symbol.value = normalizedSymbol || String(rawSymbol || '').trim()
+  currentStockKey.value = normalizedSymbol
   if (symbol.value.trim()) {
     fetchQuote()
   }
+}
+
+const buildDetailQuery = targetSymbol => {
+  const params = new URLSearchParams({
+    symbol: targetSymbol,
+    interval: interval.value
+  })
+  if (selectedSource.value) {
+    params.set('source', selectedSource.value)
+  }
+  return params
+}
+
+const applyLatestDetail = (workspace, requestToken, payload) => {
+  if (!workspace || requestToken !== workspace.quoteRequestToken || !payload?.quote) {
+    return false
+  }
+
+  workspace.detail = payload
+  return true
 }
 
 
@@ -163,6 +294,87 @@ const normalizeNewsBucket = (level, payload) => ({
   items: Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items).map(normalizeLocalNewsItem) : []
 })
 
+const normalizePlanNumber = value => {
+  if (value === '' || value == null) return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+const normalizePlanStatus = value => {
+  if (value === 'Draft') {
+    return 'Pending'
+  }
+  if (value === 'Archived') {
+    return 'Cancelled'
+  }
+  return value || 'Pending'
+}
+
+const normalizeTradingPlan = item => ({
+  id: item?.id ?? item?.Id ?? '',
+  symbol: item?.symbol ?? item?.Symbol ?? '',
+  name: item?.name ?? item?.Name ?? '',
+  direction: item?.direction ?? item?.Direction ?? 'Long',
+  status: normalizePlanStatus(item?.status ?? item?.Status),
+  triggerPrice: normalizePlanNumber(item?.triggerPrice ?? item?.TriggerPrice),
+  invalidPrice: normalizePlanNumber(item?.invalidPrice ?? item?.InvalidPrice),
+  stopLossPrice: normalizePlanNumber(item?.stopLossPrice ?? item?.StopLossPrice),
+  takeProfitPrice: normalizePlanNumber(item?.takeProfitPrice ?? item?.TakeProfitPrice),
+  targetPrice: normalizePlanNumber(item?.targetPrice ?? item?.TargetPrice),
+  expectedCatalyst: item?.expectedCatalyst ?? item?.ExpectedCatalyst ?? '',
+  invalidConditions: item?.invalidConditions ?? item?.InvalidConditions ?? '',
+  riskLimits: item?.riskLimits ?? item?.RiskLimits ?? '',
+  analysisSummary: item?.analysisSummary ?? item?.AnalysisSummary ?? '',
+  analysisHistoryId: item?.analysisHistoryId ?? item?.AnalysisHistoryId ?? '',
+  sourceAgent: item?.sourceAgent ?? item?.SourceAgent ?? 'commander',
+  userNote: item?.userNote ?? item?.UserNote ?? '',
+  createdAt: item?.createdAt ?? item?.CreatedAt ?? '',
+  updatedAt: item?.updatedAt ?? item?.UpdatedAt ?? '',
+  watchlistEnsured: item?.watchlistEnsured ?? item?.WatchlistEnsured ?? null
+})
+
+const createTradingPlanForm = item => ({
+  id: item?.id ?? '',
+  symbol: item?.symbol ?? '',
+  name: item?.name ?? '',
+  direction: item?.direction ?? 'Long',
+  triggerPrice: item?.triggerPrice ?? '',
+  invalidPrice: item?.invalidPrice ?? '',
+  stopLossPrice: item?.stopLossPrice ?? '',
+  takeProfitPrice: item?.takeProfitPrice ?? '',
+  targetPrice: item?.targetPrice ?? '',
+  expectedCatalyst: item?.expectedCatalyst ?? '',
+  invalidConditions: item?.invalidConditions ?? '',
+  riskLimits: item?.riskLimits ?? '',
+  analysisSummary: item?.analysisSummary ?? '',
+  analysisHistoryId: item?.analysisHistoryId ?? '',
+  sourceAgent: item?.sourceAgent ?? 'commander',
+  userNote: item?.userNote ?? ''
+})
+
+const normalizeOptionalText = value => {
+  const result = String(value ?? '').trim()
+  return result || null
+}
+
+const formatPlanPrice = value => {
+  const number = normalizePlanNumber(value)
+  return Number.isFinite(number) ? Number(number).toFixed(2) : '待补录'
+}
+
+const parseResponseMessage = async (response, fallback) => {
+  try {
+    const text = await response.text()
+    if (!text) {
+      return fallback
+    }
+    const payload = JSON.parse(text)
+    return payload?.message || fallback
+  } catch {
+    return fallback
+  }
+}
+
 const openExternal = url => {
   if (!url) return
   window.open(url, '_blank', 'noopener,noreferrer')
@@ -193,53 +405,78 @@ const chatSymbolKey = computed(() => {
   return String(raw || '').trim().toLowerCase()
 })
 
-const chatSessionOptions = computed(() => {
-  return Array.isArray(chatSessions.value) ? chatSessions.value : []
-})
+const getChatSessionOptions = workspace => (Array.isArray(workspace?.chatSessions) ? workspace.chatSessions : [])
+const getChatHistoryKey = workspace => workspace?.selectedChatSession || ''
 
-const chatHistoryKey = computed(() => {
-  return selectedChatSession.value || ''
-})
-
-const fetchChatSessions = async () => {
-  const symbolKey = chatSymbolKey.value
+const setChatRef = symbolKey => instance => {
   if (!symbolKey) {
-    chatSessions.value = []
-    selectedChatSession.value = ''
+    return
+  }
+  if (instance) {
+    chatWindowRefs.set(symbolKey, instance)
+    return
+  }
+  chatWindowRefs.delete(symbolKey)
+}
+
+const fetchChatSessions = async (symbolKey = chatSymbolKey.value, options = {}) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace || !symbolKey) {
+    return
+  }
+  const force = Boolean(options.force)
+  if (!force && (workspace.chatSessionsLoaded || workspace.chatSessionsLoading)) {
     return
   }
 
-  chatSessionsLoading.value = true
-  chatSessionsError.value = ''
+  const requestToken = ++workspace.chatSessionsRequestToken
+  const controller = replaceAbortController(workspace.chatSessionsAbortController)
+  workspace.chatSessionsAbortController = controller
+  workspace.chatSessionsLoading = true
+  workspace.chatSessionsError = ''
   try {
     const params = new URLSearchParams({ symbol: symbolKey })
-    const response = await fetch(`/api/stocks/chat/sessions?${params.toString()}`)
+    const response = await fetch(`/api/stocks/chat/sessions?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('聊天历史加载失败')
     }
     const list = await response.json()
-    chatSessions.value = Array.isArray(list) ? list.map(item => ({
+    if (requestToken !== workspace.chatSessionsRequestToken) {
+      return
+    }
+    workspace.chatSessions = Array.isArray(list) ? list.map(item => ({
       key: item.sessionKey ?? item.SessionKey,
       label: item.title ?? item.Title
     })) : []
-    if (!chatSessions.value.length) {
-      await createChatSession()
+    if (!workspace.chatSessions.length) {
+      await createChatSession(symbolKey)
+      workspace.chatSessionsLoaded = true
       return
     }
-    if (!chatSessions.value.some(item => item.key === selectedChatSession.value)) {
-      selectedChatSession.value = chatSessions.value[0]?.key || ''
+    if (!workspace.chatSessions.some(item => item.key === workspace.selectedChatSession)) {
+      workspace.selectedChatSession = workspace.chatSessions[0]?.key || ''
     }
+    workspace.chatSessionsLoaded = true
   } catch (err) {
-    chatSessionsError.value = err.message || '聊天历史加载失败'
-    chatSessions.value = []
+    if (isAbortError(err)) {
+      return
+    }
+    workspace.chatSessionsError = err.message || '聊天历史加载失败'
+    workspace.chatSessions = []
+    workspace.chatSessionsLoaded = false
   } finally {
-    chatSessionsLoading.value = false
+    if (requestToken === workspace.chatSessionsRequestToken) {
+      workspace.chatSessionsLoading = false
+      if (workspace.chatSessionsAbortController === controller) {
+        workspace.chatSessionsAbortController = null
+      }
+    }
   }
 }
 
-const createChatSession = async () => {
-  const symbolKey = chatSymbolKey.value
-  if (!symbolKey) return
+const createChatSession = async (symbolKey = chatSymbolKey.value) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace || !symbolKey) return
   const timestamp = new Date()
   const label = `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, '0')}-${String(
     timestamp.getDate()
@@ -254,19 +491,23 @@ const createChatSession = async () => {
   }
   const session = await response.json()
   const entry = { key: session.sessionKey ?? session.SessionKey, label: session.title ?? session.Title }
-  chatSessions.value = [entry, ...chatSessions.value]
-  selectedChatSession.value = entry.key
+  workspace.chatSessions = [entry, ...workspace.chatSessions]
+  workspace.selectedChatSession = entry.key
+  workspace.chatSessionsLoaded = true
 }
 
-const startNewChat = async () => {
+const startNewChat = async (symbolKey = currentStockKey.value) => {
   try {
-    await createChatSession()
+    await createChatSession(symbolKey)
   } catch (err) {
-    chatSessionsError.value = err.message || '创建会话失败'
+    const workspace = getWorkspace(symbolKey)
+    if (workspace) {
+      workspace.chatSessionsError = err.message || '创建会话失败'
+    }
     return
   }
   await nextTick()
-  chatRef.value?.createNewChat()
+  chatWindowRefs.get(symbolKey)?.createNewChat()
 }
 
 const chatHistoryAdapter = {
@@ -292,28 +533,46 @@ const chatHistoryAdapter = {
   }
 }
 
-const fetchAgentHistory = async () => {
-  const symbolKey = chatSymbolKey.value
-  if (!symbolKey) {
-    agentHistoryList.value = []
-    selectedAgentHistoryId.value = ''
+const fetchAgentHistory = async (symbolKey = chatSymbolKey.value, options = {}) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace || !symbolKey) {
     return
   }
-  agentHistoryLoading.value = true
-  agentHistoryError.value = ''
+  const force = Boolean(options.force)
+  if (!force && (workspace.agentHistoryLoaded || workspace.agentHistoryLoading)) {
+    return
+  }
+  const requestToken = ++workspace.agentHistoryRequestToken
+  const controller = replaceAbortController(workspace.agentHistoryAbortController)
+  workspace.agentHistoryAbortController = controller
+  workspace.agentHistoryLoading = true
+  workspace.agentHistoryError = ''
   try {
     const params = new URLSearchParams({ symbol: symbolKey })
-    const response = await fetch(`/api/stocks/agents/history?${params.toString()}`)
+    const response = await fetch(`/api/stocks/agents/history?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('多Agent历史加载失败')
     }
     const list = await response.json()
-    agentHistoryList.value = Array.isArray(list) ? list : []
+    if (requestToken !== workspace.agentHistoryRequestToken) {
+      return
+    }
+    workspace.agentHistoryList = Array.isArray(list) ? list : []
+    workspace.agentHistoryLoaded = true
   } catch (err) {
-    agentHistoryError.value = err.message || '多Agent历史加载失败'
-    agentHistoryList.value = []
+    if (isAbortError(err)) {
+      return
+    }
+    workspace.agentHistoryError = err.message || '多Agent历史加载失败'
+    workspace.agentHistoryList = []
+    workspace.agentHistoryLoaded = false
   } finally {
-    agentHistoryLoading.value = false
+    if (requestToken === workspace.agentHistoryRequestToken) {
+      workspace.agentHistoryLoading = false
+      if (workspace.agentHistoryAbortController === controller) {
+        workspace.agentHistoryAbortController = null
+      }
+    }
   }
 }
 
@@ -327,41 +586,44 @@ const agentHistoryOptions = computed(() => {
   })
 })
 
-const loadAgentHistoryDetail = async historyId => {
+const loadAgentHistoryDetail = async (historyId, symbolKey = currentStockKey.value) => {
   if (!historyId) return
-  agentHistoryLoading.value = true
-  agentHistoryError.value = ''
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace) return
+  workspace.agentHistoryLoading = true
+  workspace.agentHistoryError = ''
   try {
     const response = await fetch(`/api/stocks/agents/history/${historyId}`)
     if (!response.ok) {
       throw new Error('历史详情加载失败')
     }
-    const detail = await response.json()
-    const result = detail.result ?? detail.Result
-    agentResults.value = result?.agents ?? result?.Agents ?? []
-    agentUpdatedAt.value = formatDate(detail.createdAt ?? detail.CreatedAt)
+    const historyDetail = await response.json()
+    const result = historyDetail.result ?? historyDetail.Result
+    workspace.agentResults = result?.agents ?? result?.Agents ?? []
+    workspace.agentUpdatedAt = formatDate(historyDetail.createdAt ?? historyDetail.CreatedAt)
   } catch (err) {
-    agentHistoryError.value = err.message || '历史详情加载失败'
+    workspace.agentHistoryError = err.message || '历史详情加载失败'
   } finally {
-    agentHistoryLoading.value = false
+    workspace.agentHistoryLoading = false
   }
 }
 
-const saveAgentHistory = async () => {
-  if (!detail.value?.quote?.symbol) return
+const saveAgentHistory = async (symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
+  if (!workspace?.detail?.quote?.symbol) return
   const payload = {
-    symbol: detail.value.quote.symbol,
-    name: detail.value.quote.name,
+    symbol: workspace.detail.quote.symbol,
+    name: workspace.detail.quote.name,
     interval: interval.value,
     source: selectedSource.value || null,
-    provider: 'openai',
+    provider: null,
     model: null,
     useInternet: true,
     result: {
-      symbol: detail.value.quote.symbol,
-      name: detail.value.quote.name,
+      symbol: workspace.detail.quote.symbol,
+      name: workspace.detail.quote.name,
       timestamp: new Date().toISOString(),
-      agents: agentResults.value
+      agents: workspace.agentResults
     }
   }
   const response = await fetch('/api/stocks/agents/history', {
@@ -373,15 +635,249 @@ const saveAgentHistory = async () => {
     throw new Error('保存多Agent历史失败')
   }
   const saved = await response.json()
-  selectedAgentHistoryId.value = saved.id ?? saved.Id ?? ''
+  workspace.selectedAgentHistoryId = saved.id ?? saved.Id ?? ''
+  workspace.agentHistoryLoaded = false
 }
 
-const selectAgentHistory = async value => {
-  selectedAgentHistoryId.value = value || ''
-  if (!selectedAgentHistoryId.value) {
+const fetchTradingPlans = async (symbolKey = currentStockKey.value, options = {}) => {
+  const isBoard = Boolean(options.global)
+  const workspace = isBoard ? rootWorkspace : getWorkspace(symbolKey)
+  const symbolValue = isBoard ? '' : (workspace?.detail?.quote?.symbol ?? symbolKey)
+  if (!workspace || (!isBoard && !symbolValue)) {
     return
   }
-  await loadAgentHistoryDetail(selectedAgentHistoryId.value)
+
+  const force = Boolean(options.force)
+  if (!force && (workspace.planListLoaded || workspace.planListLoading)) {
+    return
+  }
+
+  const requestToken = ++workspace.planListRequestToken
+  const controller = replaceAbortController(workspace.planListAbortController)
+  workspace.planListAbortController = controller
+  workspace.planListLoading = true
+  workspace.planError = ''
+  try {
+    const params = new URLSearchParams()
+    if (symbolValue) {
+      params.set('symbol', symbolValue)
+    }
+    if (options.take) {
+      params.set('take', String(options.take))
+    }
+    const response = await fetch(`/api/stocks/plans?${params.toString()}`, { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(await parseResponseMessage(response, '交易计划加载失败'))
+    }
+    const list = await response.json()
+    if (requestToken !== workspace.planListRequestToken) {
+      return
+    }
+    workspace.planList = Array.isArray(list) ? list.map(normalizeTradingPlan) : []
+    workspace.planListLoaded = true
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    workspace.planError = err.message || '交易计划加载失败'
+    workspace.planList = []
+    workspace.planListLoaded = false
+  } finally {
+    if (requestToken === workspace.planListRequestToken) {
+      workspace.planListLoading = false
+      if (workspace.planListAbortController === controller) {
+        workspace.planListAbortController = null
+      }
+    }
+  }
+}
+
+const closeTradingPlanModal = symbolKey => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace) {
+    return
+  }
+  workspace.planModalOpen = false
+}
+
+const editTradingPlan = (symbolKey, item) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace || !item?.id) {
+    return
+  }
+
+  workspace.planError = ''
+  workspace.planForm = createTradingPlanForm(item)
+  workspace.planModalOpen = true
+}
+
+const openTradingPlanDraft = async (symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
+  if (!workspace?.detail?.quote?.symbol) {
+    return
+  }
+
+  workspace.planDraftLoading = true
+  workspace.planError = ''
+  try {
+    let historyId = workspace.selectedAgentHistoryId
+    if (!historyId) {
+      if (!Array.isArray(workspace.agentResults) || !workspace.agentResults.length) {
+        throw new Error('请先完成多Agent分析')
+      }
+      await saveAgentHistory(symbolKey)
+      await fetchAgentHistory(symbolKey, { force: true })
+      historyId = workspace.selectedAgentHistoryId
+    }
+
+    if (!historyId) {
+      throw new Error('多Agent历史保存失败')
+    }
+
+    const response = await fetch('/api/stocks/plans/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: workspace.detail.quote.symbol,
+        analysisHistoryId: Number(historyId)
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(await parseResponseMessage(response, '交易计划草稿生成失败'))
+    }
+
+    const payload = normalizeTradingPlan(await response.json())
+    workspace.planForm = createTradingPlanForm(payload)
+    workspace.planModalOpen = true
+  } catch (err) {
+    workspace.planError = err.message || '交易计划草稿生成失败'
+  } finally {
+    workspace.planDraftLoading = false
+  }
+}
+
+const saveTradingPlan = async (symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
+  if (!workspace?.planForm) {
+    return
+  }
+
+  workspace.planSaving = true
+  workspace.planError = ''
+  try {
+    const form = workspace.planForm
+    const isEditing = Boolean(form.id)
+    const response = await fetch(isEditing ? `/api/stocks/plans/${form.id}` : '/api/stocks/plans', {
+      method: isEditing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(isEditing
+        ? {
+            name: form.name,
+            direction: form.direction,
+            triggerPrice: normalizePlanNumber(form.triggerPrice),
+            invalidPrice: normalizePlanNumber(form.invalidPrice),
+            stopLossPrice: normalizePlanNumber(form.stopLossPrice),
+            takeProfitPrice: normalizePlanNumber(form.takeProfitPrice),
+            targetPrice: normalizePlanNumber(form.targetPrice),
+            expectedCatalyst: normalizeOptionalText(form.expectedCatalyst),
+            invalidConditions: normalizeOptionalText(form.invalidConditions),
+            riskLimits: normalizeOptionalText(form.riskLimits),
+            analysisSummary: normalizeOptionalText(form.analysisSummary),
+            sourceAgent: form.sourceAgent || 'commander',
+            userNote: normalizeOptionalText(form.userNote)
+          }
+        : {
+            symbol: form.symbol,
+            name: form.name,
+            direction: form.direction,
+            triggerPrice: normalizePlanNumber(form.triggerPrice),
+            invalidPrice: normalizePlanNumber(form.invalidPrice),
+            stopLossPrice: normalizePlanNumber(form.stopLossPrice),
+            takeProfitPrice: normalizePlanNumber(form.takeProfitPrice),
+            targetPrice: normalizePlanNumber(form.targetPrice),
+            expectedCatalyst: normalizeOptionalText(form.expectedCatalyst),
+            invalidConditions: normalizeOptionalText(form.invalidConditions),
+            riskLimits: normalizeOptionalText(form.riskLimits),
+            analysisSummary: normalizeOptionalText(form.analysisSummary),
+            analysisHistoryId: Number(form.analysisHistoryId),
+            sourceAgent: form.sourceAgent || 'commander',
+            userNote: normalizeOptionalText(form.userNote)
+          })
+    })
+
+    if (!response.ok) {
+      throw new Error(await parseResponseMessage(response, '交易计划保存失败'))
+    }
+
+    const saved = normalizeTradingPlan(await response.json())
+    workspace.planModalOpen = false
+    workspace.planForm = createTradingPlanForm({
+      symbol: workspace.detail?.quote?.symbol ?? '',
+      name: workspace.detail?.quote?.name ?? ''
+    })
+    await fetchTradingPlans(symbolKey, { force: true })
+    await fetchTradingPlans('', { force: true, global: true, take: 20 })
+    if (saved?.id) {
+      workspace.planList = [saved, ...workspace.planList.filter(item => item.id !== saved.id)]
+    }
+  } catch (err) {
+    workspace.planError = err.message || '交易计划保存失败'
+  } finally {
+    workspace.planSaving = false
+  }
+}
+
+const deleteTradingPlan = async (symbolKey, item) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace || !item?.id) {
+    return
+  }
+
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm(`确认删除交易计划「${item.name}」？`)) {
+    return
+  }
+
+  deletingPlanId.value = String(item.id)
+  workspace.planError = ''
+  try {
+    const response = await fetch(`/api/stocks/plans/${item.id}`, { method: 'DELETE' })
+    if (!response.ok) {
+      throw new Error(await parseResponseMessage(response, '交易计划删除失败'))
+    }
+
+    workspace.planList = workspace.planList.filter(plan => String(plan.id) !== String(item.id))
+    await fetchTradingPlans(symbolKey, { force: true })
+    await fetchTradingPlans('', { force: true, global: true, take: 20 })
+  } catch (err) {
+    workspace.planError = err.message || '交易计划删除失败'
+  } finally {
+    deletingPlanId.value = ''
+  }
+}
+
+const jumpToPlanSymbol = symbolKey => {
+  const normalizedSymbol = normalizeStockSymbol(symbolKey)
+  if (!normalizedSymbol) {
+    return
+  }
+
+  selectedSymbol.value = normalizedSymbol
+  symbol.value = normalizedSymbol
+  currentStockKey.value = normalizedSymbol
+  fetchQuote()
+}
+
+const selectAgentHistory = async (symbolKey, value) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace) {
+    return
+  }
+  workspace.selectedAgentHistoryId = value || ''
+  if (!workspace.selectedAgentHistoryId) {
+    return
+  }
+  await loadAgentHistoryDetail(workspace.selectedAgentHistoryId, symbolKey)
 }
 
 const buildChatPrompt = content => {
@@ -457,7 +953,7 @@ const aiLevels = computed(() => {
   }
 })
 
-const marketNewsItems = computed(() => localNewsBuckets.value.market?.items ?? [])
+const marketNewsItems = computed(() => marketNewsBucket.value?.items ?? [])
 const marketNewsPreviewItems = computed(() => marketNewsItems.value.slice(0, 3))
 
 const getChangeClass = value => {
@@ -591,74 +1087,164 @@ const fetchQuote = async () => {
 
   selectedSymbol.value = targetSymbol
   symbol.value = targetSymbol
+  currentStockKey.value = targetSymbol
 
-  loading.value = true
-  error.value = ''
-  // 保留已有数据，避免页面闪烁
-
-  try {
-    const params = new URLSearchParams({
-      symbol: targetSymbol,
-      interval: interval.value
-    })
-    if (selectedSource.value) {
-      params.set('source', selectedSource.value)
-    }
-
-    const response = await fetch(`/api/stocks/detail?${params.toString()}`)
-    if (!response.ok) {
-      throw new Error('接口请求失败')
-    }
-    detail.value = await response.json()
-  } catch (err) {
-    error.value = err.message || '请求失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-const fetchNewsImpact = async () => {
-  const symbolValue = detail.value?.quote?.symbol
-  if (!symbolValue) {
-    newsImpact.value = null
-    newsImpactError.value = ''
+  const workspace = getWorkspace(targetSymbol)
+  if (!workspace) {
     return
   }
 
-  newsImpactLoading.value = true
-  newsImpactError.value = ''
+  const requestToken = ++workspace.quoteRequestToken
+  const controller = replaceAbortController(workspace.detailAbortController)
+  workspace.detailAbortController = controller
+  workspace.loading = true
+  workspace.error = ''
+  // 保留已有数据，避免页面闪烁
+
+  try {
+    const params = buildDetailQuery(targetSymbol)
+
+    const cacheResponse = await fetch(`/api/stocks/detail/cache?${params.toString()}`, { signal: controller.signal })
+    if (cacheResponse.ok) {
+      const cacheDetail = await cacheResponse.json()
+      applyLatestDetail(workspace, requestToken, cacheDetail)
+    }
+
+    const response = await fetch(`/api/stocks/detail?${params.toString()}`, { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error('接口请求失败')
+    }
+    const liveDetail = await response.json()
+    applyLatestDetail(workspace, requestToken, liveDetail)
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    if (requestToken === workspace.quoteRequestToken) {
+      workspace.error = err.message || '请求失败'
+    }
+  } finally {
+    if (requestToken === workspace.quoteRequestToken) {
+      workspace.loading = false
+      if (workspace.detailAbortController === controller) {
+        workspace.detailAbortController = null
+      }
+    }
+  }
+}
+
+const fetchNewsImpact = async (symbolKey = currentStockKey.value, options = {}) => {
+  const workspace = getWorkspace(symbolKey)
+  const symbolValue = workspace?.detail?.quote?.symbol
+  if (!workspace || !symbolValue) {
+    return
+  }
+  const force = Boolean(options.force)
+  if (!force && (workspace.newsImpactLoaded || workspace.newsImpactLoading)) {
+    return
+  }
+
+  const requestToken = ++workspace.newsImpactRequestToken
+  const controller = replaceAbortController(workspace.newsImpactAbortController)
+  workspace.newsImpactAbortController = controller
+  workspace.newsImpactLoading = true
+  workspace.newsImpactError = ''
   try {
     const params = new URLSearchParams({ symbol: symbolValue })
     if (selectedSource.value) {
       params.set('source', selectedSource.value)
     }
-    const response = await fetch(`/api/stocks/news/impact?${params.toString()}`)
+    const response = await fetch(`/api/stocks/news/impact?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('资讯影响加载失败')
     }
-    newsImpact.value = await response.json()
+    const payload = await response.json()
+    if (requestToken !== workspace.newsImpactRequestToken) {
+      return
+    }
+    workspace.newsImpact = payload
+    workspace.newsImpactLoaded = true
   } catch (err) {
-    newsImpactError.value = err.message || '资讯影响加载失败'
-    newsImpact.value = null
+    if (isAbortError(err)) {
+      return
+    }
+    workspace.newsImpactError = err.message || '资讯影响加载失败'
+    workspace.newsImpact = null
+    workspace.newsImpactLoaded = false
   } finally {
-    newsImpactLoading.value = false
+    if (requestToken === workspace.newsImpactRequestToken) {
+      workspace.newsImpactLoading = false
+      if (workspace.newsImpactAbortController === controller) {
+        workspace.newsImpactAbortController = null
+      }
+    }
   }
 }
 
-const fetchLocalNews = async () => {
-  const symbolValue = detail.value?.quote?.symbol
-  const sectionsToFetch = symbolValue ? requestedNewsSections : [{ key: 'market', title: '大盘环境' }]
+const fetchMarketNews = async (options = {}) => {
+  const force = Boolean(options.force)
+  if (!force && (rootWorkspace.localNewsBuckets.market || rootWorkspace.localNewsLoading)) {
+    return
+  }
+  const requestToken = ++rootWorkspace.localNewsRequestToken
+  const controller = replaceAbortController(rootWorkspace.localNewsAbortController)
+  rootWorkspace.localNewsAbortController = controller
+  rootWorkspace.localNewsLoading = true
+  rootWorkspace.localNewsError = ''
 
-  localNewsLoading.value = true
-  localNewsError.value = ''
+  try {
+    const response = await fetch('/api/news?level=market', { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error('大盘资讯加载失败')
+    }
+
+    const payload = await response.json()
+    if (requestToken !== rootWorkspace.localNewsRequestToken) {
+      return
+    }
+
+    rootWorkspace.localNewsBuckets = {
+      ...rootWorkspace.localNewsBuckets,
+      market: normalizeNewsBucket('market', payload)
+    }
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    rootWorkspace.localNewsError = err.message || '大盘资讯加载失败'
+  } finally {
+    if (requestToken === rootWorkspace.localNewsRequestToken) {
+      rootWorkspace.localNewsLoading = false
+      if (rootWorkspace.localNewsAbortController === controller) {
+        rootWorkspace.localNewsAbortController = null
+      }
+    }
+  }
+}
+
+const fetchLocalNews = async (symbolKey = currentStockKey.value, options = {}) => {
+  const workspace = symbolKey ? getWorkspace(symbolKey) : null
+  const symbolValue = workspace?.detail?.quote?.symbol
+  if (!workspace || !symbolValue) {
+    return
+  }
+  const force = Boolean(options.force)
+  if (!force && (workspace.localNewsLoaded || workspace.localNewsLoading)) {
+    return
+  }
+
+  const targetWorkspace = workspace
+  const requestToken = ++targetWorkspace.localNewsRequestToken
+  const controller = replaceAbortController(targetWorkspace.localNewsAbortController)
+  targetWorkspace.localNewsAbortController = controller
+  targetWorkspace.localNewsLoading = true
+  targetWorkspace.localNewsError = ''
   try {
     const buckets = await Promise.all(
-      sectionsToFetch.map(async section => {
+      sidebarNewsSections.map(async section => {
         const params = new URLSearchParams({ level: section.key })
-        if (symbolValue && section.key !== 'market') {
-          params.set('symbol', symbolValue)
-        }
-        const response = await fetch(`/api/news?${params.toString()}`)
+        params.set('symbol', symbolValue)
+        const response = await fetch(`/api/news?${params.toString()}`, { signal: controller.signal })
         if (!response.ok) {
           throw new Error('本地新闻加载失败')
         }
@@ -667,47 +1253,62 @@ const fetchLocalNews = async () => {
       })
     )
 
-    localNewsBuckets.value = {
-      stock: symbolValue ? Object.fromEntries(buckets).stock : null,
-      sector: symbolValue ? Object.fromEntries(buckets).sector : null,
-      market: Object.fromEntries(buckets).market ?? null
+    if (requestToken !== targetWorkspace.localNewsRequestToken) {
+      return
     }
+
+    targetWorkspace.localNewsBuckets = {
+      ...targetWorkspace.localNewsBuckets,
+      stock: Object.fromEntries(buckets).stock ?? null,
+      sector: Object.fromEntries(buckets).sector ?? null
+    }
+    targetWorkspace.localNewsLoaded = true
   } catch (err) {
-    const message = err.message || '本地新闻加载失败'
-    const onlyMarketMode = !symbolValue
-    localNewsError.value = onlyMarketMode ? '' : message
-    localNewsBuckets.value = {
-      stock: null,
-      sector: null,
-      market: onlyMarketMode ? localNewsBuckets.value.market : null
+    if (isAbortError(err)) {
+      return
     }
+    targetWorkspace.localNewsError = err.message || '本地新闻加载失败'
+    targetWorkspace.localNewsBuckets = {
+      ...targetWorkspace.localNewsBuckets,
+      stock: null,
+      sector: null
+    }
+    targetWorkspace.localNewsLoaded = false
   } finally {
-    localNewsLoading.value = false
+    if (requestToken === targetWorkspace.localNewsRequestToken) {
+      targetWorkspace.localNewsLoading = false
+      if (targetWorkspace.localNewsAbortController === controller) {
+        targetWorkspace.localNewsAbortController = null
+      }
+    }
   }
 }
 
-const runAgents = async (isPro = false) => {
-  if (!detail.value?.quote?.symbol) {
-    agentError.value = '请先选择股票'
+const runAgents = async (symbolKey = currentStockKey.value, isPro = false) => {
+  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
+  if (!workspace?.detail?.quote?.symbol) {
+    if (workspace) {
+      workspace.agentError = '请先选择股票'
+    }
     return
   }
 
-  agentLoading.value = true
-  agentError.value = ''
+  workspace.agentLoading = true
+  workspace.agentError = ''
   try {
-    agentResults.value = []
-    selectedAgentHistoryId.value = ''
+    workspace.agentResults = []
+    workspace.selectedAgentHistoryId = ''
     const order = ['stock_news', 'sector_news', 'financial_analysis', 'trend_analysis', 'commander']
     for (const agentId of order) {
       const payload = {
-        symbol: detail.value.quote.symbol,
+        symbol: workspace.detail.quote.symbol,
         agentId,
         interval: interval.value,
-        count: detail.value.kLines?.length || 60,
+        count: workspace.detail.kLines?.length || 60,
         source: selectedSource.value || null,
-        provider: 'openai',
+        provider: null,
         useInternet: true,
-        dependencyResults: agentId === 'commander' ? agentResults.value : [],
+        dependencyResults: agentId === 'commander' ? workspace.agentResults : [],
         isPro
       }
 
@@ -722,31 +1323,48 @@ const runAgents = async (isPro = false) => {
           throw new Error(message || `${agentId} 请求失败`)
         }
         const result = await response.json()
-        upsertAgentResult(result)
+        if (currentWorkspace.value?.symbolKey === workspace.symbolKey) {
+          upsertAgentResult(result)
+        } else {
+          const agentIdValue = result?.agentId ?? result?.AgentId ?? ''
+          const list = [...workspace.agentResults]
+          const index = list.findIndex(item => (item.agentId ?? item.AgentId) === agentIdValue)
+          if (index >= 0) {
+            list[index] = result
+          } else {
+            list.push(result)
+          }
+          workspace.agentResults = list
+        }
       } catch (err) {
-        upsertAgentResult({
+        const failedResult = {
           agentId,
           agentName: agentId,
           success: false,
           error: err.message || `${agentId} 请求失败`,
           data: null,
           rawContent: null
-        })
+        }
+        if (currentWorkspace.value?.symbolKey === workspace.symbolKey) {
+          upsertAgentResult(failedResult)
+        } else {
+          workspace.agentResults = [...workspace.agentResults, failedResult]
+        }
       }
 
-      agentUpdatedAt.value = formatDate(new Date().toISOString())
+      workspace.agentUpdatedAt = formatDate(new Date().toISOString())
     }
 
     try {
-      await saveAgentHistory()
-      await fetchAgentHistory()
+      await saveAgentHistory(workspace.symbolKey)
+      await fetchAgentHistory(workspace.symbolKey, { force: true })
     } catch (err) {
-      agentHistoryError.value = err.message || '保存多Agent历史失败'
+      workspace.agentHistoryError = err.message || '保存多Agent历史失败'
     }
   } catch (err) {
-    agentError.value = err.message || '多Agent请求失败'
+    workspace.agentError = err.message || '多Agent请求失败'
   } finally {
-    agentLoading.value = false
+    workspace.agentLoading = false
   }
 }
 
@@ -916,20 +1534,16 @@ watch(selectedSource, value => {
     refreshHistory()
   }
   if (detail.value?.quote?.symbol) {
-    fetchNewsImpact()
+    fetchNewsImpact(undefined, { force: true })
   }
 })
 
 watch(chatSymbolKey, value => {
   if (!value) {
-    chatSessions.value = []
-    selectedChatSession.value = ''
-    agentHistoryList.value = []
-    selectedAgentHistoryId.value = ''
     return
   }
-  fetchChatSessions()
-  fetchAgentHistory()
+  fetchChatSessions(value)
+  fetchAgentHistory(value)
 })
 
 watch(historyRefreshSeconds, value => {
@@ -946,7 +1560,8 @@ onMounted(() => {
   fetchSources()
   setupRefresh()
   fetchHistory()
-  fetchLocalNews()
+  fetchMarketNews()
+  fetchTradingPlans('', { global: true, take: 20 })
   setupHistoryRefresh()
   window.addEventListener('click', closeContextMenu)
 })
@@ -958,6 +1573,20 @@ onUnmounted(() => {
   if (historyTimer) {
     clearInterval(historyTimer)
   }
+  Object.values(stockWorkspaces).forEach(workspace => {
+    workspace.detailAbortController?.abort()
+    workspace.newsImpactAbortController?.abort()
+    workspace.localNewsAbortController?.abort()
+    workspace.chatSessionsAbortController?.abort()
+    workspace.agentHistoryAbortController?.abort()
+    workspace.planListAbortController?.abort()
+  })
+  rootWorkspace.detailAbortController?.abort()
+  rootWorkspace.newsImpactAbortController?.abort()
+  rootWorkspace.localNewsAbortController?.abort()
+  rootWorkspace.chatSessionsAbortController?.abort()
+  rootWorkspace.agentHistoryAbortController?.abort()
+  rootWorkspace.planListAbortController?.abort()
   window.removeEventListener('click', closeContextMenu)
 })
 
@@ -971,12 +1600,13 @@ watch(copilotPanelOpen, value => {
 
 watch(
   () => detail.value?.quote?.symbol,
-  () => {
-    agentResults.value = []
-    agentError.value = ''
-    agentUpdatedAt.value = ''
-    fetchNewsImpact()
-    fetchLocalNews()
+  symbolKey => {
+    if (!symbolKey) {
+      return
+    }
+    fetchNewsImpact(symbolKey)
+    fetchLocalNews(symbolKey)
+    fetchTradingPlans(symbolKey)
   }
 )
 </script>
@@ -1013,7 +1643,7 @@ watch(
               @input="onSymbolInput"
               @keydown.enter.prevent="onSymbolEnter"
             />
-            <button @click="fetchQuote" :disabled="loading">查询</button>
+            <button @click="fetchQuote" :disabled="isBlockingQuoteLoad">查询</button>
             <div v-if="searchOpen" class="search-dropdown">
               <div class="search-modal-header">
                 <span>搜索结果</span>
@@ -1060,7 +1690,8 @@ watch(
             数据刷新：{{ autoRefresh ? `每 ${refreshSeconds} 秒` : '手动刷新' }}
           </p>
           <p v-if="error" class="muted toolbar-status error-text">{{ error }}</p>
-          <p v-else-if="loading && !detail" class="muted toolbar-status">查询中...</p>
+          <p v-else-if="isBlockingQuoteLoad" class="muted toolbar-status">查询中...</p>
+          <p v-else-if="isBackgroundQuoteRefresh" class="muted toolbar-status">后台刷新中...</p>
 
           <div class="toolbar-history-actions">
             <span class="muted">历史：{{ historyAutoRefresh ? `每 ${historyRefreshSeconds} 秒` : '手动' }}</span>
@@ -1109,20 +1740,20 @@ watch(
       </section>
     </div>
 
-    <section class="market-news-panel" :class="{ empty: !detail && !localNewsLoading && !localNewsError && !marketNewsItems.length }">
+    <section class="market-news-panel" :class="{ empty: !detail && !marketNewsLoading && !marketNewsError && !marketNewsItems.length }">
       <div class="market-news-header">
         <div>
           <p class="market-news-kicker">Market Wire</p>
           <h3>大盘资讯</h3>
         </div>
         <div class="market-news-actions">
-          <button class="market-news-button" @click="fetchLocalNews" :disabled="localNewsLoading">刷新</button>
+          <button class="market-news-button" @click="fetchMarketNews({ force: true })" :disabled="marketNewsLoading">刷新</button>
           <button class="market-news-button" @click="openMarketNewsModal" :disabled="!marketNewsItems.length">展开阅读</button>
         </div>
       </div>
 
-      <p v-if="localNewsError" class="muted error-text">{{ localNewsError }}</p>
-      <p v-else-if="localNewsLoading" class="muted">大盘资讯加载中...</p>
+      <p v-if="marketNewsError" class="muted error-text">{{ marketNewsError }}</p>
+      <p v-else-if="marketNewsLoading" class="muted">大盘资讯加载中...</p>
       <div v-else-if="marketNewsItems.length" class="market-news-preview-list">
         <article v-for="item in marketNewsPreviewItems" :key="`market-${item.title}-${item.publishTime}`" class="market-news-item">
           <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
@@ -1189,6 +1820,12 @@ watch(
               <p>量比：{{ detail.quote.volumeRatio ?? '-' }}</p>
               <p>股东户数：{{ detail.quote.shareholderCount ? Number(detail.quote.shareholderCount).toLocaleString('zh-CN') : '-' }}</p>
               <p>所属板块：{{ detail.quote.sectorName || '-' }}</p>
+              <p v-if="detail.fundamentalSnapshot?.updatedAt" class="muted">快照刷新：{{ formatDate(detail.fundamentalSnapshot.updatedAt) }}</p>
+              <ul v-if="detail.fundamentalSnapshot?.facts?.length" class="fundamental-facts">
+                <li v-for="fact in detail.fundamentalSnapshot.facts.slice(0, 8)" :key="`fundamental-${fact.label}-${fact.value}`">
+                  <strong>{{ fact.label }}：</strong>{{ fact.value }}
+                </li>
+              </ul>
             </div>
 
             <div class="quote-card tape-card">
@@ -1235,116 +1872,288 @@ watch(
       </TerminalView>
 
       <CopilotPanel :open="copilotPanelOpen" :current-stock-label="currentStockLabel" @toggle="copilotPanelOpen = !copilotPanelOpen">
-        <section class="copilot-card news-impact">
-          <div class="news-impact-header">
+        <section class="copilot-card trading-plan-card trading-plan-board-card">
+          <div class="trading-plan-header">
             <div>
-              <h3>资讯影响</h3>
-              <p class="muted">事件信号在右侧集中查看，不遮挡 K 线。</p>
+              <h3>交易计划总览</h3>
+              <p class="muted">不选股也能直接查看最近交易计划，并快速跳转到对应标的。</p>
             </div>
-            <button @click="fetchNewsImpact" :disabled="newsImpactLoading || !detail">刷新</button>
+            <button class="market-news-button plan-refresh-button" @click="fetchTradingPlans('', { force: true, global: true, take: 20 })" :disabled="rootWorkspace.planListLoading">
+              刷新
+            </button>
           </div>
 
-          <div v-if="detail" class="news-impact-content">
-            <p v-if="newsImpactError" class="muted error">{{ newsImpactError }}</p>
-            <p v-else-if="newsImpactLoading" class="muted">分析中...</p>
-            <div v-else-if="newsImpact" class="news-impact-summary">
-              <span>利好 {{ newsImpact.summary.positive }}</span>
-              <span>中性 {{ newsImpact.summary.neutral }}</span>
-              <span>利空 {{ newsImpact.summary.negative }}</span>
-              <span class="overall">总体：{{ newsImpact.summary.overall }}</span>
-            </div>
-            <p v-else class="muted">资讯影响待生成。</p>
-
-            <div class="news-buckets">
-              <article v-for="section in sidebarNewsSections" :key="section.key" class="news-bucket-card">
-                <div class="news-bucket-header">
-                  <strong>{{ section.title }}</strong>
-                  <span v-if="section.key === 'sector' && localNewsBuckets[section.key]?.sectorName" class="muted">
-                    {{ localNewsBuckets[section.key]?.sectorName }}
-                  </span>
+          <p v-if="rootWorkspace.planError" class="muted error">{{ rootWorkspace.planError }}</p>
+          <p v-else-if="rootWorkspace.planListLoading && !rootWorkspace.planList.length" class="muted">加载中...</p>
+          <ul v-else-if="rootWorkspace.planList.length" class="plan-list plan-board-list">
+            <li v-for="item in rootWorkspace.planList" :key="`plan-board-${item.id}`" class="plan-item plan-item-compact">
+              <div class="plan-item-header">
+                <div class="plan-item-title">
+                  <strong>{{ item.name }} · {{ item.status }}</strong>
+                  <small>{{ item.symbol }}</small>
                 </div>
-
-                <p v-if="localNewsLoading" class="muted">加载中...</p>
-                <ul v-else-if="localNewsBuckets[section.key]?.items?.length" class="news-bucket-list">
-                  <li v-for="item in localNewsBuckets[section.key].items" :key="`${section.key}-${item.title}-${item.publishTime}`">
-                    <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
-                    <a v-if="item.url ?? item.Url" :href="item.url ?? item.Url" target="_blank" rel="noreferrer">
-                      {{ getLocalNewsHeadline(item) }}
-                    </a>
-                    <span v-else>{{ getLocalNewsHeadline(item) }}</span>
-                    <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
-                    <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
-                      <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
-                      <span v-for="tag in item.aiTags" :key="`${section.key}-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
-                    </div>
-                    <small>
-                      {{ item.source }} · {{ formatDate(item.publishTime) }}
-                    </small>
-                  </li>
-                </ul>
-                <p v-else class="muted">暂无匹配资讯。</p>
-              </article>
-            </div>
-
-            <p v-if="localNewsError" class="muted error">{{ localNewsError }}</p>
-
-            <ul v-if="newsImpact?.events?.length" class="news-impact-list">
-              <li v-for="item in newsImpact.events.slice(0, 6)" :key="item.title">
-                <span class="impact-tag" :class="getImpactClass(item.category)">{{ item.category }}</span>
-                <span class="impact-title">{{ item.title }}</span>
-                <span class="impact-score">{{ formatImpactScore(item.impactScore) }}</span>
-              </li>
-            </ul>
-            <p v-else-if="!newsImpactLoading" class="muted">暂无资讯影响数据。</p>
-          </div>
-
-          <p v-else class="muted">选择股票后在此查看事件影响。</p>
+                <button class="plan-link-button" @click="jumpToPlanSymbol(item.symbol)">查看股票</button>
+              </div>
+              <p>{{ item.analysisSummary || item.expectedCatalyst || '等待补充计划摘要' }}</p>
+              <div class="plan-pill-row">
+                <span class="plan-pill">方向 {{ item.direction }}</span>
+                <span class="plan-pill">触发 {{ formatPlanPrice(item.triggerPrice) }}</span>
+                <span class="plan-pill">止损 {{ formatPlanPrice(item.stopLossPrice) }}</span>
+                <span class="plan-pill">止盈 {{ formatPlanPrice(item.takeProfitPrice) }}</span>
+                <span class="plan-pill">目标 {{ formatPlanPrice(item.targetPrice) }}</span>
+              </div>
+            </li>
+          </ul>
+          <p v-else class="muted">暂无交易计划，可从 commander 分析一键起草。</p>
         </section>
 
-        <StockAgentPanels
-          :agents="agentResults"
-          :loading="agentLoading"
-          :error="agentError"
-          :last-updated="agentUpdatedAt"
-          :history-options="agentHistoryOptions"
-          :selected-history-id="selectedAgentHistoryId"
-          :history-loading="agentHistoryLoading"
-          :history-error="agentHistoryError"
-          @select-history="selectAgentHistory"
-          @run="runAgents"
-        />
-
-        <div class="copilot-card">
-          <ChatWindow
-            v-if="detail"
-            ref="chatRef"
-            title="股票助手"
-            :build-prompt="buildChatPrompt"
-            :history-key="chatHistoryKey"
-            :enable-history="true"
-            :history-adapter="chatHistoryAdapter"
-            expandable
-            expanded-storage-key="stock_chat_expanded"
-            placeholder="请输入关于该股票的问题"
-            empty-text="可以询问该股票的走势、风险或盘面解读。"
-            max-height="320px"
-            expanded-height="600px"
+        <template v-if="sidebarWorkspaces.length">
+          <div
+            v-for="workspace in sidebarWorkspaces"
+            :key="`sidebar-${workspace.symbolKey}`"
+            v-show="workspace.symbolKey === currentStockKey"
+            class="sidebar-workspace"
           >
-            <template #header-extra>
-              <div class="chat-session">
-                <p class="muted">当前：{{ currentStockLabel }}</p>
-                <select v-model="selectedChatSession" :disabled="!chatSessionOptions.length">
-                  <option v-for="item in chatSessionOptions" :key="item.key" :value="item.key">
-                    {{ item.label }}
-                  </option>
-                </select>
-                <button class="chat-session-new" @click="startNewChat" :disabled="!chatSymbolKey">
-                  新建对话
+            <section class="copilot-card news-impact">
+              <div class="news-impact-header">
+                <div>
+                  <h3>资讯影响</h3>
+                  <p class="muted">事件信号在右侧集中查看，不遮挡 K 线。</p>
+                </div>
+                <button @click="fetchNewsImpact(workspace.symbolKey, { force: true })" :disabled="workspace.newsImpactLoading || !workspace.detail">刷新</button>
+              </div>
+
+              <div v-if="workspace.detail" class="news-impact-content">
+                <p v-if="workspace.newsImpactError" class="muted error">{{ workspace.newsImpactError }}</p>
+                <p v-else-if="workspace.newsImpactLoading" class="muted">分析中...</p>
+                <div v-else-if="workspace.newsImpact" class="news-impact-summary">
+                  <span>利好 {{ workspace.newsImpact.summary.positive }}</span>
+                  <span>中性 {{ workspace.newsImpact.summary.neutral }}</span>
+                  <span>利空 {{ workspace.newsImpact.summary.negative }}</span>
+                  <span class="overall">总体：{{ workspace.newsImpact.summary.overall }}</span>
+                </div>
+                <p v-else class="muted">资讯影响待生成。</p>
+
+                <div class="news-buckets">
+                  <article v-for="section in sidebarNewsSections" :key="section.key" class="news-bucket-card">
+                    <div class="news-bucket-header">
+                      <strong>{{ section.title }}</strong>
+                      <span v-if="section.key === 'sector' && workspace.localNewsBuckets[section.key]?.sectorName" class="muted">
+                        {{ workspace.localNewsBuckets[section.key]?.sectorName }}
+                      </span>
+                    </div>
+
+                    <p v-if="workspace.localNewsLoading" class="muted">加载中...</p>
+                    <ul v-else-if="workspace.localNewsBuckets[section.key]?.items?.length" class="news-bucket-list">
+                      <li v-for="item in workspace.localNewsBuckets[section.key].items" :key="`${section.key}-${item.title}-${item.publishTime}`">
+                        <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
+                        <a v-if="item.url ?? item.Url" :href="item.url ?? item.Url" target="_blank" rel="noreferrer">
+                          {{ getLocalNewsHeadline(item) }}
+                        </a>
+                        <span v-else>{{ getLocalNewsHeadline(item) }}</span>
+                        <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
+                        <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
+                          <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
+                          <span v-for="tag in item.aiTags" :key="`${section.key}-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
+                        </div>
+                        <small>
+                          {{ item.source }} · {{ formatDate(item.publishTime) }}
+                        </small>
+                      </li>
+                    </ul>
+                    <p v-else class="muted">暂无匹配资讯。</p>
+                  </article>
+                </div>
+
+                <p v-if="workspace.localNewsError" class="muted error">{{ workspace.localNewsError }}</p>
+
+                <ul v-if="workspace.newsImpact?.events?.length" class="news-impact-list">
+                  <li v-for="item in workspace.newsImpact.events.slice(0, 6)" :key="item.title">
+                    <span class="impact-tag" :class="getImpactClass(item.category)">{{ item.category }}</span>
+                    <span class="impact-title">{{ item.title }}</span>
+                    <span class="impact-score">{{ formatImpactScore(item.impactScore) }}</span>
+                  </li>
+                </ul>
+                <p v-else-if="!workspace.newsImpactLoading" class="muted">暂无资讯影响数据。</p>
+              </div>
+
+              <p v-else class="muted">选择股票后在此查看事件影响。</p>
+            </section>
+
+            <StockAgentPanels
+              :agents="workspace.agentResults"
+              :loading="workspace.agentLoading"
+              :error="workspace.agentError"
+              :last-updated="workspace.agentUpdatedAt"
+              :history-options="workspace.agentHistoryList.map(item => ({ value: item.id ?? item.Id, label: `${item.symbol ?? item.Symbol} - ${formatDate(item.createdAt ?? item.CreatedAt)}` }))"
+              :selected-history-id="workspace.selectedAgentHistoryId"
+              :history-loading="workspace.agentHistoryLoading"
+              :history-error="workspace.agentHistoryError"
+              @select-history="selectAgentHistory(workspace.symbolKey, $event)"
+              @run="runAgents(workspace.symbolKey, $event)"
+              @draft-plan="openTradingPlanDraft(workspace.symbolKey)"
+            />
+
+            <section class="copilot-card trading-plan-card">
+              <div class="trading-plan-header">
+                <div>
+                  <h3>当前交易计划</h3>
+                  <p class="muted">当前股票的全部交易计划都可在这里编辑或删除。</p>
+                </div>
+                <button class="market-news-button plan-refresh-button" @click="fetchTradingPlans(workspace.symbolKey, { force: true })" :disabled="workspace.planListLoading || !workspace.detail">
+                  刷新
                 </button>
               </div>
-            </template>
-          </ChatWindow>
-          <div v-else class="terminal-empty compact-empty">
+
+              <p v-if="workspace.planError" class="muted error">{{ workspace.planError }}</p>
+              <p v-else-if="workspace.planListLoading && !workspace.planList.length" class="muted">加载中...</p>
+              <ul v-else-if="workspace.planList.length" class="plan-list">
+                <li v-for="item in workspace.planList" :key="`plan-${item.id}`" class="plan-item">
+                  <div class="plan-item-header">
+                    <div class="plan-item-title">
+                      <strong>{{ item.name }} · {{ item.status }}</strong>
+                      <small class="muted">{{ formatDate(item.updatedAt || item.createdAt) }}</small>
+                    </div>
+                    <div class="plan-item-actions">
+                      <button v-if="item.status === 'Pending'" class="plan-link-button" @click="editTradingPlan(workspace.symbolKey, item)">编辑</button>
+                      <button class="plan-danger-button" @click="deleteTradingPlan(workspace.symbolKey, item)" :disabled="deletingPlanId === String(item.id)">
+                        {{ deletingPlanId === String(item.id) ? '删除中...' : '删除' }}
+                      </button>
+                    </div>
+                  </div>
+                  <p>{{ item.analysisSummary || item.expectedCatalyst || '等待补充计划摘要' }}</p>
+                  <div class="plan-pill-row">
+                    <span class="plan-pill">方向 {{ item.direction }}</span>
+                    <span class="plan-pill">触发 {{ formatPlanPrice(item.triggerPrice) }}</span>
+                    <span class="plan-pill">失效 {{ formatPlanPrice(item.invalidPrice) }}</span>
+                    <span class="plan-pill">止损 {{ formatPlanPrice(item.stopLossPrice) }}</span>
+                    <span class="plan-pill">止盈 {{ formatPlanPrice(item.takeProfitPrice) }}</span>
+                    <span class="plan-pill">目标 {{ formatPlanPrice(item.targetPrice) }}</span>
+                  </div>
+                  <small>{{ item.riskLimits || '风险摘要待补充' }}</small>
+                </li>
+              </ul>
+              <p v-else class="muted">暂无交易计划，可从 commander 分析一键起草。</p>
+            </section>
+
+            <div class="copilot-card">
+              <ChatWindow
+                v-if="workspace.detail"
+                :ref="setChatRef(workspace.symbolKey)"
+                title="股票助手"
+                :build-prompt="buildChatPrompt"
+                :history-key="getChatHistoryKey(workspace)"
+                :enable-history="true"
+                :history-adapter="chatHistoryAdapter"
+                expandable
+                expanded-storage-key="stock_chat_expanded"
+                placeholder="请输入关于该股票的问题"
+                empty-text="可以询问该股票的走势、风险或盘面解读。"
+                max-height="320px"
+                expanded-height="600px"
+              >
+                <template #header-extra>
+                  <div class="chat-session">
+                    <p class="muted">当前：{{ workspace.detail?.quote?.name ?? '' }}（{{ workspace.detail?.quote?.symbol ?? '' }}）</p>
+                    <select v-model="workspace.selectedChatSession" :disabled="!getChatSessionOptions(workspace).length">
+                      <option v-for="item in getChatSessionOptions(workspace)" :key="item.key" :value="item.key">
+                        {{ item.label }}
+                      </option>
+                    </select>
+                    <button class="chat-session-new" @click="startNewChat(workspace.symbolKey)" :disabled="!workspace.symbolKey">
+                      新建对话
+                    </button>
+                  </div>
+                </template>
+              </ChatWindow>
+            </div>
+
+            <div v-if="workspace.planModalOpen && workspace.planForm" class="plan-modal-backdrop" @click.self="closeTradingPlanModal(workspace.symbolKey)">
+              <section class="plan-modal" role="dialog" aria-modal="true" aria-label="交易计划草稿">
+                <div class="search-modal-header">
+                  <div>
+                    <strong>交易计划草稿</strong>
+                    <p class="muted">后端基于 commander 历史生成，用户确认后才会入库。</p>
+                  </div>
+                  <button class="market-news-button" @click="closeTradingPlanModal(workspace.symbolKey)">关闭</button>
+                </div>
+
+                <p v-if="workspace.planError" class="muted error">{{ workspace.planError }}</p>
+
+                <div class="plan-form-grid">
+                  <label class="plan-field">
+                    <span>股票</span>
+                    <input v-model="workspace.planForm.symbol" disabled>
+                  </label>
+                  <label class="plan-field">
+                    <span>名称</span>
+                    <input v-model="workspace.planForm.name">
+                  </label>
+                  <label class="plan-field">
+                    <span>方向</span>
+                    <select v-model="workspace.planForm.direction">
+                      <option value="Long">Long</option>
+                      <option value="Short">Short</option>
+                    </select>
+                  </label>
+                  <label class="plan-field">
+                    <span>触发价</span>
+                    <input v-model="workspace.planForm.triggerPrice" type="number" step="0.01" placeholder="可为空，后补录">
+                  </label>
+                  <label class="plan-field">
+                    <span>失效价</span>
+                    <input v-model="workspace.planForm.invalidPrice" type="number" step="0.01" placeholder="可为空，后补录">
+                  </label>
+                  <label class="plan-field">
+                    <span>止损价</span>
+                    <input v-model="workspace.planForm.stopLossPrice" type="number" step="0.01" placeholder="可为空">
+                  </label>
+                  <label class="plan-field">
+                    <span>止盈价</span>
+                    <input v-model="workspace.planForm.takeProfitPrice" type="number" step="0.01" placeholder="优先取指挥/机构目标">
+                  </label>
+                  <label class="plan-field">
+                    <span>目标价</span>
+                    <input v-model="workspace.planForm.targetPrice" type="number" step="0.01" placeholder="优先取指挥/趋势目标">
+                  </label>
+                  <label class="plan-field plan-field-wide">
+                    <span>预期催化</span>
+                    <textarea v-model="workspace.planForm.expectedCatalyst" rows="2"></textarea>
+                  </label>
+                  <label class="plan-field plan-field-wide">
+                    <span>失效条件</span>
+                    <textarea v-model="workspace.planForm.invalidConditions" rows="2"></textarea>
+                  </label>
+                  <label class="plan-field plan-field-wide">
+                    <span>风险上限</span>
+                    <textarea v-model="workspace.planForm.riskLimits" rows="2"></textarea>
+                  </label>
+                  <label class="plan-field plan-field-wide">
+                    <span>分析摘要</span>
+                    <textarea v-model="workspace.planForm.analysisSummary" rows="3"></textarea>
+                  </label>
+                  <label class="plan-field plan-field-wide">
+                    <span>用户备注</span>
+                    <textarea v-model="workspace.planForm.userNote" rows="2" placeholder="可补充执行纪律、仓位、观察点"></textarea>
+                  </label>
+                </div>
+
+                <div class="plan-modal-actions">
+                  <span class="muted">{{ workspace.planForm.id ? `编辑计划 #${workspace.planForm.id}` : `AnalysisHistory #${workspace.planForm.analysisHistoryId}` }}</span>
+                  <div class="plan-modal-buttons">
+                    <button class="market-news-button" @click="closeTradingPlanModal(workspace.symbolKey)">取消</button>
+                    <button class="plan-save-button" @click="saveTradingPlan(workspace.symbolKey)" :disabled="workspace.planSaving || workspace.planDraftLoading">
+                      {{ workspace.planSaving ? '保存中...' : (workspace.planForm.id ? '保存修改' : '保存为 Pending 计划') }}
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </template>
+
+        <div v-else class="copilot-card">
+          <div class="terminal-empty compact-empty">
             <h4>AI Copilot 已待命</h4>
             <p>先在左侧加载股票，再在这里查看事件信号或发起对话。</p>
           </div>
@@ -1395,6 +2204,11 @@ watch(
   gap: 0.75rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.sidebar-workspace {
+  display: grid;
+  gap: 1rem;
 }
 
 .mode-toggle {
@@ -1730,6 +2544,17 @@ watch(
   margin: 0.2rem 0;
 }
 
+.fundamental-facts {
+  margin: 0.45rem 0 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.fundamental-facts li {
+  color: #d9d4c7;
+}
+
 .tape-card {
   min-width: 0;
 }
@@ -1764,6 +2589,180 @@ watch(
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.trading-plan-card {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.trading-plan-board-card {
+  margin-bottom: 1rem;
+}
+
+.trading-plan-header,
+.plan-item-header,
+.plan-modal-actions,
+.plan-modal-buttons {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.plan-refresh-button {
+  color: #0f172a;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.plan-board-list {
+  max-height: 20rem;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.plan-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.plan-item {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.plan-item-compact {
+  gap: 0.35rem;
+}
+
+.plan-item-title {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.plan-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.plan-item p,
+.plan-item small {
+  margin: 0;
+}
+
+.plan-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.plan-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-size: 0.78rem;
+}
+
+.plan-link-button,
+.plan-danger-button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.plan-link-button {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.plan-danger-button {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.plan-danger-button:disabled,
+.plan-link-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.plan-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(10px);
+}
+
+.plan-modal {
+  display: grid;
+  gap: 1rem;
+  width: min(920px, 100%);
+  max-height: min(82vh, 900px);
+  overflow-y: auto;
+  padding: 1.2rem;
+  border-radius: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.96));
+}
+
+.plan-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.plan-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.plan-field span {
+  color: #334155;
+  font-size: 0.82rem;
+}
+
+.plan-field input,
+.plan-field select,
+.plan-field textarea {
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  padding: 0.65rem 0.75rem;
+  background: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
+}
+
+.plan-field-wide {
+  grid-column: 1 / -1;
+}
+
+.plan-save-button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 0.95rem;
+  background: linear-gradient(135deg, #0f766e, #0891b2);
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+.plan-save-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .field {
@@ -1936,7 +2935,8 @@ watch(
 }
 
 .panel.monochrome .market-news-panel,
-.panel.monochrome .market-news-modal {
+.panel.monochrome .market-news-modal,
+.panel.monochrome .plan-modal {
   background:
     radial-gradient(circle at top left, rgba(148, 163, 184, 0.12), transparent 28%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.94));
@@ -1960,6 +2960,11 @@ watch(
 .panel.monochrome .local-news-target {
   background: rgba(148, 163, 184, 0.2);
   color: #334155;
+}
+
+.panel.monochrome .plan-pill {
+  background: rgba(148, 163, 184, 0.18);
+  color: #111827;
 }
 
 .panel.monochrome .text-rise,

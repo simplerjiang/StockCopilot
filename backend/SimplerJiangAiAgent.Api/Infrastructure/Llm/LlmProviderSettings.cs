@@ -3,6 +3,7 @@ namespace SimplerJiangAiAgent.Api.Infrastructure.Llm;
 public sealed class LlmProviderSettings
 {
     public string Provider { get; set; } = string.Empty;
+    public string ProviderType { get; set; } = "openai";
     public string ApiKey { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
@@ -16,5 +17,6 @@ public sealed class LlmProviderSettings
 
 public sealed class LlmSettingsDocument
 {
+    public string ActiveProviderKey { get; set; } = "default";
     public Dictionary<string, LlmProviderSettings> Providers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

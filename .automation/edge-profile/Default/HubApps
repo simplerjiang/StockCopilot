@@ -13,6 +13,22 @@
             "description": "When you open a new tab on Edge, Copilot will also open in the side pane.",
             "title": "Open Copilot on every new tab page"
          }
+      }, {
+         "approved_channels": [ "canary", "dev", "beta", "stable" ],
+         "enabled": false,
+         "enabled|auth:aad|flight:msM365LinkInsights": true,
+         "footer": {
+            "open_count": 3,
+            "text": "Understand links faster with email context in Copilot."
+         },
+         "id": "a7c3d8e2-5f19-4b6a-8e91-2c4f7d0a3b5e",
+         "min_page_width_pixels": 1000,
+         "non_visible_user_friendly_name": "M365 Links Insights",
+         "settings_toggle": {
+            "description": "When a web link is opened from an Outlook email, Copilot side pane will automatically open to show the page insights.",
+            "title": "Automatically open Copilot chat with contextual insights in the side pane"
+         },
+         "supported_platforms": [ "win", "mac" ]
       } ],
       "capabilities": {
          "deprecated_hide_header": true
@@ -32,9 +48,9 @@
       "description": "任何页面的上下文相关信息",
       "icon": {
          "raster_icon": {
-            "dark_mode": "https://edgeassetservice.azureedge.net/assets/edge_hub_apps_copilot_rainbow.png/1.3.24/asset",
-            "high_contrast": "https://edgeassetservice.azureedge.net/assets/edge_hub_apps_copilot_hc.png/1.3.24/asset",
-            "light_mode": "https://edgeassetservice.azureedge.net/assets/edge_hub_apps_copilot_rainbow.png/1.3.24/asset"
+            "dark_mode": "https://edgeassetservice.azureedge.net/assets/edge_hub_apps_copilot_rainbow.png/1.3.26/asset",
+            "high_contrast": "https://edgeassetservice.azureedge.net/assets/edge_hub_apps_copilot_hc.png/1.3.26/asset",
+            "light_mode": "https://edgeassetservice.azureedge.net/assets/edge_hub_apps_copilot_rainbow.png/1.3.26/asset"
          }
       },
       "id": "cd4688a9-e888-48ea-ad81-76193d56b1be",
@@ -141,7 +157,7 @@
       "target": {
          "command": "discover_chat"
       },
-      "version": "1.3.24"
+      "version": "1.3.26"
    }, {
       "capabilities": {
          "deprecated_hide_header": true
