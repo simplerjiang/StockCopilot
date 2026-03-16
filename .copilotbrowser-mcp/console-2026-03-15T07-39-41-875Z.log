@@ -1,0 +1,4 @@
+[12026224ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?take=20:0
+[12026230ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?symbol=sz000021:0
+[12026482ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?take=20:0
+[12028540ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?symbol=sz000021&take=20:0

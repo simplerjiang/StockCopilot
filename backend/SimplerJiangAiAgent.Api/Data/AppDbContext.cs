@@ -35,6 +35,9 @@ public sealed class AppDbContext : DbContext
     public DbSet<TradingPlanEvent> TradingPlanEvents => Set<TradingPlanEvent>();
     public DbSet<StockChatSession> StockChatSessions => Set<StockChatSession>();
     public DbSet<StockChatMessage> StockChatMessages => Set<StockChatMessage>();
+    public DbSet<MarketSentimentSnapshot> MarketSentimentSnapshots => Set<MarketSentimentSnapshot>();
+    public DbSet<SectorRotationSnapshot> SectorRotationSnapshots => Set<SectorRotationSnapshot>();
+    public DbSet<SectorRotationLeaderSnapshot> SectorRotationLeaderSnapshots => Set<SectorRotationLeaderSnapshot>();
     public DbSet<NewsSourceRegistry> NewsSourceRegistries => Set<NewsSourceRegistry>();
     public DbSet<NewsSourceHealthDaily> NewsSourceHealthDailies => Set<NewsSourceHealthDaily>();
     public DbSet<NewsSourceCandidate> NewsSourceCandidates => Set<NewsSourceCandidate>();
@@ -140,10 +143,22 @@ public sealed class AppDbContext : DbContext
             .HasIndex(x => new { x.Symbol, x.CreatedAt });
 
         modelBuilder.Entity<TradingPlan>()
+            .HasIndex(x => x.PlanKey)
+            .IsUnique();
+
+        modelBuilder.Entity<TradingPlan>()
             .HasIndex(x => new { x.Symbol, x.CreatedAt });
 
         modelBuilder.Entity<TradingPlan>()
             .HasIndex(x => x.AnalysisHistoryId);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.PlanKey)
+            .HasMaxLength(64);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.Title)
+            .HasMaxLength(450);
 
         modelBuilder.Entity<TradingPlan>()
             .Property(x => x.Symbol)
@@ -166,6 +181,26 @@ public sealed class AppDbContext : DbContext
         modelBuilder.Entity<TradingPlan>()
             .Property(x => x.SourceAgent)
             .HasMaxLength(64);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.MarketStageLabelAtCreation)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.ExecutionFrequencyLabel)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.MainlineSectorName)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.SectorNameAtCreation)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<TradingPlan>()
+            .Property(x => x.SectorCodeAtCreation)
+            .HasMaxLength(32);
 
         modelBuilder.Entity<TradingPlan>()
             .HasOne(x => x.AnalysisHistory)
@@ -217,6 +252,76 @@ public sealed class AppDbContext : DbContext
             .HasOne(x => x.Session)
             .WithMany(x => x.Messages)
             .HasForeignKey(x => x.SessionId);
+
+        modelBuilder.Entity<MarketSentimentSnapshot>()
+            .HasIndex(x => new { x.TradingDate, x.SnapshotTime });
+
+        modelBuilder.Entity<MarketSentimentSnapshot>()
+            .Property(x => x.SessionPhase)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<MarketSentimentSnapshot>()
+            .Property(x => x.StageLabel)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<MarketSentimentSnapshot>()
+            .Property(x => x.StageLabelV2)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<MarketSentimentSnapshot>()
+            .Property(x => x.SourceTag)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .HasIndex(x => new { x.BoardType, x.SnapshotTime, x.RankNo });
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .HasIndex(x => new { x.SectorCode, x.BoardType, x.SnapshotTime });
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.BoardType)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.SectorCode)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.SectorName)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.NewsSentiment)
+            .HasMaxLength(16);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.LeaderSymbol)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.LeaderName)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<SectorRotationSnapshot>()
+            .Property(x => x.SourceTag)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<SectorRotationLeaderSnapshot>()
+            .HasIndex(x => new { x.SectorRotationSnapshotId, x.RankInSector });
+
+        modelBuilder.Entity<SectorRotationLeaderSnapshot>()
+            .Property(x => x.Symbol)
+            .HasMaxLength(32);
+
+        modelBuilder.Entity<SectorRotationLeaderSnapshot>()
+            .Property(x => x.Name)
+            .HasMaxLength(128);
+
+        modelBuilder.Entity<SectorRotationLeaderSnapshot>()
+            .HasOne(x => x.SectorRotationSnapshot)
+            .WithMany(x => x.Leaders)
+            .HasForeignKey(x => x.SectorRotationSnapshotId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<NewsSourceRegistry>()
             .HasIndex(x => x.Domain)

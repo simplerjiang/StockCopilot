@@ -218,18 +218,51 @@
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "Step 4 已按架构指令拆解；Step 4.0（股票切换与加载性能深度优化）已完成：后端 /api/stocks/detail 改为并发拉取 quote/kline/minute/messages，前端优先命中 /api/stocks/detail/cache 实现缓存秒开，并用 request token 防止快速切股时旧响应覆盖新标的；同时移除股票终端 agent/history 对 openai 的前端硬编码，改为跟随后端 active provider。Step 4.1 reviewer 阻塞项已于 2026-03-14 收口：`ChinaAStockMarketClock` 已补齐 2026 法定休市日门控，`EastmoneyStockCrawler.GetIntradayMessagesAsync(...)` 已接入东财 `details/get` 逐笔明细，`HighFrequencyQuoteService` 已支持消息源失败降级为空结果而不影响 quote/minute 落库；后端全量单测 105/105、前端 `StockInfoTab` 单测 33/33、frontend build 与 Edge 校验脚本均已通过。Step 4.2 已于 2026-03-14 完成：新增 `TradingPlan` 实体、后端 `/api/stocks/plans` 与 `/api/stocks/plans/draft`、基于 `StockAgentAnalysisHistory` commander 结果的确定性草稿生成、前端 commander 起草按钮/可编辑弹窗/当前计划列表，以及保存后自动 upsert `ActiveWatchlist`。同日 R1 可用性增强也已完成：计划新增 `TakeProfitPrice` / `TargetPrice`、已保存 `Pending` 计划支持编辑与硬删除、`/api/stocks/plans` 支持无 `symbol` 的总览查询，前端新增跨股票“交易计划总览”，并按 commander 图表字段 -> financial `institutionTargetPrice` -> trend forecast 极值优先级确定性预填止损/止盈/目标价。由于本地库存在旧版 `TradingPlans` 表，本轮同时补齐了兼容补列、索引以及 `PlanKey`/`Title` 默认约束；本次复核已再次通过后端 `TradingPlanServicesTests` 9/9、前端 `StockAgentPanels.spec.js` + `StockInfoTab.spec.js` 39/39、SQLCMD 的 `TradingPlans` 字段/索引校验。Step 4.3 已于 2026-03-14 完成返工：`TradingPlanTriggerService` 现仅处理 `ActiveWatchlist` 白名单内的 `Pending` 计划，量价背离 warning 改为按有效时间窗去重，前端短轮询同时覆盖当前股票计划卡和跨股票交易计划总览。本轮复测已通过后端定向单测 20/20、前端 `StockInfoTab.spec.js` 37/37、frontend build、`TradingPlanEvents` 的 SQLCMD 字段/索引校验，以及后端托管页面对 board/current plan 两条刷新链路的实测；因此 Step 4.3 blocker 已收口，但 Step 4.4-4.5 仍保持 backlog 状态。"
+      "notes": "Step 4 已按架构指令拆解；Step 4.0（股票切换与加载性能深度优化）已完成：后端 /api/stocks/detail 改为并发拉取 quote/kline/minute/messages，前端优先命中 /api/stocks/detail/cache 实现缓存秒开，并用 request token 防止快速切股时旧响应覆盖新标的；同时移除股票终端 agent/history 对 openai 的前端硬编码，改为跟随后端 active provider。Step 4.1 reviewer 阻塞项已于 2026-03-14 收口：`ChinaAStockMarketClock` 已补齐 2026 法定休市日门控，`EastmoneyStockCrawler.GetIntradayMessagesAsync(...)` 已接入东财 `details/get` 逐笔明细，`HighFrequencyQuoteService` 已支持消息源失败降级为空结果而不影响 quote/minute 落库；后端全量单测 105/105、前端 `StockInfoTab` 单测 33/33、frontend build 与 Edge 校验脚本均已通过。Step 4.2 已于 2026-03-14 完成：新增 `TradingPlan` 实体、后端 `/api/stocks/plans` 与 `/api/stocks/plans/draft`、基于 `StockAgentAnalysisHistory` commander 结果的确定性草稿生成、前端 commander 起草按钮/可编辑弹窗/当前计划列表，以及保存后自动 upsert `ActiveWatchlist`。同日 R1 可用性增强也已完成：计划新增 `TakeProfitPrice` / `TargetPrice`、已保存 `Pending` 计划支持编辑与硬删除、`/api/stocks/plans` 支持无 `symbol` 的总览查询，前端新增跨股票“交易计划总览”，并按 commander 图表字段 -> financial `institutionTargetPrice` -> trend forecast 极值优先级确定性预填止损/止盈/目标价。由于本地库存在旧版 `TradingPlans` 表，本轮同时补齐了兼容补列、索引以及 `PlanKey`/`Title` 默认约束；本次复核已再次通过后端 `TradingPlanServicesTests` 9/9、前端 `StockAgentPanels.spec.js` + `StockInfoTab.spec.js` 39/39、SQLCMD 的 `TradingPlans` 字段/索引校验。Step 4.3 已于 2026-03-14 完成返工：`TradingPlanTriggerService` 现仅处理 `ActiveWatchlist` 白名单内的 `Pending` 计划，量价背离 warning 改为按有效时间窗去重，前端短轮询同时覆盖当前股票计划卡和跨股票交易计划总览。Step 4.4 已于 2026-03-15 完成并通过 reviewer 复测验收：新增独立 `TradingPlanReviewWorker` / `TradingPlanReviewService`，只对白名单内 `Pending` 计划结合本地个股快讯做 LLM 结构化复核；高置信度威胁会把计划置为 `ReviewRequired` 并落库 `ReviewRequired` / `NewsReviewed` / `ReviewCleared` 事件，前端总览与当前计划区已展示“待复核”、关联新闻与复核原因，并支持手动“恢复观察”。本轮最终验证已通过后端定向单测 `TradingPlanReviewServiceTests` + `TradingPlanTriggerServiceTests` 14/14、前端 `StockInfoTab.spec.js` 37/37、frontend build、SQLCMD 对 `TradingPlans.Status` 与 `TradingPlanEvents.EventType/MetadataJson` 的列级校验，以及后端托管页面与 live `/api/stocks/plans/alerts?take=20` 的复测；同时已修复本地旧版 `TradingPlanEvents` 表额外 `VersionId/Strategy/Reason/CreatedAt` 非空列兼容问题、review `confidence` 小数/字符串解析问题，以及总览告警按全局事件截断导致复核摘要被挤掉的问题。当前仅 Step 4.5 仍保持 backlog。"
     },
     {
       "id": "GOAL-009",
       "title": "Market sentiment cycle + sector rotation",
-      "status": "todo",
+      "status": "done",
       "stages": {
-        "plan": "todo",
-        "dev": "todo",
-        "test": "todo"
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "连板高度、涨跌停与炸板率、成交额结构、主线持续性与扩散度"
+      "notes": "规划已于 2026-03-15 完成，并拆分为 R1/R2/R3 三段。总目标已于本轮收口完成：本地优先的情绪周期 + 板块轮动控制台现已覆盖连板高度、涨跌停与炸板率、上涨/下跌家数、成交额集中度、主线持续性与扩散度。R1 已完成市场快照表、`/api/market/*`、worker 与顶层“情绪轮动”页签，并补齐最近交易日回退、全市场成交额口径和东财单点失败降级。R2 已完成 5/10/20 日持续性、扩散度、排名变化、主线分数、`StageLabelV2/StageConfidence`、`/api/market/sectors/{sectorCode}/trend` 与 `/api/market/mainline`，前端同页签支持 compare window、主线 badge、趋势/广度详情。R3 已把市场阶段与主线上下文接入 `/api/stocks/plans/draft`、`/api/stocks/position-guidance`、当前计划卡和交易计划总览，并把建计划时的市场上下文持久化到 `TradingPlan`。本轮验证已通过后端定向单测 28/28、前端定向单测 41/41、frontend build，以及后端托管页面 Browser MCP 对 `情绪轮动` compare-window 切换和 `sz000021` 交易计划弹窗市场上下文的运行时验收，console 0 error。"
+    },
+    {
+      "id": "GOAL-009-R1",
+      "title": "Sentiment snapshot + paged sector board",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "第一交付切片已于 2026-03-15 完成：新增 `MarketSentimentSnapshots` / `SectorRotationSnapshots` / `SectorRotationLeaderSnapshots`，基于东财板块榜、板块成分股榜、涨停池、跌停池、炸板池和全 A 股榜单做本地落库；后端已提供最新情绪摘要、历史、分页板块榜、板块详情/龙头梯队接口；前端已新增顶层“情绪轮动”页签与分页表格。后续收口又补了五项关键稳定性修正：非交易日自动回退最近交易日取涨跌停池、成交集中度改为相对全市场成交额计算并钳制到 0-100%、东财任一上游偶发失败时按数据源粒度降级而非整接口 500、周末/盘前同步时快照 `TradingDate` 改为持久化回退后的真实交易日、`style` 板块映射改回与 R1 规划一致的东财榜单口径。验证已通过后端定向单测 `SectorRotationQueryServiceTests|SectorRotationIngestionServiceTests|EastmoneySectorRotationClientTests` 11/11、前端 `MarketSentimentTab.spec.js` + `App.spec.js` 3/3、frontend build，以及后端托管页面 Browser MCP 的页签切换/空态/console 0 error 验收。"
+      },
+      {
+        "id": "GOAL-009-R2",
+        "title": "Rolling continuity + diffusion metrics",
+        "status": "done",
+        "stages": {
+          "plan": "done",
+          "dev": "done",
+          "test": "done"
+        },
+        "notes": "R2 已于 2026-03-15 完成：在现有 `MarketSentimentSnapshots` / `SectorRotationSnapshots` 上扩展 5/10/20 日持续性、扩散度、排名变化、主线分数和更强阶段分类，无需新增 rollup 表；继续复用 `SectorRotationWorker` 与 `SectorRotationIngestionService`，按每个交易日最后一份有效快照回算滚动指标。后端已新增 `DiffusionScore`、`ContinuationScore`、`StageLabelV2`、`StageConfidence`、`MainlineScore/IsMainline`、`/api/market/sectors/{sectorCode}/trend` 与 `/api/market/mainline`；前端已在既有“情绪轮动”页签内加入 compare window、主线 badge、扩散度/排名变化 chip、趋势详情与广度拆解。验证通过后端定向单测、前端单测、frontend build 与 Browser MCP compare-window/runtime 验收。"
+      },
+      {
+        "id": "GOAL-009-R3",
+        "title": "Wire market stage into plans",
+        "status": "done",
+        "stages": {
+          "plan": "done",
+          "dev": "done",
+          "test": "done"
+        },
+        "notes": "R3 已于 2026-03-15 完成：已把 GOAL-009 的本地市场阶段接入 `/api/stocks/plans/draft` 与 `/api/stocks/position-guidance`，并把建计划时的阶段上下文持久化到 `TradingPlan`；新增本地 `StockMarketContextService` 读取最新市场阶段、主线板块与个股板块匹配结果，给出确定性的建议仓位比例、执行节奏和逆势提示。前端已在计划草稿/编辑弹窗、当前计划卡和总览卡中展示当前阶段、建议节奏、建议仓位与主线对齐情况，但不会自动覆盖用户确认过的价格。验证已通过后端定向单测、前端单测、frontend build，以及 Browser MCP 对 `sz000021` 当前计划卡与编辑弹窗 `市场上下文` 的运行时验收。"
     },
     {
       "id": "GOAL-010",
@@ -295,7 +328,7 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "Dev2 并行任务已完成并收口。最终状态是：Phase A 已完成 registry / grouped chips / render plan 底座；Phase B 已完成 MA5/10/20/60、VWAP、BOLL、Donchian、MACD、RSI、ATR、KDJ、ORB 及既有 AI/昨收/量能图层；Phase C 也已完整完成。已落地信号包括 `MA5/MA10 金叉/死叉`、`TD九转`、`MACD金叉/死叉`、`KDJ金叉/死叉`、`放量突破/假突破`、`缺口`、`量价背离`、`VWAP强弱`，并全部走统一 marker overlay 渲染出口。当前图表终端控制也已补齐 `全屏 / 退出全屏` 按钮，放大后仍保留时间周期、策略按钮与浮动小标交互。前端可用性已通过：`npm --prefix .\frontend run test:unit -- StockCharts.spec.js`、`npm --prefix .\frontend run build`，以及后端托管页面 `http://localhost:5119/` 的 Browser MCP 验收；已确认日K与分时图的信号按钮、浮动小标、view gating、全屏切换、网络请求与 console 均正常。"
+      "notes": "Dev2 并行任务已完成并收口。最终状态是：Phase A 已完成 registry / grouped chips / render plan 底座；Phase B 已完成 MA5/10/20/60、VWAP、BOLL、Donchian、MACD、RSI、ATR、KDJ、ORB 及既有 AI/昨收/量能图层；Phase C 也已完整完成。已落地信号包括 `MA5/MA10 金叉/死叉`、`TD九转`、`MACD金叉/死叉`、`KDJ金叉/死叉`、`放量突破/假突破`、`缺口`、`量价背离`、`VWAP强弱`，并全部走统一 marker overlay 渲染出口；其中 `TD九转` 已收敛为只显示 `6/7/8/9`，并按 `6-7` 弱提示、`8-9` 强提示做视觉分层。当前图表终端控制也已补齐 `全屏 / 退出全屏` 按钮，放大后仍保留时间周期、策略按钮与浮动小标交互；K 线 hover 现已稳定显示开高低收、成交量、MA5/MA10、涨跌额与涨跌幅。前端可用性已通过：`npm --prefix .\frontend run test:unit -- StockCharts.spec.js`、`npm --prefix .\frontend run build`，以及后端托管页面 `http://localhost:5119/` 的 Browser MCP 验收；已确认日K与分时图的信号按钮、浮动小标、view gating、全屏切换、网络请求与 console 均正常。"
     },
     {
       "id": "GOAL-013",

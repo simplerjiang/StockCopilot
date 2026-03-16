@@ -182,9 +182,9 @@ public sealed class TradingPlanTriggerService : ITradingPlanTriggerService
 
     public async Task<IReadOnlyList<TradingPlanEvent>> GetEventsAsync(string? symbol, long? planId, int take = 20, CancellationToken cancellationToken = default)
     {
+        var clampedTake = Math.Clamp(take, 1, 100);
         var query = _dbContext.TradingPlanEvents
             .AsNoTracking()
-            .OrderByDescending(item => item.OccurredAt)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(symbol))
@@ -195,12 +195,26 @@ public sealed class TradingPlanTriggerService : ITradingPlanTriggerService
 
         if (planId.HasValue && planId.Value > 0)
         {
-            query = query.Where(item => item.PlanId == planId.Value);
+            return await query
+                .Where(item => item.PlanId == planId.Value)
+                .OrderByDescending(item => item.OccurredAt)
+                .ThenByDescending(item => item.Id)
+                .Take(clampedTake)
+                .ToListAsync(cancellationToken);
         }
 
-        return await query
-            .Take(Math.Clamp(take, 1, 100))
-            .ToListAsync(cancellationToken);
+        var latestEvents = (await query.ToListAsync(cancellationToken))
+            .GroupBy(item => item.PlanId)
+            .Select(group => group
+                .OrderByDescending(item => item.OccurredAt)
+                .ThenByDescending(item => item.Id)
+                .First())
+            .OrderByDescending(item => item.OccurredAt)
+            .ThenByDescending(item => item.Id)
+            .Take(clampedTake)
+            .ToList();
+
+        return latestEvents;
     }
 
     private static TradingPlanTransition? EvaluateTransition(TradingPlan plan, decimal latestPrice)

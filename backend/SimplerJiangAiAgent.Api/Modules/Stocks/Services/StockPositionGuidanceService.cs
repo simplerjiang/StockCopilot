@@ -1,15 +1,16 @@
+using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 public interface IStockPositionGuidanceService
 {
-    StockPositionGuidanceDto Build(StockQuoteDto quote, StockSignalDto signal, string riskLevel, decimal currentPositionPercent);
+    StockPositionGuidanceDto Build(StockQuoteDto quote, StockSignalDto signal, string riskLevel, decimal currentPositionPercent, StockMarketContextDto? marketContext);
 }
 
 public sealed class StockPositionGuidanceService : IStockPositionGuidanceService
 {
-    public StockPositionGuidanceDto Build(StockQuoteDto quote, StockSignalDto signal, string riskLevel, decimal currentPositionPercent)
+    public StockPositionGuidanceDto Build(StockQuoteDto quote, StockSignalDto signal, string riskLevel, decimal currentPositionPercent, StockMarketContextDto? marketContext)
     {
         var profile = NormalizeRiskLevel(riskLevel);
         var baseTarget = profile switch
@@ -27,7 +28,9 @@ public sealed class StockPositionGuidanceService : IStockPositionGuidanceService
         };
 
         var confidenceBias = (signal.Confidence - 50) / 2m;
-        var target = Math.Clamp(baseTarget + signalBias + confidenceBias, 0, 100);
+    var rawTarget = Math.Clamp(baseTarget + signalBias + confidenceBias, 0, 100);
+    var marketStageMultiplier = marketContext?.SuggestedPositionScale ?? 1m;
+    var target = Math.Clamp(rawTarget * marketStageMultiplier, 0, 100);
 
         var action = (target - currentPositionPercent) switch
         {
@@ -65,6 +68,17 @@ public sealed class StockPositionGuidanceService : IStockPositionGuidanceService
             $"当日涨跌:{quote.ChangePercent:0.##}% 换手:{quote.TurnoverRate:0.##}%"
         };
 
+        if (marketContext is not null)
+        {
+            reasons.Add($"市场阶段:{marketContext.StageLabel}（置信度:{marketContext.StageConfidence:0.##}）");
+            reasons.Add($"市场仓位系数:{marketStageMultiplier:0.##}");
+            reasons.Add($"执行节奏:{marketContext.ExecutionFrequencyLabel}");
+            if (marketContext.CounterTrendWarning)
+            {
+                reasons.Add("当前标的与市场主线不完全同频，执行时应降低追价频率。");
+            }
+        }
+
         return new StockPositionGuidanceDto(
             quote.Symbol,
             quote.Name,
@@ -75,6 +89,8 @@ public sealed class StockPositionGuidanceService : IStockPositionGuidanceService
             maxDrawdown,
             stopLoss,
             takeProfit,
+            Math.Round(marketStageMultiplier, 4),
+            marketContext,
             reasons
         );
     }

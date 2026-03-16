@@ -1,3 +1,5 @@
+using SimplerJiangAiAgent.Api.Modules.Market.Models;
+
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 public sealed record TradingPlanDraftRequestDto(
@@ -21,7 +23,8 @@ public sealed record TradingPlanDraftDto(
     string? AnalysisSummary,
     long AnalysisHistoryId,
     string SourceAgent,
-    string? UserNote
+    string? UserNote,
+    StockMarketContextDto? MarketContext
 );
 
 public sealed record TradingPlanCreateDto(
@@ -81,7 +84,9 @@ public sealed record TradingPlanItemDto(
     DateTime? TriggeredAt,
     DateTime? InvalidatedAt,
     DateTime? CancelledAt,
-    bool? WatchlistEnsured
+    bool? WatchlistEnsured,
+    StockMarketContextDto? MarketContextAtCreation,
+    StockMarketContextDto? CurrentMarketContext
 );
 
 public sealed record TradingPlanEventItemDto(

@@ -277,6 +277,51 @@ const getImpactClass = category => {
   return 'impact-neutral'
 }
 
+const getImpactCategoryValue = item => item?.category ?? item?.Category ?? '中性'
+
+const getImpactScoreValue = item => Number(item?.impactScore ?? item?.ImpactScore ?? 0)
+
+const getImpactPublishedAtValue = item => {
+  const rawValue = item?.publishedAt ?? item?.PublishedAt
+  if (!rawValue) {
+    return 0
+  }
+  const timestamp = Date.parse(rawValue)
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+const getHeadlineNewsImpactEvents = impact => {
+  const events = Array.isArray(impact?.events ?? impact?.Events) ? (impact.events ?? impact.Events) : []
+  const directionalEvents = events.filter(item => {
+    const category = getImpactCategoryValue(item)
+    return category === '利好' || category === '利空'
+  })
+
+  if (!directionalEvents.length) {
+    return []
+  }
+
+  const cutoff = Date.now() - 72 * 60 * 60 * 1000
+  const recentDirectionalEvents = directionalEvents.filter(item => getImpactPublishedAtValue(item) >= cutoff)
+  const prioritizedEvents = (recentDirectionalEvents.length ? recentDirectionalEvents : directionalEvents)
+    .slice()
+    .sort((left, right) => {
+      const publishedAtDelta = getImpactPublishedAtValue(right) - getImpactPublishedAtValue(left)
+      if (publishedAtDelta !== 0) {
+        return publishedAtDelta
+      }
+
+      const scoreDelta = Math.abs(getImpactScoreValue(right)) - Math.abs(getImpactScoreValue(left))
+      if (scoreDelta !== 0) {
+        return scoreDelta
+      }
+
+      return String(left?.title ?? left?.Title ?? '').localeCompare(String(right?.title ?? right?.Title ?? ''))
+    })
+
+  return prioritizedEvents.slice(0, 6)
+}
+
 const normalizeLocalNewsItem = item => ({
   title: item?.title ?? item?.Title ?? '',
   translatedTitle: item?.translatedTitle ?? item?.TranslatedTitle ?? '',
@@ -334,8 +379,24 @@ const normalizeTradingPlan = item => ({
   userNote: item?.userNote ?? item?.UserNote ?? '',
   createdAt: item?.createdAt ?? item?.CreatedAt ?? '',
   updatedAt: item?.updatedAt ?? item?.UpdatedAt ?? '',
-  watchlistEnsured: item?.watchlistEnsured ?? item?.WatchlistEnsured ?? null
+  watchlistEnsured: item?.watchlistEnsured ?? item?.WatchlistEnsured ?? null,
+  marketContext: normalizeMarketContext(item?.marketContext ?? item?.MarketContext ?? null),
+  marketContextAtCreation: normalizeMarketContext(item?.marketContextAtCreation ?? item?.MarketContextAtCreation ?? null),
+  currentMarketContext: normalizeMarketContext(item?.currentMarketContext ?? item?.CurrentMarketContext ?? null)
 })
+
+const normalizeMarketContext = item => item ? ({
+  stageLabel: item?.stageLabel ?? item?.StageLabel ?? '混沌',
+  stageConfidence: normalizePlanNumber(item?.stageConfidence ?? item?.StageConfidence) ?? 0,
+  stockSectorName: item?.stockSectorName ?? item?.StockSectorName ?? '',
+  mainlineSectorName: item?.mainlineSectorName ?? item?.MainlineSectorName ?? '',
+  sectorCode: item?.sectorCode ?? item?.SectorCode ?? '',
+  mainlineScore: normalizePlanNumber(item?.mainlineScore ?? item?.MainlineScore) ?? 0,
+  suggestedPositionScale: normalizePlanNumber(item?.suggestedPositionScale ?? item?.SuggestedPositionScale) ?? 0,
+  executionFrequencyLabel: item?.executionFrequencyLabel ?? item?.ExecutionFrequencyLabel ?? '',
+  counterTrendWarning: Boolean(item?.counterTrendWarning ?? item?.CounterTrendWarning ?? false),
+  isMainlineAligned: Boolean(item?.isMainlineAligned ?? item?.IsMainlineAligned ?? false)
+}) : null
 
 const normalizeTradingPlanAlert = item => ({
   id: item?.id ?? item?.Id ?? '',
@@ -365,7 +426,8 @@ const createTradingPlanForm = item => ({
   analysisSummary: item?.analysisSummary ?? '',
   analysisHistoryId: item?.analysisHistoryId ?? '',
   sourceAgent: item?.sourceAgent ?? 'commander',
-  userNote: item?.userNote ?? ''
+  userNote: item?.userNote ?? '',
+  marketContext: normalizeMarketContext(item?.marketContext ?? item?.marketContextAtCreation ?? item?.currentMarketContext ?? null)
 })
 
 const normalizeOptionalText = value => {
@@ -376,6 +438,11 @@ const normalizeOptionalText = value => {
 const formatPlanPrice = value => {
   const number = normalizePlanNumber(value)
   return Number.isFinite(number) ? Number(number).toFixed(2) : '待补录'
+}
+
+const formatPlanScale = value => {
+  const number = normalizePlanNumber(value)
+  return Number.isFinite(number) ? `${(number * 100).toFixed(0)}%` : '--'
 }
 
 const getLatestPlanAlert = (workspace, planId) => {
@@ -2066,8 +2133,14 @@ watch(currentStockKey, () => {
               </div>
               <div class="plan-status-row">
                 <span class="plan-status-badge" :class="getTradingPlanStatusClass(item.status)">{{ formatTradingPlanStatus(item.status) }}</span>
+                  <span v-if="item.marketContextAtCreation" class="plan-pill">建立时 {{ item.marketContextAtCreation.stageLabel }}</span>
+                  <span v-if="item.currentMarketContext" class="plan-pill">当前 {{ item.currentMarketContext.stageLabel }}</span>
               </div>
               <p>{{ item.analysisSummary || item.expectedCatalyst || '等待补充计划摘要' }}</p>
+              <div v-if="item.marketContextAtCreation || item.currentMarketContext" class="plan-market-context">
+                <span v-if="item.marketContextAtCreation">建立时：{{ item.marketContextAtCreation.mainlineSectorName || '无主线' }} / 建议仓位 {{ formatPlanScale(item.marketContextAtCreation.suggestedPositionScale) }}</span>
+                <span v-if="item.currentMarketContext">当前：{{ item.currentMarketContext.executionFrequencyLabel || '中性' }} / {{ item.currentMarketContext.mainlineSectorName || '无主线' }}</span>
+              </div>
               <div
                 v-if="getLatestPlanAlert(rootWorkspace, item.id)"
                 class="plan-alert"
@@ -2150,11 +2223,14 @@ watch(currentStockKey, () => {
 
                 <p v-if="workspace.localNewsError" class="muted error">{{ workspace.localNewsError }}</p>
 
-                <ul v-if="workspace.newsImpact?.events?.length" class="news-impact-list">
-                  <li v-for="item in workspace.newsImpact.events.slice(0, 6)" :key="item.title">
-                    <span class="impact-tag" :class="getImpactClass(item.category)">{{ item.category }}</span>
-                    <span class="impact-title">{{ item.title }}</span>
-                    <span class="impact-score">{{ formatImpactScore(item.impactScore) }}</span>
+                <ul v-if="getHeadlineNewsImpactEvents(workspace.newsImpact).length" class="news-impact-list">
+                  <li
+                    v-for="item in getHeadlineNewsImpactEvents(workspace.newsImpact)"
+                    :key="`${item.title ?? item.Title}-${item.publishedAt ?? item.PublishedAt ?? ''}`"
+                  >
+                    <span class="impact-tag" :class="getImpactClass(getImpactCategoryValue(item))">{{ getImpactCategoryValue(item) }}</span>
+                    <span class="impact-title">{{ item.title ?? item.Title }}</span>
+                    <span class="impact-score">{{ formatImpactScore(item.impactScore ?? item.ImpactScore) }}</span>
                   </li>
                 </ul>
                 <p v-else-if="!workspace.newsImpactLoading" class="muted">暂无资讯影响数据。</p>
@@ -2214,8 +2290,14 @@ watch(currentStockKey, () => {
                   </div>
                   <div class="plan-status-row">
                     <span class="plan-status-badge" :class="getTradingPlanStatusClass(item.status)">{{ formatTradingPlanStatus(item.status) }}</span>
+                    <span v-if="item.marketContextAtCreation" class="plan-pill">建立时 {{ item.marketContextAtCreation.stageLabel }}</span>
+                    <span v-if="item.currentMarketContext" class="plan-pill">当前 {{ item.currentMarketContext.stageLabel }}</span>
                   </div>
                   <p>{{ item.analysisSummary || item.expectedCatalyst || '等待补充计划摘要' }}</p>
+                  <div v-if="item.marketContextAtCreation || item.currentMarketContext" class="plan-market-context">
+                    <span v-if="item.marketContextAtCreation">建立时：{{ item.marketContextAtCreation.mainlineSectorName || '无主线' }} / 仓位 {{ formatPlanScale(item.marketContextAtCreation.suggestedPositionScale) }}</span>
+                    <span v-if="item.currentMarketContext">当前：{{ item.currentMarketContext.executionFrequencyLabel || '中性' }} / {{ item.currentMarketContext.counterTrendWarning ? '逆势提示' : '顺势观察' }}</span>
+                  </div>
                   <div
                     v-if="getLatestPlanAlert(workspace, item.id)"
                     class="plan-alert"
@@ -2283,6 +2365,21 @@ watch(currentStockKey, () => {
                 </div>
 
                 <p v-if="workspace.planError" class="muted error">{{ workspace.planError }}</p>
+
+                <section v-if="workspace.planForm.marketContext" class="plan-market-box">
+                  <strong>市场上下文</strong>
+                  <div class="plan-pill-row">
+                    <span class="plan-pill">阶段 {{ workspace.planForm.marketContext.stageLabel }}</span>
+                    <span class="plan-pill">置信 {{ Number(workspace.planForm.marketContext.stageConfidence || 0).toFixed(0) }}</span>
+                    <span class="plan-pill">主线 {{ workspace.planForm.marketContext.mainlineSectorName || '暂无' }}</span>
+                    <span class="plan-pill">建议仓位 {{ formatPlanScale(workspace.planForm.marketContext.suggestedPositionScale) }}</span>
+                    <span class="plan-pill">节奏 {{ workspace.planForm.marketContext.executionFrequencyLabel || '中性' }}</span>
+                  </div>
+                  <p class="muted">
+                    {{ workspace.planForm.marketContext.isMainlineAligned ? '当前股票与主线方向一致。' : '当前股票未明显对齐主线。' }}
+                    <span v-if="workspace.planForm.marketContext.counterTrendWarning"> 存在逆势提示，建议降低执行频率。</span>
+                  </p>
+                </section>
 
                 <div class="plan-form-grid">
                   <label class="plan-field">

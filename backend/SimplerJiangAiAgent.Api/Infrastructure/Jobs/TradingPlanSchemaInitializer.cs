@@ -28,6 +28,14 @@ public static class TradingPlanSchemaInitializer
             "AnalysisHistoryId BIGINT NOT NULL, " +
             "SourceAgent NVARCHAR(64) NOT NULL CONSTRAINT DF_TradingPlans_SourceAgent DEFAULT('commander'), " +
             "UserNote NVARCHAR(MAX) NULL, " +
+            "MarketStageLabelAtCreation NVARCHAR(16) NULL, " +
+            "StageConfidenceAtCreation DECIMAL(18,2) NULL, " +
+            "SuggestedPositionScale DECIMAL(18,4) NULL, " +
+            "ExecutionFrequencyLabel NVARCHAR(32) NULL, " +
+            "MainlineSectorName NVARCHAR(128) NULL, " +
+            "MainlineScoreAtCreation DECIMAL(18,2) NULL, " +
+            "SectorNameAtCreation NVARCHAR(128) NULL, " +
+            "SectorCodeAtCreation NVARCHAR(32) NULL, " +
             "CreatedAt DATETIME2 NOT NULL, " +
             "UpdatedAt DATETIME2 NOT NULL, " +
             "TriggeredAt DATETIME2 NULL, " +
@@ -50,6 +58,14 @@ public static class TradingPlanSchemaInitializer
             "IF COL_LENGTH('dbo.TradingPlans','AnalysisHistoryId') IS NULL ALTER TABLE dbo.TradingPlans ADD AnalysisHistoryId BIGINT NOT NULL CONSTRAINT DF_TradingPlans_AnalysisHistoryId DEFAULT(0); " +
             "IF COL_LENGTH('dbo.TradingPlans','SourceAgent') IS NULL ALTER TABLE dbo.TradingPlans ADD SourceAgent NVARCHAR(64) NOT NULL CONSTRAINT DF_TradingPlans_SourceAgent DEFAULT('commander'); " +
             "IF COL_LENGTH('dbo.TradingPlans','UserNote') IS NULL ALTER TABLE dbo.TradingPlans ADD UserNote NVARCHAR(MAX) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','MarketStageLabelAtCreation') IS NULL ALTER TABLE dbo.TradingPlans ADD MarketStageLabelAtCreation NVARCHAR(16) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','StageConfidenceAtCreation') IS NULL ALTER TABLE dbo.TradingPlans ADD StageConfidenceAtCreation DECIMAL(18,2) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','SuggestedPositionScale') IS NULL ALTER TABLE dbo.TradingPlans ADD SuggestedPositionScale DECIMAL(18,4) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','ExecutionFrequencyLabel') IS NULL ALTER TABLE dbo.TradingPlans ADD ExecutionFrequencyLabel NVARCHAR(32) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','MainlineSectorName') IS NULL ALTER TABLE dbo.TradingPlans ADD MainlineSectorName NVARCHAR(128) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','MainlineScoreAtCreation') IS NULL ALTER TABLE dbo.TradingPlans ADD MainlineScoreAtCreation DECIMAL(18,2) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','SectorNameAtCreation') IS NULL ALTER TABLE dbo.TradingPlans ADD SectorNameAtCreation NVARCHAR(128) NULL; " +
+            "IF COL_LENGTH('dbo.TradingPlans','SectorCodeAtCreation') IS NULL ALTER TABLE dbo.TradingPlans ADD SectorCodeAtCreation NVARCHAR(32) NULL; " +
             "IF COL_LENGTH('dbo.TradingPlans','TriggeredAt') IS NULL ALTER TABLE dbo.TradingPlans ADD TriggeredAt DATETIME2 NULL; " +
             "IF COL_LENGTH('dbo.TradingPlans','InvalidatedAt') IS NULL ALTER TABLE dbo.TradingPlans ADD InvalidatedAt DATETIME2 NULL; " +
             "IF COL_LENGTH('dbo.TradingPlans','CancelledAt') IS NULL ALTER TABLE dbo.TradingPlans ADD CancelledAt DATETIME2 NULL; " +
@@ -60,6 +76,8 @@ public static class TradingPlanSchemaInitializer
             "CREATE INDEX IX_TradingPlans_Symbol_CreatedAt ON dbo.TradingPlans(Symbol, CreatedAt); " +
             "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_TradingPlans_AnalysisHistoryId' AND object_id = OBJECT_ID('dbo.TradingPlans')) " +
             "CREATE INDEX IX_TradingPlans_AnalysisHistoryId ON dbo.TradingPlans(AnalysisHistoryId); " +
+            "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_TradingPlans_SectorCodeAtCreation' AND object_id = OBJECT_ID('dbo.TradingPlans')) " +
+            "CREATE INDEX IX_TradingPlans_SectorCodeAtCreation ON dbo.TradingPlans(SectorCodeAtCreation); " +
             "IF OBJECT_ID('dbo.TradingPlanEvents', 'U') IS NULL " +
             "BEGIN " +
             "CREATE TABLE dbo.TradingPlanEvents(" +

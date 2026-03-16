@@ -22,9 +22,10 @@
 
 ### 当前活跃范围
 1. Dev2 下一步并行任务：在 GOAL-012-R2 收口后立即启动 GOAL-012-R3 图表策略注册表与多策略叠加工程，继续与 Dev1 主线隔离推进。
-2. Dev1 当前返工主线已收口：Step 4.3 盘中定量规则盯盘引擎的 reviewer blocker 已于 2026-03-14 修复并通过复测；Step 4.4 - Step 4.5 继续保留为后续 backlog，不提前扩 scope。
-3. Step 4.4 - Step 4.5：继续保留为后续 backlog，不提前扩 scope。
-4. 已完成步骤（Step 4.1 / 4.2）仅保留归档说明与复用约束，不再按“进行中”处理。
+2. Dev1 当前返工主线已继续推进：Step 4.3 盘中定量规则盯盘引擎的 reviewer blocker 已于 2026-03-14 修复并通过复测；Step 4.4 已于 2026-03-15 完成“突发事件动态定性复核”最小闭环，并在同日补齐 reviewer follow-up 修复后通过复测验收，Step 4.5 继续保留为后续 backlog，不提前扩 scope。
+3. GOAL-009-R1 已于 2026-03-15 完成并通过本轮补丁验收。下一开发切片定为 GOAL-009-R2：在现有快照表上补 5/10/20 日持续性、扩散度、排名变化和主线分数，并继续复用 `SectorRotationWorker` / `SectorRotationIngestionService` 做滚动回算；其后再做 GOAL-009-R3，把本地市场阶段上下文接回 `/api/stocks/plans/draft`、`/api/stocks/position-guidance` 与交易计划展示面，但仍保持 Step 4 高频主链为确定性本地规则。
+4. Step 4.5：继续保留为后续 backlog，不提前扩 scope。
+5. 已完成步骤（Step 4.1 / 4.2）仅保留归档说明与复用约束，不再按“进行中”处理。
 
 ---
 

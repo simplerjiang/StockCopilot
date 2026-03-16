@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Modules.Llm;
+using SimplerJiangAiAgent.Api.Modules.Market;
 using SimplerJiangAiAgent.Api.Modules.Stocks;
 
 namespace SimplerJiangAiAgent.Api.Modules;
@@ -15,6 +16,7 @@ public static class ModuleExtensions
         var modules = new List<IModule>
         {
             new StocksModule(),
+            new MarketModule(),
             new LlmModule()
         };
 

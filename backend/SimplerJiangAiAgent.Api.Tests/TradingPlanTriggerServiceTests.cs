@@ -233,6 +233,75 @@ public sealed class TradingPlanTriggerServiceTests
         Assert.Single(await dbContext.TradingPlanEvents.Where(item => item.EventType == TradingPlanEventType.VolumeDivergenceWarning).ToListAsync());
     }
 
+    [Fact]
+    public async Task GetEventsAsync_ReturnsLatestEventPerPlanWhenPlanIdNotSpecified()
+    {
+        await using var dbContext = CreateDbContext();
+        var firstPlan = await SeedPlanAsync(dbContext, triggerPrice: 10.2m, invalidPrice: 9.6m);
+        var secondPlan = new TradingPlan
+        {
+            Symbol = "sz000021",
+            Name = "深科技",
+            Direction = TradingPlanDirection.Long,
+            Status = TradingPlanStatus.Pending,
+            AnalysisHistoryId = 2,
+            SourceAgent = "commander",
+            CreatedAt = new DateTime(2026, 3, 16, 1, 40, 0, DateTimeKind.Utc),
+            UpdatedAt = new DateTime(2026, 3, 16, 1, 40, 0, DateTimeKind.Utc)
+        };
+        dbContext.TradingPlans.Add(secondPlan);
+        await dbContext.SaveChangesAsync();
+
+        dbContext.TradingPlanEvents.AddRange(
+            new TradingPlanEvent
+            {
+                PlanId = firstPlan.Id,
+                Symbol = firstPlan.Symbol,
+                EventType = TradingPlanEventType.VolumeDivergenceWarning,
+                Strategy = "volume-divergence",
+                Reason = "old warning",
+                CreatedAt = new DateTime(2026, 3, 16, 2, 0, 0, DateTimeKind.Utc),
+                Severity = TradingPlanEventSeverity.Warning,
+                Message = "old warning",
+                OccurredAt = new DateTime(2026, 3, 16, 2, 0, 0, DateTimeKind.Utc)
+            },
+            new TradingPlanEvent
+            {
+                PlanId = firstPlan.Id,
+                Symbol = firstPlan.Symbol,
+                EventType = TradingPlanEventType.ReviewRequired,
+                Strategy = "news-review",
+                Reason = "new review",
+                CreatedAt = new DateTime(2026, 3, 16, 2, 5, 0, DateTimeKind.Utc),
+                Severity = TradingPlanEventSeverity.Critical,
+                Message = "new review",
+                OccurredAt = new DateTime(2026, 3, 16, 2, 5, 0, DateTimeKind.Utc)
+            },
+            new TradingPlanEvent
+            {
+                PlanId = secondPlan.Id,
+                Symbol = secondPlan.Symbol,
+                EventType = TradingPlanEventType.NewsReviewed,
+                Strategy = "news-review",
+                Reason = "safe review",
+                CreatedAt = new DateTime(2026, 3, 16, 2, 3, 0, DateTimeKind.Utc),
+                Severity = TradingPlanEventSeverity.Info,
+                Message = "safe review",
+                OccurredAt = new DateTime(2026, 3, 16, 2, 3, 0, DateTimeKind.Utc)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+
+        var events = await service.GetEventsAsync(null, null, 20);
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal(TradingPlanEventType.ReviewRequired, events[0].EventType);
+        Assert.Equal(firstPlan.Id, events[0].PlanId);
+        Assert.Equal(TradingPlanEventType.NewsReviewed, events[1].EventType);
+        Assert.Equal(secondPlan.Id, events[1].PlanId);
+    }
+
     private static TradingPlanTriggerService CreateService(AppDbContext dbContext)
     {
         return new TradingPlanTriggerService(

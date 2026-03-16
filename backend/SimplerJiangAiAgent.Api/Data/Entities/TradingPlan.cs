@@ -19,6 +19,8 @@ public enum TradingPlanStatus
 public sealed class TradingPlan
 {
     public long Id { get; set; }
+    public string PlanKey { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
     public string Symbol { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public TradingPlanDirection Direction { get; set; } = TradingPlanDirection.Long;
@@ -35,6 +37,14 @@ public sealed class TradingPlan
     public long AnalysisHistoryId { get; set; }
     public string SourceAgent { get; set; } = "commander";
     public string? UserNote { get; set; }
+    public string? MarketStageLabelAtCreation { get; set; }
+    public decimal? StageConfidenceAtCreation { get; set; }
+    public decimal? SuggestedPositionScale { get; set; }
+    public string? ExecutionFrequencyLabel { get; set; }
+    public string? MainlineSectorName { get; set; }
+    public decimal? MainlineScoreAtCreation { get; set; }
+    public string? SectorNameAtCreation { get; set; }
+    public string? SectorCodeAtCreation { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? TriggeredAt { get; set; }

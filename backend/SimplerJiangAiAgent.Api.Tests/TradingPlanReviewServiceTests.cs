@@ -169,6 +169,76 @@ public sealed class TradingPlanReviewServiceTests
         Assert.Single(await dbContext.TradingPlanEvents.ToListAsync());
     }
 
+    [Fact]
+    public async Task EvaluateAsync_AcceptsDecimalConfidenceValues()
+    {
+        await using var dbContext = CreateDbContext();
+        var plan = await SeedPlanAsync(dbContext);
+        await SeedWatchlistAsync(dbContext, plan.Symbol, plan.Name);
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = plan.Symbol,
+            Name = plan.Name,
+            Title = "核心客户取消大单",
+            Category = "快讯",
+            Source = "测试快讯",
+            SourceTag = "test-news",
+            PublishTime = new DateTime(2026, 3, 16, 2, 5, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 3, 16, 2, 6, 0, DateTimeKind.Utc),
+            AiSentiment = "利空"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new TradingPlanReviewService(
+            dbContext,
+            new StubLlmService("{" + "\"isPlanThreatened\":true,\"reason\":\"客户取消大单\",\"confidence\":88.5}"),
+            Options.Create(new TradingPlanReviewOptions()),
+            NullLogger<TradingPlanReviewService>.Instance);
+
+        var changes = await service.EvaluateAsync(new DateTimeOffset(2026, 3, 16, 2, 8, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, changes);
+        Assert.Equal(TradingPlanStatus.ReviewRequired, plan.Status);
+        var reviewEvent = await dbContext.TradingPlanEvents.SingleAsync();
+        Assert.Equal(TradingPlanEventType.ReviewRequired, reviewEvent.EventType);
+        Assert.Equal("客户取消大单", reviewEvent.Reason);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_AcceptsStringConfidenceValues()
+    {
+        await using var dbContext = CreateDbContext();
+        var plan = await SeedPlanAsync(dbContext);
+        await SeedWatchlistAsync(dbContext, plan.Symbol, plan.Name);
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = plan.Symbol,
+            Name = plan.Name,
+            Title = "行业龙头澄清合作终止",
+            Category = "快讯",
+            Source = "测试快讯",
+            SourceTag = "test-news",
+            PublishTime = new DateTime(2026, 3, 16, 2, 5, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 3, 16, 2, 6, 0, DateTimeKind.Utc),
+            AiSentiment = "利空"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new TradingPlanReviewService(
+            dbContext,
+            new StubLlmService("{" + "\"isPlanThreatened\":true,\"reason\":\"合作终止破坏催化预期\",\"confidence\":\"90.2\"}"),
+            Options.Create(new TradingPlanReviewOptions()),
+            NullLogger<TradingPlanReviewService>.Instance);
+
+        var changes = await service.EvaluateAsync(new DateTimeOffset(2026, 3, 16, 2, 8, 0, TimeSpan.Zero));
+
+        Assert.Equal(1, changes);
+        Assert.Equal(TradingPlanStatus.ReviewRequired, plan.Status);
+        var reviewEvent = await dbContext.TradingPlanEvents.SingleAsync();
+        Assert.Equal(TradingPlanEventType.ReviewRequired, reviewEvent.EventType);
+        Assert.Equal("合作终止破坏催化预期", reviewEvent.Reason);
+    }
+
     private static async Task<TradingPlan> SeedPlanAsync(AppDbContext dbContext)
     {
         var plan = new TradingPlan

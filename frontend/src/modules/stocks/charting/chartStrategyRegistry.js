@@ -25,6 +25,13 @@ const KDJ_LINE_DEFINITIONS = Object.freeze([
   { name: 'KDJ_J_VISUAL', shortName: 'KDJ-J', key: 'j', title: 'J: ', color: '#00e5ff', size: 4, style: 'solid', dashedValue: [0, 0] }
 ])
 
+const TD_MARKER_STYLES = Object.freeze({
+  buyWeak: { color: '#86efac', lineSize: 1, textSize: 10, textWeight: '500' },
+  buyStrong: { color: '#22c55e', lineSize: 2, textSize: 12, textWeight: '700' },
+  sellWeak: { color: '#fca5a5', lineSize: 1, textSize: 10, textWeight: '500' },
+  sellStrong: { color: '#ef4444', lineSize: 2, textSize: 12, textWeight: '700' }
+})
+
 const roundNumber = (value, precision = 4) => {
   const number = Number(value)
   if (!Number.isFinite(number)) return null
@@ -184,6 +191,29 @@ const buildTdSequentialMarkers = records => {
   let buyCount = 0
   let sellCount = 0
 
+  const pushTdMarker = ({ direction, count, timestamp, high, low }) => {
+    if (count < 6) {
+      return
+    }
+
+    const isBuy = direction === 'buy'
+    const isStrong = count >= 8
+    const markerStyle = isBuy
+      ? (isStrong ? TD_MARKER_STYLES.buyStrong : TD_MARKER_STYLES.buyWeak)
+      : (isStrong ? TD_MARKER_STYLES.sellStrong : TD_MARKER_STYLES.sellWeak)
+
+    markers.push({
+      id: `td-sequential-${direction}-${count}-${timestamp}`,
+      timestamp,
+      value: roundPrice(isBuy ? low * (isStrong ? 0.982 : 0.99) : high * (isStrong ? 1.018 : 1.01)),
+      text: `${isBuy ? 'TD买' : 'TD卖'}${count}`,
+      color: markerStyle.color,
+      lineSize: markerStyle.lineSize,
+      textSize: markerStyle.textSize,
+      textWeight: markerStyle.textWeight
+    })
+  }
+
   for (let index = 4; index < records.length; index += 1) {
     const currentClose = Number(records[index]?.close)
     const referenceClose = Number(records[index - 4]?.close)
@@ -200,14 +230,8 @@ const buildTdSequentialMarkers = records => {
     if (currentClose > referenceClose) {
       sellCount += 1
       buyCount = 0
+      pushTdMarker({ direction: 'sell', count: sellCount, timestamp, high, low })
       if (sellCount === 9) {
-        markers.push({
-          id: `td-sequential-sell-${timestamp}`,
-          timestamp,
-          value: roundPrice(high * 1.018),
-          text: 'TD卖9',
-          color: '#ef4444'
-        })
         sellCount = 0
       }
       continue
@@ -216,14 +240,8 @@ const buildTdSequentialMarkers = records => {
     if (currentClose < referenceClose) {
       buyCount += 1
       sellCount = 0
+      pushTdMarker({ direction: 'buy', count: buyCount, timestamp, high, low })
       if (buyCount === 9) {
-        markers.push({
-          id: `td-sequential-buy-${timestamp}`,
-          timestamp,
-          value: roundPrice(low * 0.982),
-          text: 'TD买9',
-          color: '#22c55e'
-        })
         buyCount = 0
       }
       continue
@@ -1024,12 +1042,14 @@ const CHART_STRATEGIES = Object.freeze([
     accentSecondaryColor: '#ef4444',
     help: createHelp(
       'TD 九转用收盘价相对四根之前收盘价的连续强弱，寻找短线衰竭点。',
-      '连续 9 根高于四日前收盘常视为 TD 卖 9，连续 9 根低于四日前收盘常视为 TD 买 9。',
+      '6 和 7 适合作为后半段序列预警，8 和 9 通常更接近短线衰竭观察位。',
       '它更适合和趋势、量能、支撑阻力共振使用，单独出现时不要把它当成必然拐点。'
     ),
     lineLegends: [
-      createLineLegend('#22c55e', 'TD买9', '连续 9 根弱于四日前收盘，偏向短线衰竭反抽观察位。'),
-      createLineLegend('#ef4444', 'TD卖9', '连续 9 根强于四日前收盘，偏向短线过热回落观察位。')
+      createLineLegend('#86efac', 'TD买6-7', '买方序列的弱提示，表示下行衰竭已进入后半段。'),
+      createLineLegend('#22c55e', 'TD买8-9', '买方序列的强提示，通常更接近反抽观察位。'),
+      createLineLegend('#fca5a5', 'TD卖6-7', '卖方序列的弱提示，表示上行过热已进入后半段。'),
+      createLineLegend('#ef4444', 'TD卖8-9', '卖方序列的强提示，通常更接近回落观察位。')
     ],
     supportedViews: ['day'],
     defaultVisible: false,

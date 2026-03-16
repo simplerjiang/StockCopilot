@@ -1,3 +1,5 @@
+using SimplerJiangAiAgent.Api.Modules.Market.Models;
+
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 public sealed record StockSignalDto(
@@ -32,5 +34,7 @@ public sealed record StockPositionGuidanceDto(
     decimal MaxDrawdownPercent,
     decimal StopLossPercent,
     decimal TakeProfitPercent,
+    decimal MarketStageMultiplier,
+    StockMarketContextDto? MarketContext,
     IReadOnlyList<string> Reasons
 );

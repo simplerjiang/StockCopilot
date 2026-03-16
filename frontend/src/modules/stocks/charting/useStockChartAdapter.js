@@ -128,6 +128,13 @@ const formatTimestampLabel = timestamp => {
 
 const formatNumber = value => (Number.isFinite(Number(value)) ? Number(value) : '-')
 
+const formatSignedNumber = value => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '-'
+  if (number === 0) return '0'
+  return `${number > 0 ? '+' : ''}${formatNumber(number)}`
+}
+
 const detectPrecision = values => {
   const precision = values.reduce((max, value) => {
     if (!Number.isFinite(value)) return max
@@ -435,6 +442,9 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
         const changePercent = Number.isFinite(record.prevClose) && record.prevClose !== 0
           ? (((record.close - record.prevClose) / record.prevClose) * 100).toFixed(2)
           : '-'
+        const priceChange = Number.isFinite(record.prevClose)
+          ? record.close - record.prevClose
+          : NaN
 
         hoverRef.value = {
           visible: true,
@@ -449,6 +459,7 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
             `成交量: ${formatHands(record.volume ?? 0)}`,
             `MA5: ${Number.isFinite(record.ma5) ? record.ma5 : '-'}`,
             `MA10: ${Number.isFinite(record.ma10) ? record.ma10 : '-'}`,
+            `涨跌: ${formatSignedNumber(priceChange)}`,
             `涨跌幅: ${changePercent}%`
           ]
         }

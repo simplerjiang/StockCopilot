@@ -360,13 +360,13 @@ watch(() => props.interval, interval => {
         <div ref="minuteRef" class="chart" :class="{ 'chart-hidden': activeView !== 'minute' }" />
         <div ref="klineRef" class="chart" :class="{ 'chart-hidden': activeView === 'minute' }" />
         <p v-if="!hasActiveData" class="placeholder">{{ activePlaceholder }}</p>
-      </div>
-      <div
-        v-if="activeHover.visible"
-        class="hover-tip"
-        :style="{ left: `${activeHover.x}px`, top: `${activeHover.y}px` }"
-      >
-        <div v-for="(line, idx) in activeHover.lines" :key="idx">{{ line }}</div>
+        <div
+          v-if="activeHover.visible"
+          class="hover-tip"
+          :style="{ left: `${activeHover.x}px`, top: `${activeHover.y}px` }"
+        >
+          <div v-for="(line, idx) in activeHover.lines" :key="idx">{{ line }}</div>
+        </div>
       </div>
     </div>
   </div>
@@ -631,11 +631,13 @@ watch(() => props.interval, interval => {
   z-index: 20;
   background: rgba(15, 23, 42, 0.9);
   color: #f8fafc;
-  padding: 0.4rem 0.6rem;
-  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
   font-size: 0.8rem;
   pointer-events: none;
   white-space: nowrap;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 @media (max-width: 1180px) {

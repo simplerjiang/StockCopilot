@@ -33,7 +33,7 @@ const buildMarkerOverlay = ({ viewId, marker }) => ({
     line: {
       color: marker.color,
       style: 'solid',
-      size: 1,
+      size: marker.lineSize ?? 1,
       dashedValue: [0, 0]
     },
     polygon: {
@@ -42,8 +42,8 @@ const buildMarkerOverlay = ({ viewId, marker }) => ({
     },
     text: {
       color: marker.color,
-      size: 12,
-      weight: '600'
+      size: marker.textSize ?? 12,
+      weight: marker.textWeight ?? '600'
     }
   }
 })

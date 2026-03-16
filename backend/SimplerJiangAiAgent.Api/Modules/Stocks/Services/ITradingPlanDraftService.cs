@@ -12,10 +12,12 @@ public interface ITradingPlanDraftService
 public sealed class TradingPlanDraftService : ITradingPlanDraftService
 {
     private readonly IStockAgentHistoryService _historyService;
+    private readonly IStockMarketContextService _marketContextService;
 
-    public TradingPlanDraftService(IStockAgentHistoryService historyService)
+    public TradingPlanDraftService(IStockAgentHistoryService historyService, IStockMarketContextService marketContextService)
     {
         _historyService = historyService;
+        _marketContextService = marketContextService;
     }
 
     public async Task<TradingPlanDraftDto> BuildDraftAsync(string symbol, long analysisHistoryId, CancellationToken cancellationToken = default)
@@ -62,6 +64,7 @@ public sealed class TradingPlanDraftService : ITradingPlanDraftService
             ?? targetPrice
             ?? ReadForecastExtreme(trendData, true);
         var direction = ResolveDirection(commanderData.Value).ToString();
+        var marketContext = await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken);
 
         return new TradingPlanDraftDto(
             normalizedSymbol,
@@ -79,7 +82,8 @@ public sealed class TradingPlanDraftService : ITradingPlanDraftService
             summary,
             history.Id,
             "commander",
-            null);
+                null,
+                marketContext);
     }
 
     private static JsonElement? FindCommanderData(JsonElement root)

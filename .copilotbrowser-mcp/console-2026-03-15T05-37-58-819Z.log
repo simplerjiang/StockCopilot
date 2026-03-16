@@ -1,0 +1,3 @@
+[    8262ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5119/api/market/sentiment/latest:0
+[    8321ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5119/api/market/sentiment/history?days=10:0
+[    8377ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5119/api/market/sectors?boardType=concept&page=1&pageSize=12&sort=strength:0

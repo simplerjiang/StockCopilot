@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
+using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -41,6 +42,7 @@ public sealed class StocksModule : IModule
         services.AddScoped<IStockAgentHistoryService, StockAgentHistoryService>();
         services.AddScoped<ITradingPlanDraftService, TradingPlanDraftService>();
         services.AddScoped<ITradingPlanService, TradingPlanService>();
+        services.AddScoped<IStockMarketContextService, StockMarketContextService>();
         services.AddScoped<ITradingPlanTriggerService, TradingPlanTriggerService>();
         services.AddScoped<ITradingPlanReviewService, TradingPlanReviewService>();
         services.AddScoped<IStockChatHistoryService, StockChatHistoryService>();
@@ -329,7 +331,7 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // 个性化风险 + 仓位建议
-        group.MapPost("/position-guidance", async (StockPositionGuidanceRequestDto request, IStockDataService dataService, IStockNewsImpactService impactService, IStockSignalService signalService, IStockPositionGuidanceService guidanceService) =>
+        group.MapPost("/position-guidance", async (StockPositionGuidanceRequestDto request, IStockDataService dataService, IStockNewsImpactService impactService, IStockSignalService signalService, IStockPositionGuidanceService guidanceService, IStockMarketContextService marketContextService) =>
         {
             if (string.IsNullOrWhiteSpace(request.Symbol))
             {
@@ -350,7 +352,8 @@ public sealed class StocksModule : IModule
             var detail = new StockDetailDto(quote, kline, minute, messages);
             var impact = impactService.Evaluate(target, quote.Name, messages);
             var signal = signalService.Evaluate(detail, impact);
-            var guidance = guidanceService.Build(quote, signal, request.RiskLevel, request.CurrentPositionPercent);
+            var marketContext = await marketContextService.GetLatestAsync(target);
+            var guidance = guidanceService.Build(quote, signal, request.RiskLevel, request.CurrentPositionPercent, marketContext);
 
             return Results.Ok(guidance);
         })
@@ -515,10 +518,11 @@ public sealed class StocksModule : IModule
         .WithName("CreateStockAgentHistory")
         .WithOpenApi();
 
-        group.MapGet("/plans", async (string? symbol, int? take, ITradingPlanService tradingPlanService) =>
+        group.MapGet("/plans", async (string? symbol, int? take, ITradingPlanService tradingPlanService, IStockMarketContextService marketContextService) =>
         {
             var list = await tradingPlanService.GetListAsync(symbol, take ?? 20);
-            return Results.Ok(list.Select(item => MapTradingPlanDto(item)).ToArray());
+            var currentContexts = await Task.WhenAll(list.Select(item => marketContextService.GetLatestAsync(item.Symbol)));
+            return Results.Ok(list.Select((item, index) => MapTradingPlanDto(item, null, currentContexts[index])).ToArray());
         })
         .WithName("GetTradingPlans")
         .WithOpenApi();
@@ -531,10 +535,16 @@ public sealed class StocksModule : IModule
         .WithName("GetTradingPlanAlerts")
         .WithOpenApi();
 
-        group.MapGet("/plans/{id:long}", async (long id, ITradingPlanService tradingPlanService) =>
+        group.MapGet("/plans/{id:long}", async (long id, ITradingPlanService tradingPlanService, IStockMarketContextService marketContextService) =>
         {
             var item = await tradingPlanService.GetByIdAsync(id);
-            return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+            if (item is null)
+            {
+                return Results.NotFound();
+            }
+
+            var currentContext = await marketContextService.GetLatestAsync(item.Symbol);
+            return Results.Ok(MapTradingPlanDto(item, null, currentContext));
         })
         .WithName("GetTradingPlanById")
         .WithOpenApi();
@@ -564,7 +574,7 @@ public sealed class StocksModule : IModule
         .WithName("BuildTradingPlanDraft")
         .WithOpenApi();
 
-        group.MapPost("/plans", async (TradingPlanCreateDto request, ITradingPlanService tradingPlanService) =>
+        group.MapPost("/plans", async (TradingPlanCreateDto request, ITradingPlanService tradingPlanService, IStockMarketContextService marketContextService) =>
         {
             if (string.IsNullOrWhiteSpace(request.Symbol))
             {
@@ -579,7 +589,8 @@ public sealed class StocksModule : IModule
             try
             {
                 var result = await tradingPlanService.CreateAsync(request);
-                return Results.Ok(MapTradingPlanDto(result.Plan, result.WatchlistEnsured));
+                var currentContext = await marketContextService.GetLatestAsync(result.Plan.Symbol);
+                return Results.Ok(MapTradingPlanDto(result.Plan, result.WatchlistEnsured, currentContext));
             }
             catch (Exception ex)
             {
@@ -589,12 +600,18 @@ public sealed class StocksModule : IModule
         .WithName("CreateTradingPlan")
         .WithOpenApi();
 
-        group.MapPut("/plans/{id:long}", async (long id, TradingPlanUpdateDto request, ITradingPlanService tradingPlanService) =>
+        group.MapPut("/plans/{id:long}", async (long id, TradingPlanUpdateDto request, ITradingPlanService tradingPlanService, IStockMarketContextService marketContextService) =>
         {
             try
             {
                 var item = await tradingPlanService.UpdateAsync(id, request);
-                return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+                if (item is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var currentContext = await marketContextService.GetLatestAsync(item.Symbol);
+                return Results.Ok(MapTradingPlanDto(item, null, currentContext));
             }
             catch (Exception ex)
             {
@@ -604,20 +621,32 @@ public sealed class StocksModule : IModule
         .WithName("UpdateTradingPlan")
         .WithOpenApi();
 
-        group.MapPost("/plans/{id:long}/cancel", async (long id, ITradingPlanService tradingPlanService) =>
+        group.MapPost("/plans/{id:long}/cancel", async (long id, ITradingPlanService tradingPlanService, IStockMarketContextService marketContextService) =>
         {
             var item = await tradingPlanService.CancelAsync(id);
-            return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+            if (item is null)
+            {
+                return Results.NotFound();
+            }
+
+            var currentContext = await marketContextService.GetLatestAsync(item.Symbol);
+            return Results.Ok(MapTradingPlanDto(item, null, currentContext));
         })
         .WithName("CancelTradingPlan")
         .WithOpenApi();
 
-        group.MapPost("/plans/{id:long}/resume", async (long id, ITradingPlanService tradingPlanService) =>
+        group.MapPost("/plans/{id:long}/resume", async (long id, ITradingPlanService tradingPlanService, IStockMarketContextService marketContextService) =>
         {
             try
             {
                 var item = await tradingPlanService.ResumeAsync(id);
-                return item is null ? Results.NotFound() : Results.Ok(MapTradingPlanDto(item));
+                if (item is null)
+                {
+                    return Results.NotFound();
+                }
+
+                var currentContext = await marketContextService.GetLatestAsync(item.Symbol);
+                return Results.Ok(MapTradingPlanDto(item, null, currentContext));
             }
             catch (Exception ex)
             {
@@ -814,7 +843,7 @@ public sealed class StocksModule : IModule
         return null;
     }
 
-    private static TradingPlanItemDto MapTradingPlanDto(Data.Entities.TradingPlan item, bool? watchlistEnsured = null)
+    private static TradingPlanItemDto MapTradingPlanDto(Data.Entities.TradingPlan item, bool? watchlistEnsured = null, StockMarketContextDto? currentMarketContext = null)
     {
         return new TradingPlanItemDto(
             item.Id,
@@ -839,7 +868,37 @@ public sealed class StocksModule : IModule
             item.TriggeredAt,
             item.InvalidatedAt,
             item.CancelledAt,
-            watchlistEnsured);
+            watchlistEnsured,
+            BuildCreationMarketContext(item),
+            currentMarketContext);
+    }
+
+    private static StockMarketContextDto? BuildCreationMarketContext(Data.Entities.TradingPlan item)
+    {
+        if (string.IsNullOrWhiteSpace(item.MarketStageLabelAtCreation)
+            && item.StageConfidenceAtCreation is null
+            && item.SuggestedPositionScale is null
+            && string.IsNullOrWhiteSpace(item.ExecutionFrequencyLabel)
+            && string.IsNullOrWhiteSpace(item.MainlineSectorName)
+            && item.MainlineScoreAtCreation is null)
+        {
+            return null;
+        }
+
+        return new StockMarketContextDto(
+            item.MarketStageLabelAtCreation ?? "混沌",
+            item.StageConfidenceAtCreation ?? 0m,
+            item.SectorNameAtCreation,
+            item.MainlineSectorName,
+            item.SectorCodeAtCreation,
+            item.MainlineScoreAtCreation ?? 0m,
+            item.SuggestedPositionScale ?? 0m,
+            item.ExecutionFrequencyLabel ?? string.Empty,
+            false,
+            !string.IsNullOrWhiteSpace(item.MainlineSectorName)
+                && !string.IsNullOrWhiteSpace(item.SectorNameAtCreation)
+                && (item.MainlineSectorName.Contains(item.SectorNameAtCreation, StringComparison.OrdinalIgnoreCase)
+                    || item.SectorNameAtCreation.Contains(item.MainlineSectorName, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static TradingPlanEventItemDto MapTradingPlanEventDto(Data.Entities.TradingPlanEvent item)

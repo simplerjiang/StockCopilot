@@ -75,6 +75,7 @@ using (var scope = app.Services.CreateScope())
     await LocalFactSchemaInitializer.EnsureAsync(dbContext);
     await SourceGovernanceSchemaInitializer.EnsureAsync(dbContext);
     await TradingPlanSchemaInitializer.EnsureAsync(dbContext);
+    await MarketSentimentSchemaInitializer.EnsureAsync(dbContext);
 }
 
 // 中间件管道

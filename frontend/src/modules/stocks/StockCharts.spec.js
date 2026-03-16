@@ -279,6 +279,56 @@ describe('StockCharts', () => {
     expect(aiOverlays[1].points[0].value).toBe(11.4)
   })
 
+  it('shows detailed hover info including price change and change percent for kline bars', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 300
+      }
+    })
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [
+          { date: '2026-01-01', open: 8, close: 9, low: 7, high: 10, volume: 800 },
+          { date: '2026-01-02', open: 10, close: 11, low: 9, high: 12, volume: 1200 }
+        ],
+        minuteLines: [],
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+
+    const crosshairHandler = chartMocks.klineSubscribeActionMock.mock.calls.find(([type]) => type === 'onCrosshairChange')?.[1]
+    const klineData = chartMocks.klineDataLoads.at(-1) ?? []
+
+    expect(crosshairHandler).toBeTypeOf('function')
+    expect(klineData).toHaveLength(2)
+
+    crosshairHandler({
+      timestamp: klineData[1].timestamp,
+      kLineData: klineData[1],
+      x: 120,
+      y: 90
+    })
+    await nextTick()
+
+    const hoverTip = wrapper.find('.hover-tip')
+    expect(hoverTip.exists()).toBe(true)
+    expect(hoverTip.text()).toContain('2026-01-02')
+    expect(hoverTip.text()).toContain('开: 10')
+    expect(hoverTip.text()).toContain('收: 11')
+    expect(hoverTip.text()).toContain('涨跌: +2')
+    expect(hoverTip.text()).toContain('涨跌幅: 22.22%')
+  })
+
   it('keeps monthly and yearly kline timestamps renderable for higher timeframes', async () => {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
@@ -769,7 +819,7 @@ describe('StockCharts', () => {
     expect(wrapper.findAll('.chart-floating-badge').some(button => button.text() === 'MA金叉/死叉')).toBe(true)
   })
 
-  it('renders TD sequential markers on day view with deterministic buy and sell signals', async () => {
+  it('renders TD sequential markers from 6 to 9 with weak and strong emphasis', async () => {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
       get() {
@@ -812,13 +862,27 @@ describe('StockCharts', () => {
     const markerOverlays = chartMocks.klineOverlayCalls.filter(item => item?.groupId === 'day-markers' && item?.name === 'simpleAnnotation')
     const uniqueTdOverlays = Array.from(new Map(
       markerOverlays
-        .filter(item => item.extendData === 'TD买9' || item.extendData === 'TD卖9')
+        .filter(item => /^TD[买卖][1-9]$/.test(item.extendData ?? ''))
         .map(item => [`${item.extendData}-${item.points?.[0]?.timestamp}`, item])
     ).values())
 
-    expect(uniqueTdOverlays).toHaveLength(2)
-    expect(uniqueTdOverlays.find(item => item.extendData === 'TD买9')?.styles?.line?.color).toBe('#22c55e')
-    expect(uniqueTdOverlays.find(item => item.extendData === 'TD卖9')?.styles?.line?.color).toBe('#ef4444')
+    expect(uniqueTdOverlays).toHaveLength(8)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖6')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖7')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖8')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖9')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD买6')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD买7')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD买8')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD买9')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖1')).toBe(false)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD买1')).toBe(false)
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD卖6')?.styles?.line?.color).toBe('#fca5a5')
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD卖8')?.styles?.line?.color).toBe('#ef4444')
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD买6')?.styles?.line?.color).toBe('#86efac')
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD买8')?.styles?.line?.color).toBe('#22c55e')
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD卖6')?.styles?.text?.size).toBe(10)
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD卖9')?.styles?.text?.size).toBe(12)
     expect(wrapper.findAll('.chart-floating-badge').some(button => button.text() === 'TD九转')).toBe(true)
 
     await wrapper.findAll('.tab')[2].trigger('click')

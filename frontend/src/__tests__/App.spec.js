@@ -7,5 +7,6 @@ describe('App', () => {
     const wrapper = mount(App)
     const buttons = wrapper.findAll('button.tab')
     expect(buttons.length).toBeGreaterThan(0)
+    expect(wrapper.text()).toContain('情绪轮动')
   })
 })

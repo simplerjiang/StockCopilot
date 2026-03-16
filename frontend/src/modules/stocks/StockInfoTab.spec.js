@@ -145,6 +145,7 @@ const createChatFetchMock = (handlers = {}) => {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
   localStorage.clear()
 })
 
@@ -710,6 +711,56 @@ describe('StockInfoTab', () => {
 
     expect(wrapper.text()).toContain('资讯影响')
     expect(wrapper.text()).toContain('利好偏多')
+  })
+
+  it('shows only recent bullish and bearish impact events in the headline list', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-15T12:00:00Z').getTime())
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url) => {
+        if (url.startsWith('/api/stocks/news/impact')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              summary: { positive: 3, neutral: 1, negative: 2, overall: '多空分化' },
+              events: [
+                { title: '两周前的旧利好', category: '利好', impactScore: 98, publishedAt: '2026-03-01T09:00:00Z' },
+                { title: '最新回购公告', category: '利好', impactScore: 46, publishedAt: '2026-03-15T11:30:00Z' },
+                { title: '最新监管问询', category: '利空', impactScore: -52, publishedAt: '2026-03-15T10:45:00Z' },
+                { title: '刚刚披露合作进展', category: '利好', impactScore: 28, publishedAt: '2026-03-15T09:40:00Z' },
+                { title: '中性行业点评', category: '中性', impactScore: 80, publishedAt: '2026-03-15T11:50:00Z' }
+              ]
+            })
+          })
+        }
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    const headlineItems = wrapper.findAll('.news-impact-list li')
+    const headlineText = headlineItems.map(item => item.text()).join(' | ')
+
+    expect(headlineItems).toHaveLength(3)
+    expect(headlineText).toContain('最新回购公告')
+    expect(headlineText).toContain('最新监管问询')
+    expect(headlineText).toContain('刚刚披露合作进展')
+    expect(headlineText).not.toContain('两周前的旧利好')
+    expect(headlineText).not.toContain('中性行业点评')
   })
 
   it('requests local news buckets for the active symbol', async () => {
@@ -1893,7 +1944,7 @@ describe('StockInfoTab', () => {
     expect(wrapper.find('.plan-modal').exists()).toBe(false)
     expect(wrapper.text()).toContain('交易计划总览')
     expect(wrapper.text()).toContain('当前交易计划')
-    expect(wrapper.text()).toContain('深科技 · Pending')
+    expect(wrapper.text()).toContain('深科技 · 观察中')
     expect(wrapper.text()).toContain('触发 12.60')
     expect(wrapper.text()).toContain('止盈 13.40')
     expect(wrapper.text()).toContain('目标 14.20')

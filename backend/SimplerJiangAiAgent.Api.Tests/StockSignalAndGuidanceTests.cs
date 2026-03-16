@@ -1,5 +1,6 @@
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
+using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using Xunit;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -85,11 +86,25 @@ public class StockSignalAndGuidanceTests
             new[] { "证据" },
             new[] { "反证" });
 
-        var result = guidanceService.Build(quote, signal, "balanced", 30m);
+        var marketContext = new StockMarketContextDto(
+            "主升",
+            82m,
+            "银行",
+            "银行",
+            "BKYH",
+            76m,
+            0.8m,
+            "积极执行",
+            false,
+            true);
+
+        var result = guidanceService.Build(quote, signal, "balanced", 30m, marketContext);
 
         Assert.Equal("balanced", result.RiskLevel);
         Assert.True(result.TargetPositionPercent >= 0 && result.TargetPositionPercent <= 100);
         Assert.Contains(result.Action, new[] { "加仓", "减仓", "持有" });
         Assert.NotEmpty(result.Reasons);
+        Assert.Equal(0.8m, result.MarketStageMultiplier);
+        Assert.NotNull(result.MarketContext);
     }
 }

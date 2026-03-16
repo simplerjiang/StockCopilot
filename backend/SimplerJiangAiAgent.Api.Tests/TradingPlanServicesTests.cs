@@ -48,10 +48,50 @@ public sealed class TradingPlanServicesTests
             CreatedAt = DateTime.UtcNow
         };
         dbContext.StockAgentAnalysisHistories.Add(history);
+        dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
+        {
+          Symbol = "sz000021",
+          Name = "深科技",
+          Price = 12.5m,
+          Change = 0.1m,
+          ChangePercent = 0.8m,
+          SectorName = "机器人",
+          Timestamp = DateTime.UtcNow
+        });
+        dbContext.MarketSentimentSnapshots.Add(new MarketSentimentSnapshot
+        {
+          TradingDate = new DateTime(2026, 3, 15),
+          SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+          SessionPhase = "盘后",
+          StageLabel = "主升",
+          StageLabelV2 = "主升",
+          StageScore = 78m,
+          StageConfidence = 82m,
+          CreatedAt = DateTime.UtcNow,
+          SourceTag = "test"
+        });
+        dbContext.SectorRotationSnapshots.Add(new SectorRotationSnapshot
+        {
+          TradingDate = new DateTime(2026, 3, 15),
+          SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+          BoardType = "concept",
+          SectorCode = "BK001",
+          SectorName = "机器人",
+          RankNo = 1,
+          StrengthScore = 82m,
+          StrengthAvg5d = 76m,
+          StrengthAvg10d = 72m,
+          DiffusionRate = 80m,
+          MainlineScore = 78m,
+          IsMainline = true,
+          NewsSentiment = "利好",
+          SourceTag = "test",
+          CreatedAt = DateTime.UtcNow
+        });
         await dbContext.SaveChangesAsync();
 
         var historyService = new StockAgentHistoryService(dbContext);
-        var service = new TradingPlanDraftService(historyService);
+        var service = new TradingPlanDraftService(historyService, new StockMarketContextService(dbContext));
 
         var draft = await service.BuildDraftAsync("sz000021", history.Id);
 
@@ -69,6 +109,9 @@ public sealed class TradingPlanServicesTests
         Assert.Equal("跌破支撑位", draft.InvalidConditions);
         Assert.Equal("单笔亏损不超过 2%；总仓位不超过 50%", draft.RiskLimits);
         Assert.Equal(history.Id, draft.AnalysisHistoryId);
+        Assert.NotNull(draft.MarketContext);
+        Assert.Equal("主升", draft.MarketContext!.StageLabel);
+        Assert.True(draft.MarketContext.IsMainlineAligned);
     }
 
     [Fact]
@@ -118,9 +161,28 @@ public sealed class TradingPlanServicesTests
             CreatedAt = DateTime.UtcNow
         };
         dbContext.StockAgentAnalysisHistories.Add(history);
+        dbContext.StockCompanyProfiles.Add(new StockCompanyProfile
+        {
+          Symbol = "sz000001",
+          Name = "平安银行",
+          SectorName = "银行",
+          UpdatedAt = DateTime.UtcNow
+        });
+        dbContext.MarketSentimentSnapshots.Add(new MarketSentimentSnapshot
+        {
+          TradingDate = new DateTime(2026, 3, 15),
+          SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+          SessionPhase = "盘后",
+          StageLabel = "混沌",
+          StageLabelV2 = "混沌",
+          StageScore = 48m,
+          StageConfidence = 58m,
+          SourceTag = "test",
+          CreatedAt = DateTime.UtcNow
+        });
         await dbContext.SaveChangesAsync();
 
-        var service = new TradingPlanDraftService(new StockAgentHistoryService(dbContext));
+        var service = new TradingPlanDraftService(new StockAgentHistoryService(dbContext), new StockMarketContextService(dbContext));
 
         var draft = await service.BuildDraftAsync("sz000001", history.Id);
 
@@ -130,6 +192,7 @@ public sealed class TradingPlanServicesTests
         Assert.Equal(13.8m, draft.TakeProfitPrice);
         Assert.Equal(13.8m, draft.TargetPrice);
         Assert.Equal("Long", draft.Direction);
+        Assert.NotNull(draft.MarketContext);
     }
 
     [Fact]
@@ -147,10 +210,50 @@ public sealed class TradingPlanServicesTests
             CreatedAt = DateTime.UtcNow
         };
         dbContext.StockAgentAnalysisHistories.Add(history);
+        dbContext.StockQuoteSnapshots.Add(new StockQuoteSnapshot
+        {
+          Symbol = "sh600000",
+          Name = "浦发银行",
+          Price = 10.2m,
+          Change = 0.2m,
+          ChangePercent = 1.5m,
+          SectorName = "银行",
+          Timestamp = DateTime.UtcNow
+        });
+        dbContext.MarketSentimentSnapshots.Add(new MarketSentimentSnapshot
+        {
+          TradingDate = new DateTime(2026, 3, 15),
+          SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+          SessionPhase = "盘后",
+          StageLabel = "分歧",
+          StageLabelV2 = "主升",
+          StageScore = 66m,
+          StageConfidence = 76m,
+          SourceTag = "test",
+          CreatedAt = DateTime.UtcNow
+        });
+        dbContext.SectorRotationSnapshots.Add(new SectorRotationSnapshot
+        {
+          TradingDate = new DateTime(2026, 3, 15),
+          SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+          BoardType = "industry",
+          SectorCode = "BKYH",
+          SectorName = "银行",
+          RankNo = 1,
+          StrengthScore = 70m,
+          StrengthAvg5d = 68m,
+          StrengthAvg10d = 65m,
+          DiffusionRate = 72m,
+          MainlineScore = 74m,
+          IsMainline = true,
+          NewsSentiment = "利好",
+          SourceTag = "test",
+          CreatedAt = DateTime.UtcNow
+        });
         await dbContext.SaveChangesAsync();
 
         var watchlistService = new ActiveWatchlistService(dbContext);
-        var service = new TradingPlanService(dbContext, watchlistService);
+        var service = new TradingPlanService(dbContext, watchlistService, new StockMarketContextService(dbContext));
 
         var result = await service.CreateAsync(new TradingPlanCreateDto(
             "sh600000",
@@ -176,11 +279,17 @@ public sealed class TradingPlanServicesTests
         var watchlist = await dbContext.ActiveWatchlists.FirstAsync();
 
         Assert.Equal(savedPlan.Id, result.Plan.Id);
+        Assert.False(string.IsNullOrWhiteSpace(savedPlan.PlanKey));
+        Assert.Equal("浦发银行", savedPlan.Title);
         Assert.Equal("sh600000", watchlist.Symbol);
         Assert.Equal("trading-plan", watchlist.SourceTag);
         Assert.Equal($"plan:{savedPlan.Id}", watchlist.Note);
         Assert.Equal(10.9m, savedPlan.TakeProfitPrice);
         Assert.Equal(11.5m, savedPlan.TargetPrice);
+        Assert.Equal("主升", savedPlan.MarketStageLabelAtCreation);
+        Assert.Equal("银行", savedPlan.SectorNameAtCreation);
+        Assert.Equal("BKYH", savedPlan.SectorCodeAtCreation);
+        Assert.Equal("积极执行", savedPlan.ExecutionFrequencyLabel);
     }
 
     [Fact]
@@ -201,7 +310,7 @@ public sealed class TradingPlanServicesTests
         dbContext.TradingPlans.Add(plan);
         await dbContext.SaveChangesAsync();
 
-        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext));
+        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), new StockMarketContextService(dbContext));
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateAsync(
             plan.Id,
@@ -229,6 +338,8 @@ public sealed class TradingPlanServicesTests
         await using var dbContext = CreateDbContext();
         var plan = new TradingPlan
         {
+          PlanKey = string.Empty,
+          Title = string.Empty,
           Symbol = "sh600519",
           Name = "贵州茅台",
           Direction = TradingPlanDirection.Long,
@@ -241,7 +352,7 @@ public sealed class TradingPlanServicesTests
         dbContext.TradingPlans.Add(plan);
         await dbContext.SaveChangesAsync();
 
-        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext));
+        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), new StockMarketContextService(dbContext));
 
         var updated = await service.UpdateAsync(
           plan.Id,
@@ -262,6 +373,8 @@ public sealed class TradingPlanServicesTests
 
         Assert.NotNull(updated);
         Assert.Equal(TradingPlanStatus.ReviewRequired, updated!.Status);
+        Assert.False(string.IsNullOrWhiteSpace(updated.PlanKey));
+        Assert.Equal("贵州茅台", updated.Title);
         Assert.Equal(1800m, updated.TriggerPrice);
       }
 
@@ -283,7 +396,7 @@ public sealed class TradingPlanServicesTests
         dbContext.TradingPlans.Add(plan);
         await dbContext.SaveChangesAsync();
 
-        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext));
+        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), new StockMarketContextService(dbContext));
 
         var resumed = await service.ResumeAsync(plan.Id);
 
@@ -320,7 +433,7 @@ public sealed class TradingPlanServicesTests
         await dbContext.SaveChangesAsync();
 
         var planId = await dbContext.TradingPlans.Select(item => item.Id).SingleAsync();
-        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext));
+        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), new StockMarketContextService(dbContext));
 
         var removed = await service.DeleteAsync(planId);
 
@@ -367,7 +480,7 @@ public sealed class TradingPlanServicesTests
         });
         await dbContext.SaveChangesAsync();
 
-        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext));
+        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), new StockMarketContextService(dbContext));
 
         var items = await service.GetListAsync(null, 20);
 
@@ -415,7 +528,7 @@ public sealed class TradingPlanServicesTests
           });
         await dbContext.SaveChangesAsync();
 
-        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext));
+        var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), new StockMarketContextService(dbContext));
 
         var items = await service.GetListAsync(null, 20);
 

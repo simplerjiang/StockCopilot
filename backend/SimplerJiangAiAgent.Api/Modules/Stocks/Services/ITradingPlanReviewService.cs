@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
@@ -252,8 +253,8 @@ public sealed class TradingPlanReviewService : ITradingPlanReviewService
         var reason = root.TryGetProperty("reason", out var reasonElement) && reasonElement.ValueKind == JsonValueKind.String
             ? reasonElement.GetString()?.Trim()
             : null;
-        var confidence = root.TryGetProperty("confidence", out var confidenceElement) && confidenceElement.ValueKind == JsonValueKind.Number
-            ? Math.Clamp(confidenceElement.GetInt32(), 0, 100)
+        var confidence = root.TryGetProperty("confidence", out var confidenceElement)
+            ? ParseConfidence(confidenceElement)
             : 0;
 
         return new TradingPlanThreatReviewResult(
@@ -288,6 +289,23 @@ public sealed class TradingPlanReviewService : ITradingPlanReviewService
         }
 
         return cleaned;
+    }
+
+    private static int ParseConfidence(JsonElement element)
+    {
+        decimal? rawValue = element.ValueKind switch
+        {
+            JsonValueKind.Number when element.TryGetDecimal(out var decimalValue) => decimalValue,
+            JsonValueKind.String when decimal.TryParse(element.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var stringValue) => stringValue,
+            _ => null
+        };
+
+        if (!rawValue.HasValue)
+        {
+            return 0;
+        }
+
+        return (int)Math.Clamp(decimal.Round(rawValue.Value, MidpointRounding.AwayFromZero), 0m, 100m);
     }
 
     private static string? TryReadLocalNewsId(string? metadataJson)

@@ -24,11 +24,13 @@ public sealed class TradingPlanService : ITradingPlanService
 {
     private readonly AppDbContext _dbContext;
     private readonly IActiveWatchlistService _watchlistService;
+    private readonly IStockMarketContextService _marketContextService;
 
-    public TradingPlanService(AppDbContext dbContext, IActiveWatchlistService watchlistService)
+    public TradingPlanService(AppDbContext dbContext, IActiveWatchlistService watchlistService, IStockMarketContextService marketContextService)
     {
         _dbContext = dbContext;
         _watchlistService = watchlistService;
+        _marketContextService = marketContextService;
     }
 
     public async Task<IReadOnlyList<TradingPlan>> GetListAsync(string? symbol, int take = 20, CancellationToken cancellationToken = default)
@@ -79,10 +81,14 @@ public sealed class TradingPlanService : ITradingPlanService
         }
 
         var now = DateTime.UtcNow;
+        var name = NormalizeRequiredName(request.Name, history.Name);
+        var marketContext = await _marketContextService.GetLatestAsync(normalized, cancellationToken);
         var plan = new TradingPlan
         {
+            PlanKey = GeneratePlanKey(),
             Symbol = normalized,
-            Name = NormalizeRequiredName(request.Name, history.Name),
+            Name = name,
+            Title = NormalizeLegacyTitle(name),
             Direction = ParseDirection(request.Direction),
             Status = TradingPlanStatus.Pending,
             TriggerPrice = request.TriggerPrice,
@@ -97,6 +103,14 @@ public sealed class TradingPlanService : ITradingPlanService
             AnalysisHistoryId = request.AnalysisHistoryId,
             SourceAgent = NormalizeOptional(request.SourceAgent) ?? "commander",
             UserNote = NormalizeOptional(request.UserNote),
+            MarketStageLabelAtCreation = marketContext?.StageLabel,
+            StageConfidenceAtCreation = marketContext?.StageConfidence,
+            SuggestedPositionScale = marketContext?.SuggestedPositionScale,
+            ExecutionFrequencyLabel = marketContext?.ExecutionFrequencyLabel,
+            MainlineSectorName = marketContext?.MainlineSectorName,
+            MainlineScoreAtCreation = marketContext?.MainlineScore,
+            SectorNameAtCreation = marketContext?.StockSectorName,
+            SectorCodeAtCreation = marketContext?.SectorCode,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -127,6 +141,7 @@ public sealed class TradingPlanService : ITradingPlanService
         }
 
         plan.Name = NormalizeRequiredName(request.Name, plan.Name);
+        EnsureLegacyCompatibility(plan);
         plan.Direction = ParseDirection(request.Direction, plan.Direction);
         plan.TriggerPrice = request.TriggerPrice;
         plan.InvalidPrice = request.InvalidPrice;
@@ -158,6 +173,7 @@ public sealed class TradingPlanService : ITradingPlanService
             return plan;
         }
 
+        EnsureLegacyCompatibility(plan);
         plan.Status = TradingPlanStatus.Cancelled;
         plan.CancelledAt = DateTime.UtcNow;
         plan.UpdatedAt = plan.CancelledAt.Value;
@@ -178,6 +194,7 @@ public sealed class TradingPlanService : ITradingPlanService
             throw new InvalidOperationException("仅 ReviewRequired 计划允许恢复观察");
         }
 
+        EnsureLegacyCompatibility(plan);
         plan.Status = TradingPlanStatus.Pending;
         plan.UpdatedAt = DateTime.UtcNow;
         _dbContext.TradingPlanEvents.Add(new TradingPlanEvent
@@ -220,6 +237,26 @@ public sealed class TradingPlanService : ITradingPlanService
         }
 
         return string.IsNullOrWhiteSpace(fallback) ? string.Empty : fallback.Trim();
+    }
+
+    private static void EnsureLegacyCompatibility(TradingPlan plan)
+    {
+        if (string.IsNullOrWhiteSpace(plan.PlanKey))
+        {
+            plan.PlanKey = GeneratePlanKey();
+        }
+
+        plan.Title = NormalizeLegacyTitle(plan.Name);
+    }
+
+    private static string GeneratePlanKey()
+    {
+        return $"plan-{Guid.NewGuid():N}";
+    }
+
+    private static string NormalizeLegacyTitle(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
     }
 
     private static string? NormalizeOptional(string? value)
