@@ -75,7 +75,7 @@
         "dev": "done",
         "test": "todo"
       },
-      "notes": "Step 3 已继续收口：在既有流通市值/动态市盈率/量比/股东人数/所属板块基础上，新增“基本面快照富事实 + 数据库缓存优先刷新”能力。`StockCompanyProfiles` 已持久化 `FundamentalFactsJson` 与 `FundamentalUpdatedAt`；`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 会实时抓取东财公司概况/股东研究并回写数据库；前端 StockInfoTab 已渲染快照刷新时间与事实列表。已通过本轮 EF migration、`dotnet ef database update`、SQLCMD 列级校验、后端定向单测 7/7、前端定向单测 30/30、前端 build 与运行时 `/api/health` + `/api/stocks/detail/cache` + `/api/stocks/detail` 验证。剩余主要是 Edge/UI 验收，以及本地 LLM provider 定价配置未补齐时后台 AI/资讯任务仍会报配置告警。"
+      "notes": "Step 3 已继续收口：在既有流通市值/动态市盈率/量比/股东人数/所属板块基础上，新增“基本面快照富事实 + 数据库缓存优先刷新”能力。`StockCompanyProfiles` 已持久化 `FundamentalFactsJson` 与 `FundamentalUpdatedAt`；`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 会实时抓取东财公司概况/股东研究并回写数据库；前端 StockInfoTab 已渲染快照刷新时间与事实列表。本轮继续补齐股票信息卡片真实加载进度：新增 `/api/stocks/fundamental-snapshot` 轻量接口，`/api/stocks/detail` 支持 `includeFundamentalSnapshot=false`，前端会分别展示“缓存回显 / 腾讯行情 / 东方财富基本面”阶段。待补主要是更大范围 UI/Browser MCP 验收。"
     },
     {
       "id": "GOAL-002",

@@ -155,6 +155,19 @@ public sealed class StocksModule : IModule
         .WithName("GetStockQuote")
         .WithOpenApi();
 
+        group.MapGet("/fundamental-snapshot", async (string symbol, IStockFundamentalSnapshotService fundamentalSnapshotService, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var result = await fundamentalSnapshotService.GetSnapshotAsync(symbol.Trim(), httpContext.RequestAborted);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        })
+        .WithName("GetStockFundamentalSnapshot")
+        .WithOpenApi();
+
         // 模糊搜索股票
         group.MapGet("/search", async (string q, int? limit, IStockSearchService searchService) =>
         {
@@ -373,7 +386,7 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // 获取组合详情
-        group.MapGet("/detail", async (string symbol, string? interval, int? count, string? source, bool? persist, IStockDataService dataService, IStockFundamentalSnapshotService fundamentalSnapshotService, IStockSyncService syncService, IStockHistoryService historyService, HttpContext httpContext) =>
+        group.MapGet("/detail", async (string symbol, string? interval, int? count, string? source, bool? persist, bool? includeFundamentalSnapshot, IStockDataService dataService, IStockFundamentalSnapshotService fundamentalSnapshotService, IStockSyncService syncService, IStockHistoryService historyService, HttpContext httpContext) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
             {
@@ -387,15 +400,25 @@ public sealed class StocksModule : IModule
             var klineTask = dataService.GetKLineAsync(target, selectedInterval, count ?? 60, source, cancellationToken);
             var minuteTask = dataService.GetMinuteLineAsync(target, source, cancellationToken);
             var messagesTask = dataService.GetIntradayMessagesAsync(target, source, cancellationToken);
-            var fundamentalSnapshotTask = fundamentalSnapshotService.GetSnapshotAsync(target, cancellationToken);
+            var shouldIncludeFundamentalSnapshot = includeFundamentalSnapshot ?? true;
+            Task<StockFundamentalSnapshotDto?>? fundamentalSnapshotTask = shouldIncludeFundamentalSnapshot
+                ? fundamentalSnapshotService.GetSnapshotAsync(target, cancellationToken)
+                : null;
 
-            await Task.WhenAll(quoteTask, klineTask, minuteTask, messagesTask, fundamentalSnapshotTask);
+            if (fundamentalSnapshotTask is null)
+            {
+                await Task.WhenAll(quoteTask, klineTask, minuteTask, messagesTask);
+            }
+            else
+            {
+                await Task.WhenAll(quoteTask, klineTask, minuteTask, messagesTask, fundamentalSnapshotTask);
+            }
 
             var quote = await quoteTask;
             var kline = await klineTask;
             var minute = await minuteTask;
             var messages = await messagesTask;
-            var fundamentalSnapshot = await fundamentalSnapshotTask;
+            var fundamentalSnapshot = fundamentalSnapshotTask is null ? null : await fundamentalSnapshotTask;
             var mergedKLine = string.Equals(selectedInterval, "day", StringComparison.OrdinalIgnoreCase)
                 ? StockRealtimeKLineMerge.MergeDailyFromMinuteLines(kline, minute, count ?? 60)
                 : kline;

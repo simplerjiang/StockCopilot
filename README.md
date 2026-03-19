@@ -20,7 +20,7 @@
 - /api/stocks/detail 组合详情
 - /api/stocks/detail/cache 组合详情（缓存）
 - /api/stocks/plans 交易计划查询/创建/更新/删除/取消/恢复观察，以及 /api/stocks/plans/draft 后端草稿生成；支持不传 `symbol` 直接获取最近交易计划总览
-- `StockCompanyProfiles` 现支持持久化基本面快照事实 JSON 与刷新时间，`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 再做实时东财刷新并回写数据库
+- `StockCompanyProfiles` 现支持持久化基本面快照事实 JSON 与刷新时间，`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 再做实时东财刷新并回写数据库；另已补充 `/api/stocks/fundamental-snapshot` 轻量接口，供前端独立展示东财基本面刷新进度
 - 行情双源策略已正式收口到后端：默认 `分时 -> 腾讯优先 / 东方财富回退`，默认 `日K/周K/月K/年K -> 东方财富优先 / 腾讯回退`；当调用方显式传入 `source` 时仍按指定源执行
 - /api/stocks/sync 手动触发同步
 - /api/news 本地事实新闻查询（按 symbol + level=stock/sector/market 精准过滤，前端展示使用批量 AI 清洗后的翻译/情绪/标签）
@@ -42,6 +42,7 @@
 - 股票信息页多Agent面板支持双档位触发：标准分析 / Pro 深度分析
 - 股票终端切股加载优化：优先使用 `/api/stocks/detail/cache` 秒开缓存详情，后台再补最新详情，并阻断旧请求覆盖新标的
 - 股票信息页“基本面快照”已支持展示东财公司概况/股东研究抽取出的富文本事实；首次打开先读数据库缓存，实时刷新完成后自动回写，下一次打开可直接秒开
+- 股票信息卡片已新增真实分阶段加载进度：查询时会分别展示“缓存回显 / 腾讯行情 / 东方财富基本面”状态，能直观看到快数据与慢数据谁还在路上
 - 股票信息页已支持从 commander 历史分析一键起草交易计划：后端基于 `StockAgentAnalysisHistory` 生成草稿，确定性预填止损/止盈/目标价，用户在弹窗中确认/补录价格后可保存为 `Pending`；已保存计划支持继续编辑、硬删除，并会同时显示在“当前交易计划”和跨股票“交易计划总览”区块，同时自动加入 `ActiveWatchlist`
 - 股票信息页交易计划现已支持 Step 4.4“突发新闻动态定性复核”：后端独立 worker 会对 `ActiveWatchlist` 内 `Pending` 计划结合本地个股快讯与 LLM 结构化复核结果输出 `ReviewRequired` / `NewsReviewed` 事件；前端在“交易计划总览”和“当前交易计划”中展示待复核状态、关联新闻与复核原因，并提供“恢复观察”手动确认入口
 - 顶层已新增“情绪轮动”页签：支持市场阶段摘要、板块分页榜、5/10/20 日 compare window、主线 badge、趋势详情、广度拆解，以及 `主升 / 分歧 / 退潮 / 混沌` 的本地阶段识别
@@ -164,7 +165,7 @@ opencode
 - [ ] GOAL-AGENT-001-R1 证据可追溯底座（URL-first evidence object、正文抓取/摘要/readMode/readStatus、evidence 归一化与 commander 采信闸门）
 - [ ] GOAL-AGENT-001-R2 Agent 职责重切与推理收口（stock/sector/financial/trend 边界重划、marketReports 抗污染、代码先算特征、commander 覆盖率/冲突/降级惩罚）
 - [ ] GOAL-AGENT-001-R3 回放校准闭环与验收基线（历史回放样本、1/3/5/10 日收益对齐、命中率/Brier score/分组胜率、开发者可观测验收指标）
-- [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 已继续完成“基本面快照富事实 + 数据库缓存优先刷新”增强：`StockCompanyProfiles` 新增 `FundamentalFactsJson/FundamentalUpdatedAt`，详情页先读 `/api/stocks/detail/cache` 的数据库快照，再由 `/api/stocks/detail` 实时抓东财公司概况/股东研究并回写；已完成 migration、SQLCMD 校验、后端定向单测、前端定向单测、前端 build 与运行时接口验证。剩余主要是 Edge/UI 验收与更大范围联调。）
+- [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 已继续完成“基本面快照富事实 + 数据库缓存优先刷新”增强：`StockCompanyProfiles` 新增 `FundamentalFactsJson/FundamentalUpdatedAt`，详情页先读 `/api/stocks/detail/cache` 的数据库快照，再由 `/api/stocks/detail` 实时抓东财公司概况/股东研究并回写；本轮进一步补上股票信息卡片真实加载进度，将“缓存回显 / 腾讯行情 / 东方财富基本面”拆成可视化阶段，并新增 `/api/stocks/fundamental-snapshot` 轻量接口配合前端独立显示东财刷新状态。剩余主要是 Edge/UI 验收与更大范围联调。）
 - [x] ISSUE-20260310 提示词增强（新闻抗污染策略 + 新闻库定时采集约束 + 白盒 MCP/Skill 任务执行规范）
 - [x] ISSUE-20260310-P0 动态来源治理基座（LLM每日候选源发现 + 自动新增爬取地址/流程 + 爬虫失效自动修复发布 + 程序化验证与自动隔离）
 - [x] ISSUE-20260310-P0-R1 P0剩余计划：开发者模式可视化收口（治理仪表盘 + 最小查询接口 + 过滤/详情展开/trace跳转 + 可观测审计）

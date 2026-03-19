@@ -42,11 +42,68 @@ const copilotPanelOpen = ref(localStorage.getItem('stock_copilot_panel_open') !=
 const marketNewsModalOpen = ref(false)
 const chatWindowRefs = new Map()
 
+const STOCK_LOAD_STAGE_DEFINITIONS = [
+  {
+    key: 'cache',
+    label: '缓存回显',
+    messages: {
+      idle: '等待查询',
+      pending: '读取本地快照',
+      success: '已处理缓存结果',
+      error: '缓存不可用，继续实时加载'
+    }
+  },
+  {
+    key: 'detail',
+    label: 'K线/分时图表',
+    messages: {
+      idle: '等待查询',
+      pending: '请求实时图表数据',
+      success: '实时图表数据已返回',
+      error: '图表数据请求失败'
+    }
+  },
+  {
+    key: 'tencent',
+    label: '腾讯行情',
+    messages: {
+      idle: '等待查询',
+      pending: '请求腾讯实时行情',
+      success: '腾讯实时行情已返回',
+      error: '腾讯接口请求失败'
+    }
+  },
+  {
+    key: 'eastmoney',
+    label: '东方财富基本面',
+    messages: {
+      idle: '等待查询',
+      pending: '请求东财基本面快照',
+      success: '东财基本面已返回',
+      error: '东财接口请求失败'
+    }
+  }
+]
+
+const createStockLoadStages = () => Object.fromEntries(
+  STOCK_LOAD_STAGE_DEFINITIONS.map(stage => [
+    stage.key,
+    {
+      key: stage.key,
+      label: stage.label,
+      status: 'idle',
+      message: stage.messages.idle
+    }
+  ])
+)
+
 const createWorkspace = symbolKey => reactive({
   symbolKey,
   detail: null,
   loading: false,
   error: '',
+  sourceLoadStages: createStockLoadStages(),
+  pendingFundamentalSnapshot: undefined,
   quoteRequestToken: 0,
   detailAbortController: null,
   chatSessions: [],
@@ -127,6 +184,7 @@ const bindWorkspaceField = (key, fallbackValue) => computed({
 
 const loading = bindWorkspaceField('loading', false)
 const error = bindWorkspaceField('error', '')
+const sourceLoadStages = bindWorkspaceField('sourceLoadStages', createStockLoadStages())
 const detail = computed({
   get: () => currentWorkspace.value?.detail ?? null,
   set: value => {
@@ -173,6 +231,28 @@ const resumingPlanId = ref('')
 
 const isBlockingQuoteLoad = computed(() => loading.value && !detail.value)
 const isBackgroundQuoteRefresh = computed(() => loading.value && !!detail.value)
+const visibleSourceLoadStages = computed(() =>
+  STOCK_LOAD_STAGE_DEFINITIONS
+    .map(stage => sourceLoadStages.value?.[stage.key])
+    .filter(stage => stage && stage.status !== 'idle')
+)
+const showSourceLoadProgress = computed(() => loading.value && visibleSourceLoadStages.value.length > 0)
+const sourceLoadProgressPercent = computed(() => {
+  const stages = visibleSourceLoadStages.value
+  if (!stages.length) {
+    return 0
+  }
+
+  const progressMap = {
+    pending: 0.2,
+    success: 1,
+    error: 1
+  }
+
+  const total = stages.reduce((sum, stage) => sum + (progressMap[stage.status] ?? 0), 0)
+  return Math.round((total / stages.length) * 100)
+})
+const sourceLoadProgressTitle = computed(() => (isBackgroundQuoteRefresh.value ? '后台刷新进度' : '实时加载进度'))
 
 const sidebarNewsSections = [
   { key: 'stock', title: '个股事实' },
@@ -184,6 +264,47 @@ const isAbortError = err => err?.name === 'AbortError'
 const replaceAbortController = currentController => {
   currentController?.abort()
   return new AbortController()
+}
+
+const getStockLoadStageDefinition = key => STOCK_LOAD_STAGE_DEFINITIONS.find(stage => stage.key === key)
+
+const resetStockLoadStages = workspace => {
+  if (!workspace?.sourceLoadStages) {
+    return
+  }
+
+  STOCK_LOAD_STAGE_DEFINITIONS.forEach(stage => {
+    const target = workspace.sourceLoadStages[stage.key]
+    if (!target) {
+      workspace.sourceLoadStages[stage.key] = {
+        key: stage.key,
+        label: stage.label,
+        status: 'idle',
+        message: stage.messages.idle
+      }
+      return
+    }
+
+    target.label = stage.label
+    target.status = 'idle'
+    target.message = stage.messages.idle
+  })
+}
+
+const setStockLoadStage = (workspace, requestToken, key, status, message = '') => {
+  if (!workspace || requestToken !== workspace.quoteRequestToken) {
+    return
+  }
+
+  const definition = getStockLoadStageDefinition(key)
+  const stage = workspace.sourceLoadStages?.[key]
+  if (!definition || !stage) {
+    return
+  }
+
+  stage.label = definition.label
+  stage.status = status
+  stage.message = message || definition.messages[status] || definition.messages.idle
 }
 
 const upsertAgentResult = result => {
@@ -242,7 +363,28 @@ const applyLatestDetail = (workspace, requestToken, payload) => {
     return false
   }
 
-  workspace.detail = payload
+  workspace.detail = {
+    ...payload,
+    fundamentalSnapshot: payload.fundamentalSnapshot ?? workspace.pendingFundamentalSnapshot ?? null
+  }
+  workspace.pendingFundamentalSnapshot = undefined
+  return true
+}
+
+const applyFundamentalSnapshot = (workspace, requestToken, snapshot) => {
+  if (!workspace || requestToken !== workspace.quoteRequestToken) {
+    return false
+  }
+
+  workspace.pendingFundamentalSnapshot = snapshot ?? null
+  if (!workspace.detail) {
+    return true
+  }
+
+  workspace.detail = {
+    ...workspace.detail,
+    fundamentalSnapshot: snapshot ?? null
+  }
   return true
 }
 
@@ -1301,29 +1443,118 @@ const fetchQuote = async () => {
   workspace.detailAbortController = controller
   workspace.loading = true
   workspace.error = ''
+  workspace.pendingFundamentalSnapshot = undefined
+  resetStockLoadStages(workspace)
+  setStockLoadStage(workspace, requestToken, 'cache', 'pending')
+  setStockLoadStage(workspace, requestToken, 'detail', 'pending')
+  setStockLoadStage(workspace, requestToken, 'tencent', 'pending')
+  setStockLoadStage(workspace, requestToken, 'eastmoney', 'pending')
   // 保留已有数据，避免页面闪烁
+
+  const tencentQuoteProgressPromise = (async () => {
+    try {
+      const params = new URLSearchParams({ symbol: targetSymbol, source: '腾讯' })
+      const response = await fetch(`/api/stocks/quote?${params.toString()}`, { signal: controller.signal })
+      if (!response.ok) {
+        throw new Error('腾讯接口请求失败')
+      }
+      await response.json()
+      setStockLoadStage(workspace, requestToken, 'tencent', 'success')
+    } catch (err) {
+      if (isAbortError(err)) {
+        return
+      }
+      setStockLoadStage(workspace, requestToken, 'tencent', 'error', err.message || '腾讯接口请求失败')
+    }
+  })()
+
+  const fundamentalSnapshotPromise = (async () => {
+    try {
+      const params = new URLSearchParams({ symbol: targetSymbol })
+      const response = await fetch(`/api/stocks/fundamental-snapshot?${params.toString()}`, { signal: controller.signal })
+      if (response.status === 404) {
+        applyFundamentalSnapshot(workspace, requestToken, null)
+        setStockLoadStage(workspace, requestToken, 'eastmoney', 'success', '东财暂未返回可用基本面')
+        return
+      }
+      if (!response.ok) {
+        throw new Error('东财接口请求失败')
+      }
+      const snapshot = await response.json()
+      applyFundamentalSnapshot(workspace, requestToken, snapshot)
+      const factCount = Array.isArray(snapshot?.facts ?? snapshot?.Facts) ? (snapshot.facts ?? snapshot.Facts).length : 0
+      setStockLoadStage(
+        workspace,
+        requestToken,
+        'eastmoney',
+        'success',
+        factCount ? `东财已返回 ${factCount} 条基本面字段` : '东财基本面已返回'
+      )
+    } catch (err) {
+      if (isAbortError(err)) {
+        return
+      }
+      setStockLoadStage(workspace, requestToken, 'eastmoney', 'error', err.message || '东财接口请求失败')
+    }
+  })()
 
   try {
     const params = buildDetailQuery(targetSymbol)
+    const liveParams = new URLSearchParams(params)
+    liveParams.set('includeFundamentalSnapshot', 'false')
 
-    const cacheResponse = await fetch(`/api/stocks/detail/cache?${params.toString()}`, { signal: controller.signal })
-    if (cacheResponse.ok) {
-      const cacheDetail = await cacheResponse.json()
-      applyLatestDetail(workspace, requestToken, cacheDetail)
-    }
+    const cachePromise = (async () => {
+      try {
+        const cacheResponse = await fetch(`/api/stocks/detail/cache?${params.toString()}`, { signal: controller.signal })
+        if (!cacheResponse.ok) {
+          setStockLoadStage(workspace, requestToken, 'cache', 'success', '未命中缓存，继续实时加载')
+          return
+        }
 
-    const response = await fetch(`/api/stocks/detail?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error('接口请求失败')
-    }
-    const liveDetail = await response.json()
+        const cacheDetail = await cacheResponse.json()
+        if (workspace.sourceLoadStages?.detail?.status !== 'success') {
+          applyLatestDetail(workspace, requestToken, cacheDetail)
+          setStockLoadStage(workspace, requestToken, 'cache', 'success', '已显示缓存快照')
+          return
+        }
+
+        setStockLoadStage(workspace, requestToken, 'cache', 'success', '缓存返回较晚，已忽略')
+      } catch (err) {
+        if (isAbortError(err)) {
+          return
+        }
+        setStockLoadStage(workspace, requestToken, 'cache', 'error', err.message || '缓存读取失败')
+      }
+    })()
+
+    const liveDetailPromise = (async () => {
+      const response = await fetch(`/api/stocks/detail?${liveParams.toString()}`, { signal: controller.signal })
+      if (!response.ok) {
+        throw new Error('接口请求失败')
+      }
+
+      return response.json()
+    })()
+
+    const liveDetail = await liveDetailPromise
     applyLatestDetail(workspace, requestToken, liveDetail)
+    const klineCount = Array.isArray(liveDetail?.kLines ?? liveDetail?.KLines) ? (liveDetail.kLines ?? liveDetail.KLines).length : 0
+    const minuteCount = Array.isArray(liveDetail?.minuteLines ?? liveDetail?.MinuteLines) ? (liveDetail.minuteLines ?? liveDetail.MinuteLines).length : 0
+    setStockLoadStage(
+      workspace,
+      requestToken,
+      'detail',
+      'success',
+      `已返回 ${klineCount} 根K线 / ${minuteCount} 条分时`
+    )
+    await Promise.allSettled([cachePromise, tencentQuoteProgressPromise, fundamentalSnapshotPromise])
   } catch (err) {
     if (isAbortError(err)) {
       return
     }
     if (requestToken === workspace.quoteRequestToken) {
       workspace.error = err.message || '请求失败'
+      setStockLoadStage(workspace, requestToken, 'detail', 'error', err.message || '图表数据请求失败')
     }
   } finally {
     if (requestToken === workspace.quoteRequestToken) {
@@ -2045,6 +2276,26 @@ watch(currentStockKey, () => {
               <p>当前价：{{ detail.quote.price }}</p>
               <p>涨跌：{{ detail.quote.change }}（{{ detail.quote.changePercent }}%）</p>
               <p class="muted">更新时间：{{ formatDate(detail.quote.timestamp) }}</p>
+              <div v-if="showSourceLoadProgress" class="source-progress-panel">
+                <div class="source-progress-header">
+                  <strong>{{ sourceLoadProgressTitle }}</strong>
+                  <span>{{ sourceLoadProgressPercent }}%</span>
+                </div>
+                <div class="source-progress-track">
+                  <span :style="{ width: `${sourceLoadProgressPercent}%` }"></span>
+                </div>
+                <div class="source-progress-list">
+                  <div
+                    v-for="stage in visibleSourceLoadStages"
+                    :key="stage.key"
+                    class="source-progress-item"
+                    :class="`status-${stage.status}`"
+                  >
+                    <span>{{ stage.label }}</span>
+                    <small>{{ stage.message }}</small>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="quote-card">
@@ -2089,6 +2340,26 @@ watch(currentStockKey, () => {
             <h4>等待加载股票</h4>
             <p>主视区只保留价格、分时、K 线、量价指标与消息带。</p>
             <p class="muted">数据来源：腾讯 / 新浪 / 百度（后端爬虫占位）</p>
+            <div v-if="showSourceLoadProgress" class="source-progress-panel empty-progress-panel">
+              <div class="source-progress-header">
+                <strong>{{ sourceLoadProgressTitle }}</strong>
+                <span>{{ sourceLoadProgressPercent }}%</span>
+              </div>
+              <div class="source-progress-track">
+                <span :style="{ width: `${sourceLoadProgressPercent}%` }"></span>
+              </div>
+              <div class="source-progress-list">
+                <div
+                  v-for="stage in visibleSourceLoadStages"
+                  :key="stage.key"
+                  class="source-progress-item"
+                  :class="`status-${stage.status}`"
+                >
+                  <span>{{ stage.label }}</span>
+                  <small>{{ stage.message }}</small>
+                </div>
+              </div>
+            </div>
           </div>
         </template>
 
@@ -2843,6 +3114,92 @@ watch(currentStockKey, () => {
 .quote-card p,
 .terminal-empty p {
   margin: 0.2rem 0;
+}
+
+.source-progress-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.85rem;
+  border-radius: 14px;
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.empty-progress-panel {
+  margin-top: 1rem;
+  width: min(520px, 100%);
+}
+
+.source-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.source-progress-header strong {
+  color: #f8fafc;
+  font-size: 0.92rem;
+}
+
+.source-progress-header span {
+  color: #cbd5e1;
+  font-size: 0.82rem;
+}
+
+.source-progress-track {
+  position: relative;
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.source-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #38bdf8, #f59e0b);
+  transition: width 0.22s ease;
+}
+
+.source-progress-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.source-progress-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.84rem;
+}
+
+.source-progress-item span {
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.source-progress-item small {
+  color: #cbd5e1;
+  text-align: right;
+}
+
+.source-progress-item.status-pending span,
+.source-progress-item.status-pending small {
+  color: #fde68a;
+}
+
+.source-progress-item.status-success span,
+.source-progress-item.status-success small {
+  color: #86efac;
+}
+
+.source-progress-item.status-error span,
+.source-progress-item.status-error small {
+  color: #fca5a5;
 }
 
 .fundamental-facts {

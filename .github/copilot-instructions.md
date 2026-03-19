@@ -11,7 +11,7 @@
 ## Core Execution
 - Validate every change with a relevant unit test or script, and report the command plus result.
 - Add or update tests when applicable; if no direct test exists, run the closest relevant verification script.
-- Work through accepted scope systematically, keep communication concise, and follow sound engineering practice.
+- Work through accepted scope systematically, keep communication concise, follow sound engineering practice, and keep code as concise and elegant as possible while avoiding redundant or unnecessary code.
 - Prefer self-sufficient problem solving; ask the user only for real decisions, missing permissions, or missing external information.
 - If a new rule is materially covered by an existing rule, merge it into the existing rule instead of appending another restatement.
 

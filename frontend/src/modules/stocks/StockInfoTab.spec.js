@@ -1113,6 +1113,228 @@ describe('StockInfoTab', () => {
     expect(wrapper.vm.loading).toBe(false)
   })
 
+  it('starts cache and live detail requests in parallel', async () => {
+    const cacheDetail = createDeferred()
+    const liveDetail = createDeferred()
+    const requestOrder = []
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        const text = String(url)
+
+        if (text.startsWith('/api/stocks/quote?')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              symbol: 'sh600000',
+              name: '浦发银行',
+              price: 10.1,
+              change: 0,
+              changePercent: 0,
+              turnoverRate: 0,
+              peRatio: 0,
+              high: 0,
+              low: 0,
+              speed: 0,
+              timestamp: '2026-03-18T02:00:00Z',
+              news: [],
+              indicators: []
+            })
+          })
+        }
+
+        if (text.startsWith('/api/stocks/fundamental-snapshot?')) {
+          return makeResponse({ ok: false, status: 404 })
+        }
+
+        if (text.startsWith('/api/stocks/detail/cache?')) {
+          requestOrder.push('cache')
+          return cacheDetail.promise.then(() => makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: { name: '浦发银行', symbol: 'sh600000', price: 9.9, change: 0, changePercent: 0 },
+              kLines: [],
+              minuteLines: [],
+              messages: []
+            })
+          }))
+        }
+
+        if (text.startsWith('/api/stocks/detail?')) {
+          requestOrder.push('detail')
+          return liveDetail.promise.then(() => makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+              kLines: [{ date: '2026-03-18', open: 10, close: 10.1, low: 9.9, high: 10.2, volume: 100 }],
+              minuteLines: [{ date: '2026-03-18', time: '09:31:00', price: 10.1, averagePrice: 10.05, volume: 12 }],
+              messages: []
+            })
+          }))
+        }
+
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    const input = wrapper.find('.search-field input')
+    const button = wrapper.find('.search-field button')
+
+    await input.setValue('600000')
+    await button.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(requestOrder).toContain('cache')
+    expect(requestOrder).toContain('detail')
+    expect(requestOrder.indexOf('detail')).toBeGreaterThan(-1)
+
+    liveDetail.resolve()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.vm.detail?.quote?.price).toBe(10.1)
+
+    cacheDetail.resolve()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.vm.detail?.quote?.price).toBe(10.1)
+    expect(wrapper.vm.loading).toBe(false)
+  })
+
+  it('shows Tencent and Eastmoney progress while stock detail is refreshing', async () => {
+    const tencentQuote = createDeferred()
+    const liveDetail = createDeferred()
+    const fundamentalSnapshot = createDeferred()
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        const text = String(url)
+
+        if (text.startsWith('/api/stocks/detail/cache?')) {
+          const params = new URLSearchParams(text.split('?')[1])
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: {
+                name: '浦发银行',
+                symbol: params.get('symbol') || '',
+                price: 9.9,
+                change: 0,
+                changePercent: 0
+              },
+              kLines: [],
+              minuteLines: [],
+              messages: []
+            })
+          })
+        }
+
+        if (text.startsWith('/api/stocks/quote?')) {
+          return tencentQuote.promise.then(() => makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              symbol: 'sh600000',
+              name: '浦发银行',
+              price: 10.1,
+              change: 0.2,
+              changePercent: 2.0,
+              turnoverRate: 0,
+              peRatio: 6.9,
+              high: 10.2,
+              low: 9.8,
+              speed: 0,
+              timestamp: '2026-03-18T02:00:00Z',
+              news: [],
+              indicators: []
+            })
+          }))
+        }
+
+        if (text.startsWith('/api/stocks/fundamental-snapshot?')) {
+          return fundamentalSnapshot.promise.then(() => makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              updatedAt: '2026-03-18T02:00:30Z',
+              facts: [
+                { label: '公司全称', value: '上海浦东发展银行股份有限公司', source: '东方财富公司概况' }
+              ]
+            })
+          }))
+        }
+
+        if (text.startsWith('/api/stocks/detail?')) {
+          const params = new URLSearchParams(text.split('?')[1])
+          return liveDetail.promise.then(() => makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: {
+                name: '浦发银行',
+                symbol: params.get('symbol') || '',
+                price: 10.1,
+                change: 0.2,
+                changePercent: 2.0
+              },
+              kLines: [],
+              minuteLines: [],
+              messages: []
+            })
+          }))
+        }
+
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    const input = wrapper.find('.search-field input')
+    const button = wrapper.find('.search-field button')
+
+    await input.setValue('600000')
+    await button.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const liveDetailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail?'))
+    expect(liveDetailCall?.[0]).toContain('includeFundamentalSnapshot=false')
+    expect(wrapper.text()).toContain('后台刷新进度')
+    expect(wrapper.text()).toContain('缓存回显')
+    expect(wrapper.text()).toContain('K线/分时图表')
+    expect(wrapper.text()).toContain('腾讯行情')
+    expect(wrapper.text()).toContain('东方财富基本面')
+
+    tencentQuote.resolve()
+    fundamentalSnapshot.resolve()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.vm.loading).toBe(true)
+    expect(wrapper.text().includes('100%')).toBe(false)
+    expect(wrapper.text()).toContain('腾讯实时行情已返回')
+    expect(wrapper.text()).toContain('请求实时图表数据')
+
+    liveDetail.resolve()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.vm.loading).toBe(false)
+    expect(wrapper.vm.detail?.fundamentalSnapshot?.facts?.[0]?.value).toBe('上海浦东发展银行股份有限公司')
+  })
+
   it('keeps stock switching interactive while live refresh is still pending', async () => {
     const firstLiveDetail = createDeferred()
     const secondLiveDetail = createDeferred()
