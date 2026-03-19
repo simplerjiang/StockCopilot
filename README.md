@@ -16,18 +16,20 @@
 - /api/stocks/quote 个股行情
 - /api/stocks/kline 个股K线
 - /api/stocks/minute 个股分时
+- /api/stocks/chart 个股轻量图表（quote + K线 + 分时）
 - /api/stocks/messages 盘中消息（占位）
 - /api/stocks/detail 组合详情
-- /api/stocks/detail/cache 组合详情（缓存）
+- /api/stocks/detail/cache 组合详情缓存（默认只回放基础摘要；仅在显式 `includeLegacyCharts=true` 时才回放旧 K 线/分时表）
 - /api/stocks/plans 交易计划查询/创建/更新/删除/取消/恢复观察，以及 /api/stocks/plans/draft 后端草稿生成；支持不传 `symbol` 直接获取最近交易计划总览
 - `StockCompanyProfiles` 现支持持久化基本面快照事实 JSON 与刷新时间，`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 再做实时东财刷新并回写数据库；另已补充 `/api/stocks/fundamental-snapshot` 轻量接口，供前端独立展示东财基本面刷新进度
-- 行情双源策略已正式收口到后端：默认 `分时 -> 腾讯优先 / 东方财富回退`，默认 `日K/周K/月K/年K -> 东方财富优先 / 腾讯回退`；当调用方显式传入 `source` 时仍按指定源执行
+- 行情双源策略已正式收口到后端：默认 `分时 -> 东方财富优先 / 腾讯回退`，默认 `日K/周K/月K/年K -> 东方财富优先 / 腾讯回退`；当调用方显式传入 `source` 时仍按指定源执行
 - /api/stocks/sync 手动触发同步
 - /api/news 本地事实新闻查询（按 symbol + level=stock/sector/market 精准过滤，前端展示使用批量 AI 清洗后的翻译/情绪/标签）
 - /api/stocks/news/impact 资讯影响评估（公告/研报/新闻分级、来源可信度、同主题合并去重）
 - /api/stocks/signals 事件驱动信号（证据/反证、历史对齐）
 - /api/stocks/position-guidance 个性化风险与仓位建议（现已叠加 GOAL-009 本地市场阶段 multiplier、主线对齐与执行节奏提示）
-- /api/market/sentiment/latest、/api/market/sentiment/history、/api/market/sectors、/api/market/sectors/{sectorCode}、/api/market/sectors/{sectorCode}/trend、/api/market/mainline 本地情绪周期与板块轮动接口
+- /api/market/sentiment/latest、/api/market/sentiment/history、/api/market/sectors、/api/market/sectors/realtime、/api/market/sectors/{sectorCode}、/api/market/sectors/{sectorCode}/trend、/api/market/mainline 本地情绪周期、实时板块榜与板块轮动接口
+- /api/stocks/quotes/batch 与 /api/market/realtime/overview 已新增东财实时批量行情、主力资金、北向资金和涨跌分布聚合，采用后端缓存、超时和降级策略统一对外暴露
 - /api/stocks/agents 多Agent分析（默认模型已切到 `gemini-3.1-flash-lite-preview-thinking-high`，支持前端显式触发 `Pro 深度分析` 并路由到 `gemini-3.1-pro-preview-thinking-medium`，普通分析严格禁用 Pro）
 - /api/admin/login 管理员登录
 - /api/admin/llm/settings/{provider} LLM 配置读取/更新（需管理员 token）
@@ -40,12 +42,18 @@
 - K线/分时图 AI 关键价位叠加（突破线/支撑线，来源于多Agent分析）
 - 专业看盘终端已支持图表区 `全屏 / 退出全屏` 切换，放大后保留原有时间周期、策略按钮与浮动小标交互
 - 股票信息页多Agent面板支持双档位触发：标准分析 / Pro 深度分析
-- 股票终端切股加载优化：优先使用 `/api/stocks/detail/cache` 秒开缓存详情，后台再补最新详情，并阻断旧请求覆盖新标的
+- 股票终端切股加载优化：优先使用 `/api/stocks/detail/cache` 秒开缓存摘要（quote / messages / fundamental snapshot），后台再补最新图表，并阻断旧请求覆盖新标的；旧 K 线/分时缓存回放仅保留为显式兼容开关，不再作为默认详情链路
+- 股票信息页图表刷新已拆为轻量 `/api/stocks/chart` 链路：首屏图表不再等待 `/api/stocks/detail` 聚合返回，`日K图 / 月K图 / 年K图` 切换只请求图表数据，不再重走消息、基本面和市场上下文加载链路
 - 股票信息页“基本面快照”已支持展示东财公司概况/股东研究抽取出的富文本事实；首次打开先读数据库缓存，实时刷新完成后自动回写，下一次打开可直接秒开
 - 股票信息卡片已新增真实分阶段加载进度：查询时会分别展示“缓存回显 / 腾讯行情 / 东方财富基本面”状态，能直观看到快数据与慢数据谁还在路上
+- 股票信息页右侧现已新增“市场实时上下文”卡片：复用 `/api/market/realtime/overview` 展示当前标的、上证/深成/创业板对照、主力净流入、北向净流入与涨跌家数，并支持独立刷新与本地显隐开关
+- 股票信息页交易计划总览现已新增“市场快链路”条带：把主力/北向/涨跌家数与三大指数快照压缩到总览顶部，便于在跨股票计划面板里先看环境再看计划
 - 股票信息页已支持从 commander 历史分析一键起草交易计划：后端基于 `StockAgentAnalysisHistory` 生成草稿，确定性预填止损/止盈/目标价，用户在弹窗中确认/补录价格后可保存为 `Pending`；已保存计划支持继续编辑、硬删除，并会同时显示在“当前交易计划”和跨股票“交易计划总览”区块，同时自动加入 `ActiveWatchlist`
 - 股票信息页交易计划现已支持 Step 4.4“突发新闻动态定性复核”：后端独立 worker 会对 `ActiveWatchlist` 内 `Pending` 计划结合本地个股快讯与 LLM 结构化复核结果输出 `ReviewRequired` / `NewsReviewed` 事件；前端在“交易计划总览”和“当前交易计划”中展示待复核状态、关联新闻与复核原因，并提供“恢复观察”手动确认入口
 - 顶层已新增“情绪轮动”页签：支持市场阶段摘要、板块分页榜、5/10/20 日 compare window、主线 badge、趋势详情、广度拆解，以及 `主升 / 分歧 / 退潮 / 混沌` 的本地阶段识别
+- “情绪轮动”页签现已叠加实时总览卡片，直接展示指数快照、主力/北向资金、涨跌分布桶，并支持前端本地开关与独立刷新，不影响原有板块轮动面板
+- “情绪轮动”页签现已叠加东财实时板块榜：按涨幅或主力净流入重排现有榜单，优先透出实时强势概念/行业，同时保留原有本地轮动详情与失败隔离
+- 股票推荐页现已新增“推荐前市场快照”：在触发推荐前先展示实时指数、主力/北向、涨跌家数与概念快榜；当实时板块榜为空时会明确降级提示，继续只使用指数与资金快照
 - 交易计划流已接入 GOAL-009 市场上下文：草稿/编辑弹窗、当前计划卡、交易计划总览和仓位建议会展示阶段、置信度、主线对齐、建议仓位比例与执行节奏，但不会自动改写用户确认的计划价格
 - 治理开发者模式：参数说明、治理链路 Trace 查询、以及按 traceId 聚合的 LLM 对话会话前端可视化（请求/返回/异常一一对应，支持 JSON 美化）
 - 全量资讯库：支持按关键字、层级（大盘/板块/个股）和情绪筛选本地 AI 清洗资讯，并可直接跳转原文
@@ -55,7 +63,7 @@
 
 ## 数据同步与配置
 - 后台定时任务按 appsettings.json 的 StockSync 配置抓取并落库
-- 行情接口默认走双源自动回退策略：分时优先腾讯以压低时延，K 线优先东方财富以提高字段完整度与当日覆盖；任一优先源为空或异常时自动降级到另一源
+- 行情接口默认走双源自动回退策略：分时优先东方财富以提升实时覆盖和字段完整度，K 线同样优先东方财富；任一优先源为空或异常时自动降级到腾讯等后备来源
 - GOAL-013 已新增本地事实采集链路：东方财富公告/公司资料 + 新浪公司新闻会进入 `LocalStockNews`；板块资讯改为新浪财经搜索页 HTML 定向抓取；大盘环境已切换为新浪纯财经流 `pageid=153&lid=2509` + CNBC / Seeking Alpha / CoinTelegraph / TechCrunch / The Hill 五路 RSS 聚合写入 `LocalSectorReports`，并在采集阶段直接过滤 `自媒体` 等污染来源。Step 2.4 进一步在本地事实入库后增加 `gemini-2.5-flash-lite` 批量 AI 清洗层，补齐中文翻译、`AiSentiment`、`AiTarget`、`AiTags` 与 `IsAiProcessed` 增量重试机制；这些廉价 AI 标签仅用于 `/api/news` 与 `/api/news/archive` 展示，不直接投喂 Stock Agents，避免污染高阶分析上下文。Step 2.6 新增 `全量资讯库` 页签，对本地 AI 清洗资讯提供关键字 / 层级 / 情绪筛选、分页、译题优先展示与原文跳转
 - 默认账号：admin / admin123（可在 backend/SimplerJiangAiAgent.Api/appsettings.json 的 Admin 段落中修改）
 
@@ -166,6 +174,9 @@ opencode
 - [ ] GOAL-AGENT-001-R2 Agent 职责重切与推理收口（stock/sector/financial/trend 边界重划、marketReports 抗污染、代码先算特征、commander 覆盖率/冲突/降级惩罚）
 - [ ] GOAL-AGENT-001-R3 回放校准闭环与验收基线（历史回放样本、1/3/5/10 日收益对齐、命中率/Brier score/分组胜率、开发者可观测验收指标）
 - [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 已继续完成“基本面快照富事实 + 数据库缓存优先刷新”增强：`StockCompanyProfiles` 新增 `FundamentalFactsJson/FundamentalUpdatedAt`，详情页先读 `/api/stocks/detail/cache` 的数据库快照，再由 `/api/stocks/detail` 实时抓东财公司概况/股东研究并回写；本轮进一步补上股票信息卡片真实加载进度，将“缓存回显 / 腾讯行情 / 东方财富基本面”拆成可视化阶段，并新增 `/api/stocks/fundamental-snapshot` 轻量接口配合前端独立显示东财刷新状态。剩余主要是 Edge/UI 验收与更大范围联调。）
+- [x] MANUAL-20260319-EXTENSION-INTERFACE `stock-and-fund-chrome-master` 接口吸收规划（已完成 R1-R5 全链路收口：后端新增 `/api/stocks/quotes/batch`、`/api/market/realtime/overview`、`/api/market/sectors/realtime`，接入东财批量行情、主力资金、北向资金、涨跌分布与实时板块榜；默认分时来源已切到东方财富优先；前端已同步落地到 `情绪轮动`、`股票推荐`、`股票信息` 与交易计划总览等高频决策入口，并通过定向单测与浏览器验收。整体策略仍是不做整包替换，而是只吸收扩展里仍有价值的公开端点；作者自建 `110.40.187.161` 云服务继续排除在正式依赖之外。）
+- [x] MANUAL-20260319-EXTENSION-INTERFACE-R1 实时行情后端切片（新增 Eastmoney realtime adapter 与聚合服务，提供批量行情和市场总览 API；验证覆盖批量行情、主力资金、北向资金、涨跌分布解析，以及本地运行时 smoke test。）
+- [x] MANUAL-20260319-CHART-PERF 股票图表刷新性能收口（已定位慢点不在第三方行情源本身，而在前端把图表刷新绑定到 `/api/stocks/detail` 重聚合链路；现已新增 `/api/stocks/chart` 轻量接口，并把 `StockInfoTab` 首屏图表和 `日K/月K/年K` 切换改为只请求图表数据。定向单测 43/43 通过，Browser MCP 已确认切换 `月K图/年K图` 时只出现 `/api/stocks/chart?...interval=month|year`，不再触发 `/api/stocks/detail/cache`、`/api/stocks/messages` 与 `/api/stocks/fundamental-snapshot`。）
 - [x] ISSUE-20260310 提示词增强（新闻抗污染策略 + 新闻库定时采集约束 + 白盒 MCP/Skill 任务执行规范）
 - [x] ISSUE-20260310-P0 动态来源治理基座（LLM每日候选源发现 + 自动新增爬取地址/流程 + 爬虫失效自动修复发布 + 程序化验证与自动隔离）
 - [x] ISSUE-20260310-P0-R1 P0剩余计划：开发者模式可视化收口（治理仪表盘 + 最小查询接口 + 过滤/详情展开/trace跳转 + 可观测审计）

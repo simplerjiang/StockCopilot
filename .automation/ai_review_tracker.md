@@ -37,6 +37,18 @@
 - **下一阶段建议**:
   1. 架构调整及联调的开发与改错流程已完美闭环，可以交由真实环境或用户进行最后验收体验！
 
+### [2026-03-19] 提测版本审查 (MANUAL-20260319-CHART-PERF-R2 补充复审)
+- **开发方**: ChatGPT-5.4
+- **审查范围**: 股票首开/切周期耗时基准、`/api/stocks/detail` 非图表收口、`/api/stocks/detail/cache` 默认职责边界
+- **审查结果**: 🟢 通过 (Passed with supplement)
+- **发现项**:
+  1. `/api/stocks/detail` 已正确收口为摘要接口，且 `StockSyncService.SaveDetailAsync(...)` 不再写入分时/K线数据。
+  2. 原提交仍遗留一个边界歧义：`/api/stocks/detail/cache` 默认会回放旧 K 线/分时表，和“详情接口默认不再承担图表职责”的目标不完全一致。
+  3. 已补丁修正为：`/api/stocks/detail/cache` 默认只回放摘要，旧图表缓存仅在显式 `includeLegacyCharts=true` 时启用。
+  4. 补充验证通过：后端定向测试 9/9、前端 `StockInfoTab.spec.js` 44/44、Browser MCP 页面打开正常且 console 0 error。
+- **修正建议**:
+  1. 后续若要彻底退役旧 K 线/分时缓存，可在独立任务中增加清库/迁移策略；本轮先保持代码和表结构可复用，但默认运行链路不再依赖它们。
+
 ### [2026-03-12] 提测版本审查 (Step 2)
 - **开发方**: ChatGPT-5.4
 - **审查范围**: C# 本地化数据中枢 (GOAL-013) 及新闻联动

@@ -54,6 +54,44 @@ describe('MarketSentimentTab', () => {
           ])
         })
       }
+      if (url === '/api/market/realtime/overview') {
+        return makeResponse({
+          json: async () => ({
+            snapshotTime: '2026-03-15T06:35:00Z',
+            indices: [
+              { symbol: 'sh000001', name: '上证指数', price: 4000.12, changePercent: -0.35, turnoverAmount: 935264956106.7 },
+              { symbol: 'sz399001', name: '深证成指', price: 13901.57, changePercent: -2.02, turnoverAmount: 1175704077687.75 },
+              { symbol: 'sz399006', name: '创业板指', price: 2850.66, changePercent: -2.88, turnoverAmount: 320000000000 }
+            ],
+            mainCapitalFlow: { snapshotTime: '2026-03-15T06:35:00Z', mainNetInflow: -1079.04, superLargeOrderNetInflow: -615.43 },
+            northboundFlow: { snapshotTime: '2026-03-15T06:35:00Z', totalNetInflow: 12.36, shanghaiNetInflow: 8.12, shenzhenNetInflow: 4.24 },
+            breadth: {
+              tradingDate: '2026-03-15T00:00:00Z',
+              advancers: 473,
+              decliners: 4815,
+              flatCount: 18,
+              limitUpCount: 40,
+              limitDownCount: 20,
+              buckets: [
+                { label: '-5%', count: 552 },
+                { label: '-4%', count: 1184 },
+                { label: '涨停', count: 28 }
+              ]
+            }
+          })
+        })
+      }
+      if (url.includes('/api/market/sectors/realtime?boardType=concept')) {
+        return makeResponse({
+          json: async () => ({
+            snapshotTime: '2026-03-15T06:36:00Z',
+            items: [
+              { boardType: 'concept', sectorCode: 'BK1101', sectorName: '机器人', changePercent: 4.82, mainNetInflow: 1260000000, rankNo: 1 },
+              { boardType: 'concept', sectorCode: 'BK1102', sectorName: '算力租赁', changePercent: 5.15, mainNetInflow: 1520000000, rankNo: 2 }
+            ]
+          })
+        })
+      }
       if (url.includes('/api/market/sectors?')) {
         return makeResponse({
           json: async () => ({
@@ -146,6 +184,10 @@ describe('MarketSentimentTab', () => {
     expect(wrapper.text()).toContain('机器人链条获增量订单')
     expect(wrapper.text()).toContain('主线')
     expect(wrapper.text()).toContain('比较窗口')
+    expect(wrapper.text()).toContain('上证指数')
+    expect(wrapper.text()).toContain('东财实时榜')
+    expect(wrapper.text()).toContain('资金与广度')
+    expect(wrapper.text()).toContain('涨跌分布桶')
   })
 
   it('reloads board list when board type changes', async () => {
@@ -157,6 +199,12 @@ describe('MarketSentimentTab', () => {
       if (url === '/api/market/sentiment/history?days=10') {
         return makeResponse({ json: async () => ([]) })
       }
+      if (url === '/api/market/realtime/overview') {
+        return makeResponse({ json: async () => ({ snapshotTime: '2026-03-15T06:35:00Z', indices: [], breadth: { buckets: [] } }) })
+      }
+      if (url.includes('/api/market/sectors/realtime?boardType=concept')) {
+        return makeResponse({ json: async () => ({ items: [{ boardType: 'concept', sectorCode: 'BK1', sectorName: '概念A', rankNo: 1 }] }) })
+      }
       if (url.includes('/api/market/sectors?boardType=concept')) {
         return makeResponse({ json: async () => ({ total: 1, items: [{ boardType: 'concept', sectorCode: 'BK1', sectorName: '概念A', rankNo: 1 }] }) })
       }
@@ -165,6 +213,9 @@ describe('MarketSentimentTab', () => {
       }
       if (url.includes('/api/market/sectors?boardType=industry')) {
         return makeResponse({ json: async () => ({ total: 1, items: [{ boardType: 'industry', sectorCode: 'BK2', sectorName: '行业A', rankNo: 1 }] }) })
+      }
+      if (url.includes('/api/market/sectors/realtime?boardType=industry')) {
+        return makeResponse({ json: async () => ({ items: [{ boardType: 'industry', sectorCode: 'BK2', sectorName: '行业A', rankNo: 1 }] }) })
       }
       if (url.includes('/api/market/sectors/BK2?boardType=industry')) {
         return makeResponse({ json: async () => ({ snapshot: { boardType: 'industry', sectorCode: 'BK2', sectorName: '行业A' }, history: [], leaders: [], news: [] }) })
@@ -183,5 +234,40 @@ describe('MarketSentimentTab', () => {
 
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/market/sectors?boardType=industry'))).toBe(true)
     expect(wrapper.text()).toContain('行业A')
+  })
+
+  it('keeps dashboard visible when realtime overview request fails', async () => {
+    const fetchMock = vi.fn(async input => {
+      const url = String(input)
+      if (url === '/api/market/sentiment/latest') {
+        return makeResponse({ json: async () => ({ stageLabel: '混沌', snapshotTime: '2026-03-15T06:35:00Z' }) })
+      }
+      if (url === '/api/market/sentiment/history?days=10') {
+        return makeResponse({ json: async () => ([]) })
+      }
+      if (url === '/api/market/realtime/overview') {
+        return makeResponse({ ok: false, status: 503, json: async () => ({ message: '实时总览暂不可用' }) })
+      }
+      if (url.includes('/api/market/sectors/realtime?boardType=concept')) {
+        return makeResponse({ ok: false, status: 503, json: async () => ({ message: '实时板块榜暂不可用' }) })
+      }
+      if (url.includes('/api/market/sectors?boardType=concept')) {
+        return makeResponse({ json: async () => ({ total: 1, items: [{ boardType: 'concept', sectorCode: 'BK1', sectorName: '概念A', rankNo: 1 }] }) })
+      }
+      if (url.includes('/api/market/sectors/BK1?')) {
+        return makeResponse({ json: async () => ({ snapshot: { boardType: 'concept', sectorCode: 'BK1', sectorName: '概念A' }, history: [], leaders: [], news: [] }) })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MarketSentimentTab)
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('概念A')
+    expect(wrapper.text()).toContain('实时总览暂不可用')
+    expect(wrapper.text()).toContain('实时板块榜暂不可用')
   })
 })

@@ -54,7 +54,7 @@ public class HighFrequencyQuoteServiceTests
         using var scope = provider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.Single(dbContext.StockQuoteSnapshots);
-        Assert.Single(dbContext.MinuteLinePoints);
+        Assert.Empty(dbContext.MinuteLinePoints);
         Assert.Single(dbContext.IntradayMessages);
 
         var watchlist = await dbContext.ActiveWatchlists.SingleAsync();
@@ -84,7 +84,7 @@ public class HighFrequencyQuoteServiceTests
     }
 
     [Fact]
-    public async Task SyncOnceAsync_ShouldPersistQuoteAndMinuteWhenMessagesFail()
+    public async Task SyncOnceAsync_ShouldPersistQuoteWithoutMinuteWhenMessagesFail()
     {
         var crawler = new FakeCrawler { ThrowOnMessages = true };
         var databaseName = Guid.NewGuid().ToString("N");
@@ -104,7 +104,7 @@ public class HighFrequencyQuoteServiceTests
         using var scope = provider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         Assert.Single(dbContext.StockQuoteSnapshots);
-        Assert.Single(dbContext.MinuteLinePoints);
+        Assert.Empty(dbContext.MinuteLinePoints);
         Assert.Empty(dbContext.IntradayMessages);
     }
 

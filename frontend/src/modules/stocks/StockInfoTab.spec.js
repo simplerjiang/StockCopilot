@@ -9,6 +9,69 @@ const makeResponse = ({ ok, status, json, text }) => ({
   text: text || (async () => '')
 })
 
+const createRealtimeOverviewPayload = (symbol = 'sz000021', name = '深科技') => ({
+  snapshotTime: '2026-03-19T07:00:00Z',
+  indices: [
+    {
+      symbol,
+      name,
+      price: 31.1,
+      change: 0.6,
+      changePercent: 1.97,
+      turnoverAmount: 456700000,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'sh000001',
+      name: '上证指数',
+      price: 4006.55,
+      change: -56.43,
+      changePercent: -1.39,
+      turnoverAmount: 935265000000,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'sz399001',
+      name: '深证成指',
+      price: 13901.57,
+      change: -286.4,
+      changePercent: -2.02,
+      turnoverAmount: 1175704000000,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'sz399006',
+      name: '创业板指',
+      price: 3309.1,
+      change: -37.1,
+      changePercent: -1.11,
+      turnoverAmount: 545209000000,
+      timestamp: '2026-03-19T07:00:00Z'
+    }
+  ],
+  mainCapitalFlow: {
+    snapshotTime: '2026-03-19T07:00:00Z',
+    amountUnit: '亿元',
+    mainNetInflow: 12.34,
+    superLargeOrderNetInflow: 5.67
+  },
+  northboundFlow: {
+    snapshotTime: '2026-03-19T07:00:00Z',
+    amountUnit: '亿元',
+    totalNetInflow: 8.9,
+    shanghaiNetInflow: 4.5,
+    shenzhenNetInflow: 4.4
+  },
+  breadth: {
+    tradingDate: '2026-03-19',
+    advancers: 1234,
+    decliners: 3210,
+    flatCount: 88,
+    limitUpCount: 56,
+    limitDownCount: 12
+  }
+})
+
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
 const findVisibleChatWindow = wrapper => wrapper.findAllComponents({ name: 'ChatWindow' }).find(component => component.isVisible())
 const findChatWindowForSymbol = (wrapper, symbolKey) =>
@@ -99,6 +162,81 @@ const createChatFetchMock = (handlers = {}) => {
 
     if (url === '/api/stocks/sources') {
       return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+    }
+    if (String(url).startsWith('/api/stocks/quote?')) {
+      const params = new URLSearchParams(String(url).split('?')[1] || '')
+      const symbol = params.get('symbol') || 'sz000021'
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          symbol,
+          name: symbol === 'sh600000' ? '浦发银行' : '深科技',
+          price: symbol === 'sh600000' ? 10.1 : 31.1,
+          change: 0,
+          changePercent: 0,
+          turnoverRate: 0,
+          peRatio: 0,
+          high: 0,
+          low: 0,
+          speed: 0,
+          timestamp: '2026-03-18T02:00:00Z',
+          news: [],
+          indicators: []
+        })
+      })
+    }
+    if (String(url).startsWith('/api/stocks/chart?')) {
+      const params = new URLSearchParams(String(url).split('?')[1] || '')
+      const symbol = params.get('symbol') || 'sz000021'
+      const price = symbol === 'sh600000' ? 10.1 : 31.1
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          quote: {
+            symbol,
+            name: symbol === 'sh600000' ? '浦发银行' : '深科技',
+            price,
+            change: 0,
+            changePercent: 0
+          },
+          kLines: [{ date: '2026-03-18', open: price, close: price, low: price, high: price, volume: 100 }],
+          minuteLines: [{ date: '2026-03-18', time: '09:31:00', price, averagePrice: price, volume: 12 }]
+        })
+      })
+    }
+    if (String(url).startsWith('/api/stocks/detail/cache?')) {
+      const params = new URLSearchParams(String(url).split('?')[1] || '')
+      const symbol = params.get('symbol') || 'sz000021'
+      const price = symbol === 'sh600000' ? 10.1 : 31.1
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          quote: {
+            symbol,
+            name: symbol === 'sh600000' ? '浦发银行' : '深科技',
+            price,
+            change: 0,
+            changePercent: 0,
+            timestamp: '2026-03-18T02:00:00Z'
+          },
+          messages: [],
+          fundamentalSnapshot: null
+        })
+      })
+    }
+    if (String(url).startsWith('/api/stocks/messages?')) {
+      return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+    }
+    if (String(url).startsWith('/api/stocks/fundamental-snapshot?')) {
+      return makeResponse({ ok: false, status: 404, json: async () => ({ message: 'not found' }) })
+    }
+    if (String(url).startsWith('/api/market/realtime/overview')) {
+      const params = new URLSearchParams(String(url).split('?')[1] || '')
+      const firstSymbol = (params.get('symbols') || '').split(',').find(Boolean) || 'sz000021'
+      return makeResponse({ ok: true, status: 200, json: async () => createRealtimeOverviewPayload(firstSymbol) })
     }
     if (url === '/api/stocks/history') {
       return makeResponse({ ok: true, status: 200, json: async () => ([]) })
@@ -345,6 +483,73 @@ describe('StockInfoTab', () => {
     expect(wrapper.text()).toContain('所属板块：半导体')
     expect(wrapper.text()).toContain('公司全称：深圳长城开发科技股份有限公司')
     expect(wrapper.text()).toContain('上市交易所：深圳证券交易所')
+  })
+
+  it('renders realtime market context for the selected stock', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: {
+        name: '深科技',
+        symbol: 'sz000021',
+        price: 31.1,
+        change: 0.6,
+        changePercent: 1.97,
+        high: 31.5,
+        low: 30.2,
+        timestamp: '2026-03-19T07:00:00Z'
+      },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('市场实时上下文')
+    expect(wrapper.text()).toContain('市场快链路')
+    expect(wrapper.text()).toContain('当前标的')
+    expect(wrapper.text()).toContain('上证指数')
+    expect(wrapper.text()).toContain('主力 +12.34 亿')
+    expect(fetchMock.mock.calls.some(args => String(args[0]).startsWith('/api/market/realtime/overview?'))).toBe(true)
+  })
+
+  it('can hide realtime market context without affecting the stock sidebar', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: {
+        name: '深科技',
+        symbol: 'sz000021',
+        price: 31.1,
+        change: 0.6,
+        changePercent: 1.97,
+        timestamp: '2026-03-19T07:00:00Z'
+      },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    const toggleButton = wrapper.findAll('button').find(button => button.text() === '隐藏')
+    expect(toggleButton).toBeTruthy()
+
+    await toggleButton.trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('实时总览已隐藏，可随时重新展开。')
+    expect(wrapper.text()).toContain('资讯影响')
+    expect(localStorage.getItem('stock_realtime_context_enabled')).toBe('false')
   })
 
   it('sends pro flag when triggering Pro analysis', async () => {
@@ -972,7 +1177,7 @@ describe('StockInfoTab', () => {
 
     expect(impactCalls).toBe(1)
 
-    const refreshButton = wrapper.find('.news-impact-header button')
+    const refreshButton = wrapper.find('.news-impact .news-impact-header button')
     await refreshButton.trigger('click')
     await flushPromises()
     await flushPromises()
@@ -1022,7 +1227,7 @@ describe('StockInfoTab', () => {
   })
 
   it('loads stock detail immediately when clicking a recent-history item', async () => {
-    const liveDetail = createDeferred()
+    const liveChart = createDeferred()
     const { fetchMock } = createChatFetchMock({
       handle: async url => {
         if (url === '/api/stocks/history') {
@@ -1061,9 +1266,9 @@ describe('StockInfoTab', () => {
           })
         }
 
-        if (String(url).startsWith('/api/stocks/detail?')) {
+        if (String(url).startsWith('/api/stocks/chart?')) {
           const params = new URLSearchParams(String(url).split('?')[1])
-          return liveDetail.promise.then(() => makeResponse({
+          return liveChart.promise.then(() => makeResponse({
             ok: true,
             status: 200,
             json: async () => ({
@@ -1095,7 +1300,7 @@ describe('StockInfoTab', () => {
     await flushPromises()
 
     const cacheCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail/cache?'))
-    const detailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail?'))
+    const detailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/chart?'))
     expect(cacheCall).toBeTruthy()
     expect(detailCall).toBeTruthy()
     expect(String(detailCall[0])).toContain('symbol=sh600000')
@@ -1104,7 +1309,7 @@ describe('StockInfoTab', () => {
     expect(wrapper.find('.search-field button').attributes('disabled')).toBeUndefined()
     expect(wrapper.text()).toContain('后台刷新中...')
 
-    liveDetail.resolve()
+    liveChart.resolve()
     await flushPromises()
     await flushPromises()
 
@@ -1113,9 +1318,9 @@ describe('StockInfoTab', () => {
     expect(wrapper.vm.loading).toBe(false)
   })
 
-  it('starts cache and live detail requests in parallel', async () => {
+  it('starts cache and live chart requests in parallel', async () => {
     const cacheDetail = createDeferred()
-    const liveDetail = createDeferred()
+    const liveChart = createDeferred()
     const requestOrder = []
 
     const { fetchMock } = createChatFetchMock({
@@ -1162,9 +1367,9 @@ describe('StockInfoTab', () => {
           }))
         }
 
-        if (text.startsWith('/api/stocks/detail?')) {
-          requestOrder.push('detail')
-          return liveDetail.promise.then(() => makeResponse({
+        if (text.startsWith('/api/stocks/chart?')) {
+          requestOrder.push('chart')
+          return liveChart.promise.then(() => makeResponse({
             ok: true,
             status: 200,
             json: async () => ({
@@ -1191,10 +1396,10 @@ describe('StockInfoTab', () => {
     await flushPromises()
 
     expect(requestOrder).toContain('cache')
-    expect(requestOrder).toContain('detail')
-    expect(requestOrder.indexOf('detail')).toBeGreaterThan(-1)
+    expect(requestOrder).toContain('chart')
+    expect(requestOrder.indexOf('chart')).toBeGreaterThan(-1)
 
-    liveDetail.resolve()
+    liveChart.resolve()
     await flushPromises()
     await flushPromises()
 
@@ -1208,9 +1413,63 @@ describe('StockInfoTab', () => {
     expect(wrapper.vm.loading).toBe(false)
   })
 
+  it('switches chart interval by requesting only the lightweight chart endpoint', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    const input = wrapper.find('.search-field input')
+    const button = wrapper.find('.search-field button')
+
+    await input.setValue('600000')
+    await button.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    fetchMock.mockClear()
+
+    const monthButton = wrapper.findAll('button').find(item => item.text() === '月K图')
+    expect(monthButton).toBeTruthy()
+
+    await monthButton.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const requestedUrls = fetchMock.mock.calls.map(args => String(args[0]))
+    expect(requestedUrls.some(url => url.startsWith('/api/stocks/chart?') && url.includes('interval=month'))).toBe(true)
+    expect(requestedUrls.some(url => url.startsWith('/api/stocks/detail/cache?'))).toBe(false)
+    expect(requestedUrls.some(url => url.startsWith('/api/stocks/messages?'))).toBe(false)
+    expect(requestedUrls.some(url => url.startsWith('/api/stocks/fundamental-snapshot?'))).toBe(false)
+  })
+
+  it('requests summary-only cache payload when opening a stock', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    const input = wrapper.find('.search-field input')
+    const button = wrapper.find('.search-field button')
+
+    await input.setValue('600000')
+    await button.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const cacheCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail/cache?'))
+    expect(cacheCall).toBeTruthy()
+    expect(String(cacheCall[0])).not.toContain('interval=')
+    expect(String(cacheCall[0])).not.toContain('includeLegacyCharts=')
+  })
+
   it('shows Tencent and Eastmoney progress while stock detail is refreshing', async () => {
     const tencentQuote = createDeferred()
-    const liveDetail = createDeferred()
+    const liveChart = createDeferred()
     const fundamentalSnapshot = createDeferred()
 
     const { fetchMock } = createChatFetchMock({
@@ -1272,9 +1531,9 @@ describe('StockInfoTab', () => {
           }))
         }
 
-        if (text.startsWith('/api/stocks/detail?')) {
+        if (text.startsWith('/api/stocks/chart?')) {
           const params = new URLSearchParams(text.split('?')[1])
-          return liveDetail.promise.then(() => makeResponse({
+          return liveChart.promise.then(() => makeResponse({
             ok: true,
             status: 200,
             json: async () => ({
@@ -1309,8 +1568,7 @@ describe('StockInfoTab', () => {
     await flushPromises()
     await flushPromises()
 
-    const liveDetailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail?'))
-    expect(liveDetailCall?.[0]).toContain('includeFundamentalSnapshot=false')
+    const liveDetailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/chart?'))
     expect(wrapper.text()).toContain('后台刷新进度')
     expect(wrapper.text()).toContain('缓存回显')
     expect(wrapper.text()).toContain('K线/分时图表')
@@ -1327,7 +1585,7 @@ describe('StockInfoTab', () => {
     expect(wrapper.text()).toContain('腾讯实时行情已返回')
     expect(wrapper.text()).toContain('请求实时图表数据')
 
-    liveDetail.resolve()
+    liveChart.resolve()
     await flushPromises()
     await flushPromises()
 
@@ -1336,8 +1594,8 @@ describe('StockInfoTab', () => {
   })
 
   it('keeps stock switching interactive while live refresh is still pending', async () => {
-    const firstLiveDetail = createDeferred()
-    const secondLiveDetail = createDeferred()
+    const firstLiveChart = createDeferred()
+    const secondLiveChart = createDeferred()
 
     const buildDetail = (symbol, price) => ({
       quote: {
@@ -1366,14 +1624,14 @@ describe('StockInfoTab', () => {
           })
         }
 
-        if (text.startsWith('/api/stocks/detail?')) {
+        if (text.startsWith('/api/stocks/chart?')) {
           const params = new URLSearchParams(text.split('?')[1])
           const currentSymbol = params.get('symbol') || ''
           if (currentSymbol === 'sh600000') {
-            return firstLiveDetail.promise.then(() => makeResponse({ ok: true, status: 200, json: async () => buildDetail(currentSymbol, 10.1) }))
+            return firstLiveChart.promise.then(() => makeResponse({ ok: true, status: 200, json: async () => buildDetail(currentSymbol, 10.1) }))
           }
           if (currentSymbol === 'sh600519') {
-            return secondLiveDetail.promise.then(() => makeResponse({ ok: true, status: 200, json: async () => buildDetail(currentSymbol, 20.1) }))
+            return secondLiveChart.promise.then(() => makeResponse({ ok: true, status: 200, json: async () => buildDetail(currentSymbol, 20.1) }))
           }
         }
 
@@ -1407,8 +1665,8 @@ describe('StockInfoTab', () => {
     expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600519')
     expect(button.attributes('disabled')).toBeUndefined()
 
-    secondLiveDetail.resolve()
-    firstLiveDetail.resolve()
+    secondLiveChart.resolve()
+    firstLiveChart.resolve()
     await flushPromises()
     await flushPromises()
 
@@ -1417,7 +1675,7 @@ describe('StockInfoTab', () => {
   })
 
   it('ignores stale detail responses when switching stocks quickly', async () => {
-    const firstLiveDetail = createDeferred()
+    const firstLiveChart = createDeferred()
     const { fetchMock } = createChatFetchMock({
       handle: async url => {
         if (String(url).startsWith('/api/stocks/detail/cache?')) {
@@ -1441,11 +1699,11 @@ describe('StockInfoTab', () => {
           })
         }
 
-        if (String(url).startsWith('/api/stocks/detail?')) {
+        if (String(url).startsWith('/api/stocks/chart?')) {
           const params = new URLSearchParams(String(url).split('?')[1])
           const currentSymbol = params.get('symbol') || ''
           if (currentSymbol === 'sh600000') {
-            return firstLiveDetail.promise.then(() => makeResponse({
+            return firstLiveChart.promise.then(() => makeResponse({
               ok: true,
               status: 200,
               json: async () => ({
@@ -1506,7 +1764,7 @@ describe('StockInfoTab', () => {
     expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600519')
     expect(wrapper.vm.detail?.quote?.price).toBe(20.1)
 
-    firstLiveDetail.resolve()
+    firstLiveChart.resolve()
     await flushPromises()
     await flushPromises()
 
@@ -1515,7 +1773,7 @@ describe('StockInfoTab', () => {
   })
 
   it('keeps prior stock requests running when switching stocks quickly', async () => {
-    const firstLiveDetail = createDeferred()
+    const firstLiveChart = createDeferred()
     const firstNewsImpact = createDeferred()
     const firstLocalNews = createDeferred()
     const firstChatSessions = createDeferred()
@@ -1551,12 +1809,12 @@ describe('StockInfoTab', () => {
           return makeResponse({ ok: true, status: 200, json: async () => buildDetailPayload(currentSymbol, currentSymbol === 'sh600519' ? 20 : 10) })
         }
 
-        if (text.startsWith('/api/stocks/detail?')) {
+        if (text.startsWith('/api/stocks/chart?')) {
           const params = new URLSearchParams(text.split('?')[1])
           const currentSymbol = params.get('symbol') || ''
           if (currentSymbol === 'sh600000') {
             return createAbortableResponse(
-              firstLiveDetail,
+              firstLiveChart,
               () => makeResponse({ ok: true, status: 200, json: async () => buildDetailPayload(currentSymbol, 10.1) }),
               options.signal,
               () => { aborted.detail = true }
@@ -1645,7 +1903,7 @@ describe('StockInfoTab', () => {
     expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600519')
     expect(wrapper.vm.error).toBe('')
 
-    firstLiveDetail.resolve()
+    firstLiveChart.resolve()
     firstNewsImpact.resolve()
     firstLocalNews.resolve()
     firstChatSessions.resolve()
@@ -1672,7 +1930,7 @@ describe('StockInfoTab', () => {
       handle: async (url, options = {}) => {
         const text = String(url)
 
-        if (text.startsWith('/api/stocks/detail/cache?') || text.startsWith('/api/stocks/detail?')) {
+        if (text.startsWith('/api/stocks/detail/cache?') || text.startsWith('/api/stocks/chart?')) {
           const params = new URLSearchParams(text.split('?')[1])
           const currentSymbol = params.get('symbol') || ''
           return makeResponse({

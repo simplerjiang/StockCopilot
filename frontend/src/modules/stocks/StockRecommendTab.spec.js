@@ -9,12 +9,62 @@ const makeResponse = ({ ok, status, json, text }) => ({
   text: text || (async () => '')
 })
 
+const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
+
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
 })
 
 describe('StockRecommendTab', () => {
+  it('renders realtime market context and sector quick board on mount', async () => {
+    const fetchMock = vi.fn(async (url) => {
+      if (url === '/api/market/realtime/overview') {
+        return makeResponse({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            snapshotTime: '2026-03-19T07:00:00Z',
+            indices: [
+              { symbol: 'sh000001', name: '上证指数', price: 3401.22, changePercent: 0.82 },
+              { symbol: 'sz399001', name: '深证成指', price: 10888.12, changePercent: 1.15 },
+              { symbol: 'sz399006', name: '创业板指', price: 2210.45, changePercent: 1.43 }
+            ],
+            mainCapitalFlow: { mainNetInflow: 12.34 },
+            northboundFlow: { totalNetInflow: 8.9 },
+            breadth: { advancers: 3210, decliners: 1450, limitUpCount: 55, limitDownCount: 6 }
+          })
+        })
+      }
+
+      if (url === '/api/market/sectors/realtime?boardType=concept&take=8&sort=rank') {
+        return makeResponse({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            items: [
+              { sectorCode: 'BK1', sectorName: '机器人', changePercent: 4.21, mainNetInflow: 1230000000, rankNo: 1 },
+              { sectorCode: 'BK2', sectorName: '算力', changePercent: 3.12, mainNetInflow: 980000000, rankNo: 2 }
+            ]
+          })
+        })
+      }
+
+      return makeResponse({ ok: true, status: 200, json: async () => ({ content: 'ok' }) })
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockRecommendTab)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('推荐前市场快照')
+    expect(wrapper.text()).toContain('上证指数')
+    expect(wrapper.text()).toContain('机器人')
+    expect(wrapper.text()).toContain('主力 +12.34 亿')
+  })
+
   it('sends preset prompt when clicking button', async () => {
     const fetchMock = vi.fn(async (url) => {
       if (url === '/api/llm/chat/stream/openai') {
@@ -98,7 +148,8 @@ describe('StockRecommendTab', () => {
     chatWindow.vm.chatMessages = [{ role: 'assistant', content: '历史A', timestamp: '2026-01-30T00:00:00Z' }]
     await wrapper.vm.$nextTick()
 
-    await wrapper.find('.session-new').trigger('click')
+    const newChatButton = wrapper.findAll('button').find(button => button.text() === '新建对话')
+    await newChatButton.trigger('click')
     await wrapper.vm.$nextTick()
 
     const selector = wrapper.find('select')

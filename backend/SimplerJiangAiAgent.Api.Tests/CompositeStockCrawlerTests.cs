@@ -6,6 +6,54 @@ namespace SimplerJiangAiAgent.Api.Tests;
 public sealed class CompositeStockCrawlerTests
 {
     [Fact]
+    public async Task GetQuoteAsync_ShouldReturnEastmoneyImmediately_WhenQuoteIsComplete()
+    {
+        var eastmoney = new FakeCrawlerSource(
+            "东方财富",
+            new StockQuoteDto(
+                "sz000021",
+                "深科技",
+                30.92m,
+                -0.33m,
+                -1.06m,
+                5.29m,
+                47.43m,
+                32.20m,
+                30.26m,
+                0.76m,
+                DateTime.UtcNow,
+                Array.Empty<StockNewsDto>(),
+                Array.Empty<StockIndicatorDto>(),
+                48588590647.56m,
+                3.97m,
+                225861,
+                "消费电子"));
+        var tencent = new FakeCrawlerSource(
+            "腾讯",
+            new StockQuoteDto(
+                "sz000021",
+                "深科技",
+                30.90m,
+                -0.30m,
+                -1.00m,
+                5m,
+                10m,
+                32.10m,
+                30.20m,
+                0.70m,
+                DateTime.UtcNow,
+                Array.Empty<StockNewsDto>(),
+                Array.Empty<StockIndicatorDto>()));
+
+        var crawler = new CompositeStockCrawler(new IStockCrawlerSource[] { tencent, eastmoney });
+        var quote = await crawler.GetQuoteAsync("sz000021");
+
+        Assert.Equal("消费电子", quote.SectorName);
+        Assert.Equal(1, eastmoney.QuoteCallCount);
+        Assert.Equal(0, tencent.QuoteCallCount);
+    }
+
+    [Fact]
     public async Task GetQuoteAsync_ShouldPreferEastmoneyFundamentalsOverEarlierSources()
     {
         var crawlers = new IStockCrawlerSource[]
@@ -78,9 +126,11 @@ public sealed class CompositeStockCrawlerTests
         }
 
         public string SourceName { get; }
+        public int QuoteCallCount { get; private set; }
 
         public Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
         {
+            QuoteCallCount++;
             return Task.FromResult(_quote);
         }
 

@@ -60,14 +60,9 @@ public sealed class StockSyncService : IStockSyncService
         }
 
         var symbol = StockSymbolNormalizer.Normalize(detail.Quote.Symbol);
-        var mergedKLines = string.Equals(interval, "day", StringComparison.OrdinalIgnoreCase)
-            ? StockRealtimeKLineMerge.MergeDailyFromMinuteLines(detail.KLines, detail.MinuteLines, detail.KLines.Count > 0 ? detail.KLines.Count : null)
-            : detail.KLines;
 
         _dbContext.StockQuoteSnapshots.Add(MapQuote(detail.Quote with { Symbol = symbol }));
         await UpsertCompanyProfileAsync(_dbContext, detail.Quote with { Symbol = symbol }, detail.FundamentalSnapshot, cancellationToken);
-        await UpsertKLineAsync(_dbContext, symbol, interval, mergedKLines, cancellationToken);
-        await UpsertMinuteLineAsync(_dbContext, symbol, detail.MinuteLines, cancellationToken);
         await UpsertMessagesAsync(_dbContext, symbol, detail.Messages, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);

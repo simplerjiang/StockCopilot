@@ -10,6 +10,7 @@ using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
+using SimplerJiangAiAgent.Api.Modules.Market.Services;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks;
 
@@ -22,10 +23,10 @@ public sealed class StocksModule : IModule
 
         // 来源爬虫（占位实现，后续替换为真实解析逻辑）
         services.AddHttpClient();
+        services.AddTransient<IStockCrawlerSource, EastmoneyStockCrawler>();
         services.AddTransient<IStockCrawlerSource, TencentStockCrawler>();
         services.AddTransient<IStockCrawlerSource, SinaStockCrawler>();
         services.AddTransient<IStockCrawlerSource, BaiduStockCrawler>();
-        services.AddTransient<IStockCrawlerSource, EastmoneyStockCrawler>();
         services.AddTransient<IStockFundamentalSnapshotService, EastmoneyFundamentalSnapshotService>();
         services.AddSingleton<IStockCrawler, CompositeStockCrawler>();
         services.Configure<HighFrequencyQuoteOptions>(configuration.GetSection(HighFrequencyQuoteOptions.SectionName));
@@ -182,6 +183,28 @@ public sealed class StocksModule : IModule
         .WithName("SearchStocks")
         .WithOpenApi();
 
+        group.MapGet("/quotes/batch", async (string symbols, IRealtimeMarketOverviewService realtimeService, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbols))
+            {
+                return Results.BadRequest(new { message = "symbols 不能为空" });
+            }
+
+            var items = symbols
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Take(20)
+                .ToArray();
+            if (items.Length == 0)
+            {
+                return Results.BadRequest(new { message = "symbols 不能为空" });
+            }
+
+            var result = await realtimeService.GetBatchQuotesAsync(items, httpContext.RequestAborted);
+            return Results.Ok(result);
+        })
+        .WithName("GetBatchStockQuotes")
+        .WithOpenApi();
+
         // 获取大盘指数信息
         group.MapGet("/market", async (string? symbol, string? source, IStockDataService dataService) =>
         {
@@ -234,6 +257,36 @@ public sealed class StocksModule : IModule
             return Results.Ok(data);
         })
         .WithName("GetMinuteLine")
+        .WithOpenApi();
+
+        group.MapGet("/chart", async (string symbol, string? interval, int? count, string? source, IStockDataService dataService, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var target = symbol.Trim();
+            var selectedInterval = interval ?? "day";
+            var take = count ?? 60;
+            var cancellationToken = httpContext.RequestAborted;
+
+            var quoteTask = dataService.GetQuoteAsync(target, source, cancellationToken);
+            var klineTask = dataService.GetKLineAsync(target, selectedInterval, take, source, cancellationToken);
+            var minuteTask = dataService.GetMinuteLineAsync(target, source, cancellationToken);
+
+            await Task.WhenAll(quoteTask, klineTask, minuteTask);
+
+            var quote = await quoteTask;
+            var kline = await klineTask;
+            var minute = await minuteTask;
+            var mergedKLine = string.Equals(selectedInterval, "day", StringComparison.OrdinalIgnoreCase)
+                ? StockRealtimeKLineMerge.MergeDailyFromMinuteLines(kline, minute, take)
+                : kline;
+
+            return Results.Ok(new StockChartDto(quote, mergedKLine, minute));
+        })
+        .WithName("GetStockChart")
         .WithOpenApi();
 
         // 获取盘中消息
@@ -386,7 +439,7 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // 获取组合详情
-        group.MapGet("/detail", async (string symbol, string? interval, int? count, string? source, bool? persist, bool? includeFundamentalSnapshot, IStockDataService dataService, IStockFundamentalSnapshotService fundamentalSnapshotService, IStockSyncService syncService, IStockHistoryService historyService, HttpContext httpContext) =>
+        group.MapGet("/detail", async (string symbol, string? source, bool? persist, bool? includeFundamentalSnapshot, IStockDataService dataService, IStockFundamentalSnapshotService fundamentalSnapshotService, IStockSyncService syncService, IStockHistoryService historyService, HttpContext httpContext) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
             {
@@ -394,11 +447,8 @@ public sealed class StocksModule : IModule
             }
 
             var target = symbol.Trim();
-            var selectedInterval = interval ?? "day";
             var cancellationToken = httpContext.RequestAborted;
             var quoteTask = dataService.GetQuoteAsync(target, source, cancellationToken);
-            var klineTask = dataService.GetKLineAsync(target, selectedInterval, count ?? 60, source, cancellationToken);
-            var minuteTask = dataService.GetMinuteLineAsync(target, source, cancellationToken);
             var messagesTask = dataService.GetIntradayMessagesAsync(target, source, cancellationToken);
             var shouldIncludeFundamentalSnapshot = includeFundamentalSnapshot ?? true;
             Task<StockFundamentalSnapshotDto?>? fundamentalSnapshotTask = shouldIncludeFundamentalSnapshot
@@ -407,26 +457,28 @@ public sealed class StocksModule : IModule
 
             if (fundamentalSnapshotTask is null)
             {
-                await Task.WhenAll(quoteTask, klineTask, minuteTask, messagesTask);
+                await Task.WhenAll(quoteTask, messagesTask);
             }
             else
             {
-                await Task.WhenAll(quoteTask, klineTask, minuteTask, messagesTask, fundamentalSnapshotTask);
+                await Task.WhenAll(quoteTask, messagesTask, fundamentalSnapshotTask);
             }
 
             var quote = await quoteTask;
-            var kline = await klineTask;
-            var minute = await minuteTask;
             var messages = await messagesTask;
             var fundamentalSnapshot = fundamentalSnapshotTask is null ? null : await fundamentalSnapshotTask;
-            var mergedKLine = string.Equals(selectedInterval, "day", StringComparison.OrdinalIgnoreCase)
-                ? StockRealtimeKLineMerge.MergeDailyFromMinuteLines(kline, minute, count ?? 60)
-                : kline;
-
-            var detail = new StockDetailDto(quote, mergedKLine, minute, messages, fundamentalSnapshot);
+            var detail = new StockDetailSummaryDto(quote, messages, fundamentalSnapshot);
             if (persist is null || persist.Value)
             {
-                await syncService.SaveDetailAsync(detail, selectedInterval, cancellationToken);
+                await syncService.SaveDetailAsync(
+                    new StockDetailDto(
+                        quote,
+                        Array.Empty<KLinePointDto>(),
+                        Array.Empty<MinuteLinePointDto>(),
+                        messages,
+                        fundamentalSnapshot),
+                    "day",
+                    cancellationToken);
                 await historyService.UpsertAsync(quote, cancellationToken);
             }
             return Results.Ok(detail);
@@ -780,7 +832,7 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // 获取缓存详情
-        group.MapGet("/detail/cache", async (string symbol, string? interval, int? count, AppDbContext dbContext) =>
+        group.MapGet("/detail/cache", async (string symbol, string? interval, int? count, bool? includeLegacyCharts, AppDbContext dbContext) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
             {
@@ -802,15 +854,6 @@ public sealed class StocksModule : IModule
                 return Results.NotFound();
             }
 
-            var intervalValue = string.IsNullOrWhiteSpace(interval) ? "day" : interval.Trim().ToLowerInvariant();
-            var take = Math.Max(10, count ?? 60);
-
-            var kline = await StockDetailCacheQueries.GetRecentKLinesAsync(dbContext, target, intervalValue, take);
-            var minute = await StockDetailCacheQueries.GetLatestMinuteLinesAsync(dbContext, target);
-            var mergedKLine = string.Equals(intervalValue, "day", StringComparison.OrdinalIgnoreCase)
-                ? StockRealtimeKLineMerge.MergeDailyFromMinuteLines(kline, minute, take)
-                : kline;
-
             var messages = await dbContext.IntradayMessages
                 .AsNoTracking()
                 .Where(x => x.Symbol == target)
@@ -823,6 +866,20 @@ public sealed class StocksModule : IModule
                 0m, quote.PeRatio, 0m, 0m, 0m, quote.Timestamp, Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(),
                 quote.FloatMarketCap, quote.VolumeRatio, quote.ShareholderCount ?? companyProfile?.ShareholderCount, quote.SectorName ?? companyProfile?.SectorName);
             var fundamentalSnapshot = StockFundamentalSnapshotMapper.FromProfile(companyProfile);
+
+            if (includeLegacyCharts is not true)
+            {
+                return Results.Ok(new StockDetailSummaryDto(quoteDto, messages, fundamentalSnapshot));
+            }
+
+            var intervalValue = string.IsNullOrWhiteSpace(interval) ? "day" : interval.Trim().ToLowerInvariant();
+            var take = Math.Max(10, count ?? 60);
+
+            var kline = await StockDetailCacheQueries.GetRecentKLinesAsync(dbContext, target, intervalValue, take);
+            var minute = await StockDetailCacheQueries.GetLatestMinuteLinesAsync(dbContext, target);
+            var mergedKLine = string.Equals(intervalValue, "day", StringComparison.OrdinalIgnoreCase)
+                ? StockRealtimeKLineMerge.MergeDailyFromMinuteLines(kline, minute, take)
+                : kline;
 
             return Results.Ok(new StockDetailDto(quoteDto, mergedKLine, minute, messages, fundamentalSnapshot));
         })

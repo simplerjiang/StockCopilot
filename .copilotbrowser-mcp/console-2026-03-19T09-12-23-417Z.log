@@ -1,0 +1,12 @@
+[ 1966378ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?take=20:0
+[ 1966385ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?symbol=sh600000:0
+[ 1966649ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?take=20:0
+[ 1968733ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?symbol=sh600000&take=20:0
+[ 1996385ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?take=20:0
+[ 1996392ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?symbol=sh600000:0
+[ 1996631ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?take=20:0
+[ 1998742ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?symbol=sh600000&take=20:0
+[ 2026382ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?take=20:0
+[ 2026387ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans?symbol=sh600000:0
+[ 2026642ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?take=20:0
+[ 2028722ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5119/api/stocks/plans/alerts?symbol=sh600000&take=20:0

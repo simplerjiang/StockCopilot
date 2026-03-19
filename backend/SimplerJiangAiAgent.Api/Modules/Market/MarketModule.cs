@@ -15,9 +15,12 @@ public sealed class MarketModule : IModule
     public void Register(IServiceCollection services, IConfiguration configuration)
     {
         services.AddHttpClient<IEastmoneySectorRotationClient, EastmoneySectorRotationClient>();
+        services.AddHttpClient<IEastmoneyRealtimeMarketClient, EastmoneyRealtimeMarketClient>();
         services.Configure<SectorRotationOptions>(configuration.GetSection(SectorRotationOptions.SectionName));
         services.AddScoped<ISectorRotationIngestionService, SectorRotationIngestionService>();
         services.AddScoped<ISectorRotationQueryService, SectorRotationQueryService>();
+        services.AddScoped<IRealtimeMarketOverviewService, RealtimeMarketOverviewService>();
+        services.AddScoped<IRealtimeSectorBoardService, RealtimeSectorBoardService>();
         services.AddHostedService<SectorRotationWorker>();
     }
 
@@ -65,6 +68,14 @@ public sealed class MarketModule : IModule
             return Results.Ok(payload);
         })
         .WithName("GetSectorRotationPage")
+        .WithOpenApi();
+
+        group.MapGet("/sectors/realtime", async (string? boardType, int? take, string? sort, IRealtimeSectorBoardService realtimeSectorBoardService, HttpContext httpContext) =>
+        {
+            var payload = await realtimeSectorBoardService.GetPageAsync(boardType ?? SectorBoardTypes.Concept, take ?? 60, sort, httpContext.RequestAborted);
+            return Results.Ok(payload);
+        })
+        .WithName("GetRealtimeSectorBoardPage")
         .WithOpenApi();
 
         group.MapGet("/sectors/{sectorCode}", async (string sectorCode, string? boardType, string? window, ISectorRotationIngestionService ingestionService, ISectorRotationQueryService queryService) =>
@@ -122,5 +133,27 @@ public sealed class MarketModule : IModule
         })
         .WithName("GetMainlineSectors")
         .WithOpenApi();
+
+        group.MapGet("/realtime/overview", async (string? symbols, IRealtimeMarketOverviewService realtimeService, HttpContext httpContext) =>
+        {
+            var requestedSymbols = ParseSymbols(symbols);
+            var payload = await realtimeService.GetOverviewAsync(requestedSymbols, httpContext.RequestAborted);
+            return Results.Ok(payload);
+        })
+        .WithName("GetRealtimeMarketOverview")
+        .WithOpenApi();
+    }
+
+    private static IReadOnlyList<string> ParseSymbols(string? symbols)
+    {
+        if (string.IsNullOrWhiteSpace(symbols))
+        {
+            return Array.Empty<string>();
+        }
+
+        return symbols
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(20)
+            .ToArray();
     }
 }

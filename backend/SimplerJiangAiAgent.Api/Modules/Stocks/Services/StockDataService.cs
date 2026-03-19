@@ -161,7 +161,7 @@ public sealed class StockDataService : IStockDataService
 
     private IReadOnlyList<IStockCrawler> ResolveMinuteSources(string? source)
     {
-        return ResolvePreferredSources(source, TencentSourceName, EastmoneySourceName);
+        return ResolvePreferredSources(source, EastmoneySourceName, TencentSourceName);
     }
 
     private IReadOnlyList<IStockCrawler> ResolvePreferredSources(string? source, params string[] preferredSourceNames)

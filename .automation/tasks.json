@@ -12,6 +12,94 @@
       "notes": "2026-03-18 已将腾讯/东方财富两套行情接口正式封装进后端默认策略：分时默认腾讯优先、东财回退；K 线默认东财优先、腾讯回退；显式 source 参数仍可强制指定单一来源。同步补齐东方财富日/周/月/年 K 获取实现与 StockDataService 自动回退测试。"
     },
     {
+      "id": "MANUAL-20260319-EXTENSION-INTERFACE",
+      "title": "Stock-and-fund extension interface adoption plan",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成 `noupload/stock-and-fund-chrome-master` 接口探测与替代规划，并按 R1/R2/R3/R4/R5 五个切片收口。结论：扩展核心快链路主要是腾讯 `qt.gtimg.cn/smartbox` 与东方财富 `push2/push2his/push2ex` 公开端点；在线探测确认腾讯报价/搜索、东方财富分时/K线/逐笔、主力资金、北向资金、涨跌分布可用。现有后端已覆盖腾讯报价/搜索与东方财富分时/K线/逐笔，因此不做整包替换，而是按切片吸收缺失的批量行情、资金流、市场广度、实时板块榜与更多前端高频决策入口。扩展中作者自建 `110.40.187.161` 云服务虽可访问，但无 SLA、编码不稳定、契约不可控，不纳入正式生产依赖。R2 已完成实时总览单飞锁、超时与 stale cache 降级；R3 已把总览接入 `情绪轮动` 页签；R4 已继续下沉到 `股票信息` 页右侧，提供当前标的对照市场的实时上下文；R5 已新增 `/api/market/sectors/realtime`、将默认分时切到东方财富优先，并把实时市场上下文继续下沉到 `情绪轮动` 实时板块榜、`股票推荐` 推荐前市场快照和交易计划总览 `市场快链路`。"
+    },
+    {
+      "id": "MANUAL-20260319-EXTENSION-INTERFACE-R1",
+      "title": "Realtime market backend slice",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成 R1：新增 `IEastmoneyRealtimeMarketClient` / `EastmoneyRealtimeMarketClient` 与 `IRealtimeMarketOverviewService` / `RealtimeMarketOverviewService`，后端自管接入东财批量行情、主力资金、北向资金、涨跌分布，并开放 `/api/stocks/quotes/batch` 与 `/api/market/realtime/overview`。验证包括定向单测 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"EastmoneyRealtimeMarketClientTests|RealtimeMarketOverviewServiceTests|EastmoneySectorRotationClientTests|StockSearchServiceTests|StockDataServiceSourceRoutingTests\"` 15/15 通过，以及本地 smoke test 命中两条新 API 成功返回实时 payload。北向资金接口当日上游原始数据本身为全 0，已通过直连源站确认并非解析错误。"
+    },
+    {
+      "id": "MANUAL-20260319-EXTENSION-INTERFACE-R2",
+      "title": "Realtime aggregation resilience",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成 R2：`RealtimeMarketOverviewService` 新增按 key 单飞锁、fresh/stale 双 TTL、请求超时与 stale cache 回退策略，避免高频刷新把上游波动直接放大到前端。新增单测 `GetBatchQuotesAsync_ShouldReturnStaleCache_WhenRefreshFails`，并通过 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"RealtimeMarketOverviewServiceTests|EastmoneyRealtimeMarketClientTests\"` 验证 7/7 通过。"
+    },
+    {
+      "id": "MANUAL-20260319-EXTENSION-INTERFACE-R3",
+      "title": "Market realtime overview UI integration",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成 R3：`frontend/src/modules/market/MarketSentimentTab.vue` 接入 `/api/market/realtime/overview`，新增指数快照、资金与广度、涨跌分布桶三块实时总览卡片，并加入 localStorage 开关 `market_realtime_overview_enabled`、独立刷新与失败隔离；前端定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/market/MarketSentimentTab.spec.js` 3/3 通过，Browser MCP 已在 `http://localhost:5119/` 的 `情绪轮动` 页签实测看到新卡片渲染。"
+    },
+    {
+      "id": "MANUAL-20260319-EXTENSION-INTERFACE-R4",
+      "title": "Stock terminal realtime context integration",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成 R4：`frontend/src/modules/stocks/StockInfoTab.vue` 复用 `/api/market/realtime/overview`，在股票终端右侧新增 `市场实时上下文` 卡片，把当前标的与三大指数、主力净流入、北向净流入和涨跌分布一起压缩展示，并加入 localStorage 开关 `stock_realtime_context_enabled`、独立刷新和失败隔离。验证包括前端单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 42/42 通过，以及 Browser MCP 在 `http://localhost:5119/` 的 `股票信息` 页签查询 `sz000021` 后确认卡片渲染。"
+    },
+    {
+      "id": "MANUAL-20260319-EXTENSION-INTERFACE-R5",
+      "title": "Realtime sector board and decision-surface rollout",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成 R5：后端新增 `IRealtimeSectorBoardService` / `RealtimeSectorBoardService` 与 `/api/market/sectors/realtime`，把东方财富实时板块排行/资金流切片收口到后端缓存与降级策略下；`StockDataService`、`CompositeStockCrawler`、`StocksModule` 也已调整为东方财富优先，默认分时链路不再腾讯优先。前端继续把实时市场上下文下沉到更多高频入口：`MarketSentimentTab.vue` 新增实时板块榜叠加与重排，`StockRecommendTab.vue` 新增 `推荐前市场快照`，`StockInfoTab.vue` 在交易计划总览新增 `市场快链路`。验证包括后端定向单测 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"RealtimeSectorBoardServiceTests|StockDataServiceSourceRoutingTests|CompositeStockCrawlerTests\"` 9/9 通过，前端定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/market/MarketSentimentTab.spec.js src/modules/stocks/StockRecommendTab.spec.js src/modules/stocks/StockInfoTab.spec.js` 50/50 通过，以及 Browser MCP 在 `http://localhost:5119/` 实测确认 `东财实时榜`、`推荐前市场快照`、`市场快链路` 均已渲染。实时板块榜在线接口在验收时返回空数组场景已通过前端明确空态提示兜底。"
+    },
+    {
+      "id": "MANUAL-20260319-CHART-PERF",
+      "title": "Stock chart refresh performance narrowing",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 已完成股票图表刷新性能收口。诊断结论：慢点主要来自前端把图表刷新绑定到 `/api/stocks/detail` 聚合链路，导致图表等待消息、基本面、市场上下文等非关键路径。现已新增 `/api/stocks/chart` 轻量接口，首屏图表改为 `detail/cache + chart + async extras`，`日K/月K/年K` 切换进一步收窄为只请求 `/api/stocks/chart`，不再触发 `/api/stocks/detail/cache`、`/api/stocks/messages`、`/api/stocks/fundamental-snapshot`。验证包括前端定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 43/43 通过，以及 Browser MCP 在 `http://localhost:5119/` 实测确认切换 `月K图/年K图` 时网络面板仅新增 `/api/stocks/chart?symbol=sh600000&interval=month|year`，前端 console 0 error。"
+    },
+    {
+      "id": "MANUAL-20260319-CHART-PERF-R2",
+      "title": "Stock detail non-chart slimming and benchmark capture",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-19 follow-up completed: `/api/stocks/detail` was slimmed into a non-chart summary endpoint that now returns quote + messages + optional fundamental snapshot only, while `StockSyncService.SaveDetailAsync(...)` keeps saving basic quote/profile/message data and no longer persists minute/K-line rows from the detail path. Browser MCP benchmark on `http://localhost:5119/` recorded first-open parallel fetch total at 6708ms, `detail-summary` at 2090ms, `chart-day` at 6705ms, and interval switches at `chart-month` 7ms / `chart-year` 4ms. A review follow-up then narrowed `/api/stocks/detail/cache` to summary-only by default as well, with legacy DB-backed chart replay preserved only behind explicit `includeLegacyCharts=true`, so the cache endpoint no longer silently resumes chart responsibilities. Verification: `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"StockSyncServiceTests|HighFrequencyQuoteServiceTests|StockDetailCacheQueriesTests\"` 9/9 passed, `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 44/44 passed, and Browser MCP page smoke check returned 0 console errors."
+    },
+    {
       "id": "AUTO-001",
       "title": "Bootstrap multi-agent automation",
       "status": "done",

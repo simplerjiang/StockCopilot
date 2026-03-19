@@ -40,7 +40,7 @@ public class StockSyncServiceTests
     }
 
     [Fact]
-    public async Task SaveDetailAsync_ShouldPersistDetail()
+    public async Task SaveDetailAsync_ShouldPersistBasicDetailOnly()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -62,13 +62,13 @@ public class StockSyncServiceTests
 
         Assert.Single(dbContext.StockQuoteSnapshots);
         Assert.Single(dbContext.StockCompanyProfiles);
-        Assert.Single(dbContext.KLinePoints);
-        Assert.Single(dbContext.MinuteLinePoints);
         Assert.Single(dbContext.IntradayMessages);
+        Assert.Empty(dbContext.KLinePoints);
+        Assert.Empty(dbContext.MinuteLinePoints);
     }
 
     [Fact]
-    public async Task SaveDetailAsync_ShouldPersistRealtimePayloadWithoutKLine()
+    public async Task SaveDetailAsync_ShouldIgnoreChartSeriesWhenPersistingRealtimePayload()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -89,14 +89,8 @@ public class StockSyncServiceTests
         await service.SaveDetailAsync(detail, "day");
 
         Assert.Single(dbContext.StockQuoteSnapshots);
-        var storedKLine = Assert.Single(dbContext.KLinePoints);
-        Assert.Equal(DateTime.Today, storedKLine.Date);
-        Assert.Equal(1m, storedKLine.Open);
-        Assert.Equal(1m, storedKLine.Close);
-        Assert.Equal(1m, storedKLine.High);
-        Assert.Equal(1m, storedKLine.Low);
-        Assert.Equal(10m, storedKLine.Volume);
-        Assert.Single(dbContext.MinuteLinePoints);
+        Assert.Empty(dbContext.KLinePoints);
+        Assert.Empty(dbContext.MinuteLinePoints);
         Assert.Single(dbContext.IntradayMessages);
     }
 

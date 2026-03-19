@@ -8,15 +8,24 @@ const page = ref(1)
 const pageSize = ref(12)
 const loading = ref(false)
 const detailLoading = ref(false)
+const realtimeLoading = ref(false)
+const realtimeSectorBoardLoading = ref(false)
 const error = ref('')
 const detailError = ref('')
+const realtimeError = ref('')
+const realtimeSectorBoardError = ref('')
 const summary = ref(null)
 const history = ref([])
+const sectorBaseItems = ref([])
 const sectors = ref([])
 const total = ref(0)
 const snapshotTime = ref('')
 const selectedSectorCode = ref('')
 const detail = ref(null)
+const realtimeOverviewEnabled = ref(localStorage.getItem('market_realtime_overview_enabled') !== 'false')
+const realtimeOverview = ref(null)
+const realtimeSectorBoardEnabled = ref(localStorage.getItem('market_realtime_sector_board_enabled') !== 'false')
+const realtimeSectorBoard = ref(null)
 
 const boardOptions = [
   { value: 'concept', label: '概念轮动' },
@@ -57,6 +66,12 @@ const stageToneClass = computed(() => {
   if (label === '退潮') return 'tone-negative'
   if (label === '分歧') return 'tone-warning'
   return 'tone-neutral'
+})
+const realtimeIndices = computed(() => realtimeOverview.value?.indices ?? [])
+const realtimeSectorItems = computed(() => realtimeSectorBoard.value?.items ?? [])
+const realtimeBreadthBuckets = computed(() => {
+  const buckets = realtimeOverview.value?.breadth?.buckets ?? []
+  return buckets.filter(item => item.count > 0)
 })
 
 const normalizeSummary = payload => payload ? ({
@@ -127,6 +142,30 @@ const normalizeSectorItem = item => ({
   isMainline: Boolean(item.isMainline ?? item.IsMainline ?? false)
 })
 
+const normalizeRealtimeSectorItem = item => ({
+  boardType: item.boardType ?? item.BoardType ?? '',
+  sectorCode: item.sectorCode ?? item.SectorCode ?? '',
+  sectorName: item.sectorName ?? item.SectorName ?? '',
+  changePercent: Number(item.changePercent ?? item.ChangePercent ?? 0),
+  mainNetInflow: Number(item.mainNetInflow ?? item.MainNetInflow ?? 0),
+  superLargeNetInflow: Number(item.superLargeNetInflow ?? item.SuperLargeNetInflow ?? 0),
+  largeNetInflow: Number(item.largeNetInflow ?? item.LargeNetInflow ?? 0),
+  mediumNetInflow: Number(item.mediumNetInflow ?? item.MediumNetInflow ?? 0),
+  smallNetInflow: Number(item.smallNetInflow ?? item.SmallNetInflow ?? 0),
+  turnoverAmount: Number(item.turnoverAmount ?? item.TurnoverAmount ?? 0),
+  turnoverShare: Number(item.turnoverShare ?? item.TurnoverShare ?? 0),
+  rankNo: Number(item.rankNo ?? item.RankNo ?? 0),
+  snapshotTime: item.snapshotTime ?? item.SnapshotTime ?? ''
+})
+
+const normalizeRealtimeSectorBoard = payload => payload ? ({
+  boardType: payload.boardType ?? payload.BoardType ?? '',
+  take: Number(payload.take ?? payload.Take ?? 0),
+  sort: payload.sort ?? payload.Sort ?? 'rank',
+  snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
+  items: Array.isArray(payload.items ?? payload.Items) ? (payload.items ?? payload.Items).map(normalizeRealtimeSectorItem) : []
+}) : null
+
 const normalizeDetail = payload => payload ? ({
   snapshot: normalizeSectorItem(payload.snapshot ?? payload.Snapshot ?? {}),
   history: Array.isArray(payload.history ?? payload.History) ? (payload.history ?? payload.History).map(item => ({
@@ -169,6 +208,60 @@ const normalizeDetail = payload => payload ? ({
   })) : []
 }) : null
 
+const normalizeRealtimeQuote = item => ({
+  symbol: item.symbol ?? item.Symbol ?? '',
+  name: item.name ?? item.Name ?? '',
+  price: Number(item.price ?? item.Price ?? 0),
+  change: Number(item.change ?? item.Change ?? 0),
+  changePercent: Number(item.changePercent ?? item.ChangePercent ?? 0),
+  turnoverAmount: Number(item.turnoverAmount ?? item.TurnoverAmount ?? 0),
+  timestamp: item.timestamp ?? item.Timestamp ?? ''
+})
+
+const normalizeMainFlow = payload => payload ? ({
+  snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
+  amountUnit: payload.amountUnit ?? payload.AmountUnit ?? '亿元',
+  mainNetInflow: Number(payload.mainNetInflow ?? payload.MainNetInflow ?? 0),
+  smallOrderNetInflow: Number(payload.smallOrderNetInflow ?? payload.SmallOrderNetInflow ?? 0),
+  mediumOrderNetInflow: Number(payload.mediumOrderNetInflow ?? payload.MediumOrderNetInflow ?? 0),
+  largeOrderNetInflow: Number(payload.largeOrderNetInflow ?? payload.LargeOrderNetInflow ?? 0),
+  superLargeOrderNetInflow: Number(payload.superLargeOrderNetInflow ?? payload.SuperLargeOrderNetInflow ?? 0)
+}) : null
+
+const normalizeNorthbound = payload => payload ? ({
+  snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
+  amountUnit: payload.amountUnit ?? payload.AmountUnit ?? '亿元',
+  totalNetInflow: Number(payload.totalNetInflow ?? payload.TotalNetInflow ?? 0),
+  shanghaiNetInflow: Number(payload.shanghaiNetInflow ?? payload.ShanghaiNetInflow ?? 0),
+  shenzhenNetInflow: Number(payload.shenzhenNetInflow ?? payload.ShenzhenNetInflow ?? 0),
+  shanghaiBalance: Number(payload.shanghaiBalance ?? payload.ShanghaiBalance ?? 0),
+  shenzhenBalance: Number(payload.shenzhenBalance ?? payload.ShenzhenBalance ?? 0)
+}) : null
+
+const normalizeBreadth = payload => payload ? ({
+  tradingDate: payload.tradingDate ?? payload.TradingDate ?? '',
+  advancers: Number(payload.advancers ?? payload.Advancers ?? 0),
+  decliners: Number(payload.decliners ?? payload.Decliners ?? 0),
+  flatCount: Number(payload.flatCount ?? payload.FlatCount ?? 0),
+  limitUpCount: Number(payload.limitUpCount ?? payload.LimitUpCount ?? 0),
+  limitDownCount: Number(payload.limitDownCount ?? payload.LimitDownCount ?? 0),
+  buckets: Array.isArray(payload.buckets ?? payload.Buckets)
+    ? (payload.buckets ?? payload.Buckets).map(item => ({
+        changeBucket: Number(item.changeBucket ?? item.ChangeBucket ?? 0),
+        label: item.label ?? item.Label ?? '',
+        count: Number(item.count ?? item.Count ?? 0)
+      }))
+    : []
+}) : null
+
+const normalizeRealtimeOverview = payload => payload ? ({
+  snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
+  indices: Array.isArray(payload.indices ?? payload.Indices) ? (payload.indices ?? payload.Indices).map(normalizeRealtimeQuote) : [],
+  mainCapitalFlow: normalizeMainFlow(payload.mainCapitalFlow ?? payload.MainCapitalFlow ?? null),
+  northboundFlow: normalizeNorthbound(payload.northboundFlow ?? payload.NorthboundFlow ?? null),
+  breadth: normalizeBreadth(payload.breadth ?? payload.Breadth ?? null)
+}) : null
+
 const formatDate = value => {
   if (!value) return '--'
   const date = new Date(value)
@@ -189,7 +282,67 @@ const formatMoney = value => {
   return number.toFixed(0)
 }
 
+const formatSignedAmount = value => {
+  const number = Number(value ?? 0)
+  return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
+}
+
+const formatBucketWidth = count => {
+  const maxCount = realtimeBreadthBuckets.value.reduce((current, item) => Math.max(current, Number(item.count ?? 0)), 0)
+  if (!maxCount) return '0%'
+  return `${Math.max(8, Math.round((Number(count ?? 0) / maxCount) * 100))}%`
+}
+
 const formatScale = value => `${(Number(value ?? 0) * 100).toFixed(0)}%`
+
+const getRealtimeSectorSort = value => {
+  if (value === 'change') return 'change'
+  if (value === 'flow') return 'flow'
+  return 'rank'
+}
+
+const applyRealtimeSectorBoard = (items, realtimePayload) => {
+  if (!Array.isArray(items) || !items.length || !realtimeSectorBoardEnabled.value) {
+    return Array.isArray(items) ? [...items] : []
+  }
+
+  const realtimeItems = Array.isArray(realtimePayload?.items) ? realtimePayload.items : []
+  if (!realtimeItems.length) {
+    return [...items]
+  }
+
+  const realtimeMap = new Map(realtimeItems.map(item => [item.sectorCode, item]))
+  const matched = []
+  const unmatched = []
+
+  items.forEach(item => {
+    const realtimeItem = realtimeMap.get(item.sectorCode)
+    const mergedItem = realtimeItem
+      ? {
+          ...item,
+          changePercent: realtimeItem.changePercent,
+          mainNetInflow: realtimeItem.mainNetInflow,
+          rankNo: realtimeItem.rankNo,
+          snapshotTime: realtimeItem.snapshotTime || item.snapshotTime,
+          realtimeTurnoverAmount: realtimeItem.turnoverAmount,
+          realtimeTurnoverShare: realtimeItem.turnoverShare
+        }
+      : item
+
+    if (realtimeItem) {
+      matched.push(mergedItem)
+    } else {
+      unmatched.push(mergedItem)
+    }
+  })
+
+  matched.sort((left, right) => {
+    if (left.rankNo !== right.rankNo) return left.rankNo - right.rankNo
+    return right.changePercent - left.changePercent
+  })
+
+  return [...matched, ...unmatched]
+}
 
 const getWindowStrength = item => {
   if (compareWindow.value === '5d') return item.strengthAvg5d
@@ -243,6 +396,35 @@ const fetchDetail = async sectorCode => {
   }
 }
 
+const fetchRealtimeSectorBoard = async ({ silent = false } = {}) => {
+  if (!realtimeSectorBoardEnabled.value) {
+    realtimeSectorBoard.value = null
+    realtimeSectorBoardError.value = ''
+    sectors.value = [...sectorBaseItems.value]
+    return null
+  }
+
+  if (!silent) {
+    realtimeSectorBoardLoading.value = true
+  }
+  realtimeSectorBoardError.value = ''
+
+  try {
+    const realtimeSort = getRealtimeSectorSort(sort.value)
+    const payload = await fetchJson(`/api/market/sectors/realtime?boardType=${encodeURIComponent(boardType.value)}&take=${Math.max(pageSize.value * 6, 60)}&sort=${encodeURIComponent(realtimeSort)}`)
+    realtimeSectorBoard.value = normalizeRealtimeSectorBoard(payload)
+    sectors.value = applyRealtimeSectorBoard(sectorBaseItems.value, realtimeSectorBoard.value)
+    return realtimeSectorBoard.value
+  } catch (err) {
+    realtimeSectorBoard.value = null
+    realtimeSectorBoardError.value = err.message || '实时板块榜加载失败'
+    sectors.value = [...sectorBaseItems.value]
+    return null
+  } finally {
+    realtimeSectorBoardLoading.value = false
+  }
+}
+
 const fetchDashboard = async ({ resetPage = false } = {}) => {
   if (resetPage) page.value = 1
 
@@ -259,7 +441,9 @@ const fetchDashboard = async ({ resetPage = false } = {}) => {
     history.value = Array.isArray(historyPayload) ? historyPayload.map(normalizeHistoryItem) : []
     total.value = Number(sectorPayload?.total ?? sectorPayload?.Total ?? 0)
     snapshotTime.value = sectorPayload?.snapshotTime ?? sectorPayload?.SnapshotTime ?? ''
-    sectors.value = Array.isArray(sectorPayload?.items ?? sectorPayload?.Items) ? (sectorPayload.items ?? sectorPayload.Items).map(normalizeSectorItem) : []
+    sectorBaseItems.value = Array.isArray(sectorPayload?.items ?? sectorPayload?.Items) ? (sectorPayload.items ?? sectorPayload.Items).map(normalizeSectorItem) : []
+    sectors.value = [...sectorBaseItems.value]
+    await fetchRealtimeSectorBoard({ silent: true })
 
     const nextSelected = sectors.value.some(item => item.sectorCode === selectedSectorCode.value)
       ? selectedSectorCode.value
@@ -275,6 +459,27 @@ const fetchDashboard = async ({ resetPage = false } = {}) => {
     error.value = err.message || '情绪轮动数据加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+const fetchRealtimeOverview = async () => {
+  if (!realtimeOverviewEnabled.value) {
+    realtimeOverview.value = null
+    realtimeError.value = ''
+    realtimeLoading.value = false
+    return
+  }
+
+  realtimeLoading.value = true
+  realtimeError.value = ''
+  try {
+    const payload = await fetchJson('/api/market/realtime/overview')
+    realtimeOverview.value = normalizeRealtimeOverview(payload)
+  } catch (err) {
+    realtimeOverview.value = null
+    realtimeError.value = err.message || '实时总览加载失败'
+  } finally {
+    realtimeLoading.value = false
   }
 }
 
@@ -300,8 +505,32 @@ watch(compareWindow, () => {
   handleWindowChange()
 })
 
+watch(realtimeOverviewEnabled, value => {
+  localStorage.setItem('market_realtime_overview_enabled', String(value))
+  if (value) {
+    fetchRealtimeOverview()
+    return
+  }
+
+  realtimeOverview.value = null
+  realtimeError.value = ''
+})
+
+watch(realtimeSectorBoardEnabled, value => {
+  localStorage.setItem('market_realtime_sector_board_enabled', String(value))
+  if (value) {
+    fetchRealtimeSectorBoard()
+    return
+  }
+
+  realtimeSectorBoard.value = null
+  realtimeSectorBoardError.value = ''
+  sectors.value = [...sectorBaseItems.value]
+})
+
 onMounted(() => {
   fetchDashboard()
+  fetchRealtimeOverview()
 })
 </script>
 
@@ -312,6 +541,12 @@ onMounted(() => {
         <p class="market-kicker">Market Pulse / Sector Rotation</p>
         <h2>情绪轮动</h2>
         <p class="hero-subtitle">把涨停高度、涨跌家数、炸板率与板块扩散度压成同一屏，快速判断今天是主升、分歧、混沌还是退潮。</p>
+        <div class="hero-actions">
+          <button class="hero-button" type="button" @click="fetchRealtimeOverview" :disabled="realtimeLoading || !realtimeOverviewEnabled">刷新实时总览</button>
+          <button class="hero-button secondary" type="button" @click="realtimeOverviewEnabled = !realtimeOverviewEnabled">
+            {{ realtimeOverviewEnabled ? '隐藏实时总览' : '显示实时总览' }}
+          </button>
+        </div>
       </div>
       <div class="hero-stage" :class="stageToneClass">
         <span class="stage-phase">{{ summary?.sessionPhase || '待同步' }}</span>
@@ -320,6 +555,79 @@ onMounted(() => {
         <small>{{ formatDate(summary?.snapshotTime) }}</small>
       </div>
     </header>
+
+    <section v-if="realtimeOverviewEnabled" class="realtime-deck">
+      <article class="realtime-card realtime-index-card">
+        <div class="realtime-card-head">
+          <div>
+            <p class="market-kicker realtime-kicker">Realtime Tape</p>
+            <h3>指数快照</h3>
+          </div>
+          <small>{{ formatDate(realtimeOverview?.snapshotTime) }}</small>
+        </div>
+        <p v-if="realtimeError" class="feedback error compact">{{ realtimeError }}</p>
+        <p v-else-if="realtimeLoading && !realtimeIndices.length" class="feedback compact">实时总览加载中...</p>
+        <div v-else class="ticker-grid">
+          <article v-for="item in realtimeIndices" :key="item.symbol" class="ticker-card">
+            <span>{{ item.name }}</span>
+            <strong>{{ item.price.toFixed(2) }}</strong>
+            <small :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</small>
+            <small>成交额 {{ formatMoney(item.turnoverAmount) }}</small>
+          </article>
+        </div>
+      </article>
+
+      <article class="realtime-card realtime-flow-card">
+        <div class="realtime-card-head">
+          <div>
+            <p class="market-kicker realtime-kicker">Capital Flow</p>
+            <h3>资金与广度</h3>
+          </div>
+          <small>{{ formatDate(realtimeOverview?.mainCapitalFlow?.snapshotTime || realtimeOverview?.northboundFlow?.snapshotTime) }}</small>
+        </div>
+        <div class="flow-grid">
+          <div class="flow-metric">
+            <span>主力净流入</span>
+            <strong :class="{ positive: (realtimeOverview?.mainCapitalFlow?.mainNetInflow ?? 0) >= 0, negative: (realtimeOverview?.mainCapitalFlow?.mainNetInflow ?? 0) < 0 }">
+              {{ formatSignedAmount(realtimeOverview?.mainCapitalFlow?.mainNetInflow) }}
+            </strong>
+            <small>超大单 {{ formatSignedAmount(realtimeOverview?.mainCapitalFlow?.superLargeOrderNetInflow) }}</small>
+          </div>
+          <div class="flow-metric">
+            <span>北向总净流入</span>
+            <strong :class="{ positive: (realtimeOverview?.northboundFlow?.totalNetInflow ?? 0) >= 0, negative: (realtimeOverview?.northboundFlow?.totalNetInflow ?? 0) < 0 }">
+              {{ formatSignedAmount(realtimeOverview?.northboundFlow?.totalNetInflow) }}
+            </strong>
+            <small>沪股通 {{ formatSignedAmount(realtimeOverview?.northboundFlow?.shanghaiNetInflow) }} / 深股通 {{ formatSignedAmount(realtimeOverview?.northboundFlow?.shenzhenNetInflow) }}</small>
+          </div>
+          <div class="flow-metric">
+            <span>涨跌分布</span>
+            <strong>{{ realtimeOverview?.breadth?.advancers ?? 0 }} / {{ realtimeOverview?.breadth?.decliners ?? 0 }}</strong>
+            <small>涨停 {{ realtimeOverview?.breadth?.limitUpCount ?? 0 }} / 跌停 {{ realtimeOverview?.breadth?.limitDownCount ?? 0 }} / 平盘 {{ realtimeOverview?.breadth?.flatCount ?? 0 }}</small>
+          </div>
+        </div>
+      </article>
+
+      <article class="realtime-card realtime-breadth-card">
+        <div class="realtime-card-head">
+          <div>
+            <p class="market-kicker realtime-kicker">Breadth Map</p>
+            <h3>涨跌分布桶</h3>
+          </div>
+          <small>{{ formatDate(realtimeOverview?.breadth?.tradingDate) }}</small>
+        </div>
+        <div v-if="realtimeBreadthBuckets.length" class="breadth-buckets">
+          <div v-for="item in realtimeBreadthBuckets" :key="item.label" class="breadth-bucket">
+            <span>{{ item.label }}</span>
+            <div class="breadth-bar-track">
+              <span class="breadth-bar-fill" :style="{ width: formatBucketWidth(item.count) }"></span>
+            </div>
+            <strong>{{ item.count }}</strong>
+          </div>
+        </div>
+        <p v-else class="feedback compact">暂无涨跌分布数据。</p>
+      </article>
+    </section>
 
     <section class="metric-grid">
       <article class="metric-card">
@@ -374,8 +682,15 @@ onMounted(() => {
       <div class="toolbar-meta">
         <strong>共 {{ total }} 个板块</strong>
         <span>快照 {{ formatDate(snapshotTime) }}</span>
+        <span v-if="realtimeSectorBoardEnabled">东财实时榜 {{ formatDate(realtimeSectorBoard?.snapshotTime) }}</span>
+        <button class="toolbar-inline-button" type="button" @click="fetchRealtimeSectorBoard" :disabled="realtimeSectorBoardLoading || !realtimeSectorBoardEnabled">刷新实时榜</button>
+        <button class="toolbar-inline-button secondary" type="button" @click="realtimeSectorBoardEnabled = !realtimeSectorBoardEnabled">
+          {{ realtimeSectorBoardEnabled ? '隐藏实时榜' : '显示实时榜' }}
+        </button>
       </div>
     </section>
+
+    <p v-if="realtimeSectorBoardError" class="feedback error compact">{{ realtimeSectorBoardError }}</p>
 
     <div v-if="error" class="feedback error">{{ error }}</div>
     <div v-else-if="loading" class="feedback">正在同步情绪轮动快照...</div>
@@ -536,6 +851,55 @@ onMounted(() => {
   line-height: 1.6;
 }
 
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.hero-button {
+  height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hero-button.secondary {
+  background: rgba(255, 255, 255, 0.92);
+  color: #9a3412;
+  border: 1px solid rgba(194, 65, 12, 0.16);
+}
+
+.hero-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.toolbar-inline-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #9a3412;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toolbar-inline-button.secondary {
+  color: #475569;
+}
+
+.toolbar-inline-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .hero-stage {
   display: grid;
   gap: 8px;
@@ -565,6 +929,86 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
+}
+
+.realtime-deck {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  gap: 14px;
+}
+
+.realtime-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98)),
+    linear-gradient(135deg, rgba(194, 65, 12, 0.04), rgba(14, 165, 233, 0.05));
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
+}
+
+.realtime-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.realtime-card-head h3 {
+  margin: 0;
+}
+
+.realtime-kicker {
+  margin-bottom: 6px;
+}
+
+.ticker-grid,
+.flow-grid,
+.breadth-buckets {
+  display: grid;
+  gap: 10px;
+}
+
+.ticker-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ticker-card,
+.flow-metric {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(226, 232, 240, 0.85);
+}
+
+.ticker-card strong,
+.flow-metric strong {
+  font-size: 24px;
+}
+
+.breadth-bucket {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 40px;
+  gap: 10px;
+  align-items: center;
+}
+
+.breadth-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.92);
+  overflow: hidden;
+}
+
+.breadth-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #fb7185 0%, #f59e0b 50%, #0ea5e9 100%);
 }
 
 .metric-card,
@@ -801,9 +1245,14 @@ onMounted(() => {
 }
 
 @media (max-width: 1100px) {
+  .realtime-deck,
   .metric-grid,
   .market-grid,
   .board-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .ticker-grid {
     grid-template-columns: 1fr;
   }
 

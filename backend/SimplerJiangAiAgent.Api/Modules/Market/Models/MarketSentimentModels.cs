@@ -74,6 +74,28 @@ public sealed record SectorRotationPageDto(
     DateTime? SnapshotTime,
     IReadOnlyList<SectorRotationListItemDto> Items);
 
+public sealed record RealtimeSectorBoardItemDto(
+    string BoardType,
+    string SectorCode,
+    string SectorName,
+    decimal ChangePercent,
+    decimal MainNetInflow,
+    decimal SuperLargeNetInflow,
+    decimal LargeNetInflow,
+    decimal MediumNetInflow,
+    decimal SmallNetInflow,
+    decimal TurnoverAmount,
+    decimal TurnoverShare,
+    int RankNo,
+    DateTime SnapshotTime);
+
+public sealed record RealtimeSectorBoardPageDto(
+    string BoardType,
+    int Take,
+    string Sort,
+    DateTime SnapshotTime,
+    IReadOnlyList<RealtimeSectorBoardItemDto> Items);
+
 public sealed record SectorRotationLeaderDto(
     int RankInSector,
     string Symbol,

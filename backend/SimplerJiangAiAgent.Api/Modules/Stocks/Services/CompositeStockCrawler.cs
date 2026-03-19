@@ -5,11 +5,12 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 public sealed class CompositeStockCrawler : IStockCrawler
 {
     private const string EastmoneySourceName = "东方财富";
-    private readonly IEnumerable<IStockCrawlerSource> _crawlers;
+    private const string TencentSourceName = "腾讯";
+    private readonly IReadOnlyList<IStockCrawlerSource> _crawlers;
 
     public CompositeStockCrawler(IEnumerable<IStockCrawlerSource> crawlers)
     {
-        _crawlers = crawlers.ToArray();
+        _crawlers = OrderCrawlers(crawlers);
     }
 
     public string SourceName => "聚合";
@@ -17,8 +18,28 @@ public sealed class CompositeStockCrawler : IStockCrawler
     public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var quotes = new List<(string SourceName, StockQuoteDto Quote)>();
+        var preferredQuote = await TryGetQuoteAsync(symbol, EastmoneySourceName, cancellationToken);
+        if (preferredQuote is { } fastQuote && HasCompletePreferredQuote(fastQuote.Quote))
+        {
+            return fastQuote.Quote with
+            {
+                News = BuildPlaceholderNews(fastQuote.Quote.Symbol),
+                Indicators = BuildPlaceholderIndicators()
+            };
+        }
+
+        if (preferredQuote is { } partialQuote && IsUsableQuote(partialQuote.Quote))
+        {
+            quotes.Add(partialQuote);
+        }
+
         foreach (var crawler in _crawlers)
         {
+            if (preferredQuote is { } existing && string.Equals(existing.SourceName, crawler.SourceName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             try
             {
                 var quote = await crawler.GetQuoteAsync(symbol, cancellationToken);
@@ -138,6 +159,33 @@ public sealed class CompositeStockCrawler : IStockCrawler
         return null;
     }
 
+    private async Task<(string SourceName, StockQuoteDto Quote)?> TryGetQuoteAsync(string symbol, string sourceName, CancellationToken cancellationToken)
+    {
+        var crawler = _crawlers.FirstOrDefault(item => string.Equals(item.SourceName, sourceName, StringComparison.OrdinalIgnoreCase));
+        if (crawler is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var quote = await crawler.GetQuoteAsync(symbol, cancellationToken);
+            return (crawler.SourceName, quote);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<IStockCrawlerSource> OrderCrawlers(IEnumerable<IStockCrawlerSource> crawlers)
+    {
+        return crawlers
+            .OrderByDescending(crawler => string.Equals(crawler.SourceName, EastmoneySourceName, StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(crawler => string.Equals(crawler.SourceName, TencentSourceName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
     private static IReadOnlyList<StockNewsDto> BuildPlaceholderNews(string symbol)
     {
         return new List<StockNewsDto>
@@ -185,6 +233,14 @@ public sealed class CompositeStockCrawler : IStockCrawler
             || quote.ShareholderCount.HasValue
             || !string.IsNullOrWhiteSpace(quote.SectorName)
             || quote.PeRatio > 0m;
+    }
+
+    private static bool HasCompletePreferredQuote(StockQuoteDto quote)
+    {
+        return IsUsableQuote(quote)
+            && HasFundamentalData(quote)
+            && quote.High > 0m
+            && quote.Low > 0m;
     }
 
     private static int GetRealtimeScore(StockQuoteDto quote)

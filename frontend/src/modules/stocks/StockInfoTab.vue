@@ -40,7 +40,14 @@ const sortAsc = ref(true)
 const monochromeMode = ref(localStorage.getItem('stock_monochrome_mode') === 'true')
 const copilotPanelOpen = ref(localStorage.getItem('stock_copilot_panel_open') !== 'false')
 const marketNewsModalOpen = ref(false)
+const stockRealtimeOverviewEnabled = ref(localStorage.getItem('stock_realtime_context_enabled') !== 'false')
+const stockRealtimeOverview = ref(null)
+const stockRealtimeLoading = ref(false)
+const stockRealtimeError = ref('')
+const stockRealtimeSymbol = ref('')
+let stockRealtimeAbortController = null
 const chatWindowRefs = new Map()
+const DEFAULT_REALTIME_CONTEXT_SYMBOLS = ['sh000001', 'sz399001', 'sz399006']
 
 const STOCK_LOAD_STAGE_DEFINITIONS = [
   {
@@ -228,6 +235,23 @@ const marketNewsLoading = computed(() => rootWorkspace.localNewsLoading)
 const marketNewsError = computed(() => rootWorkspace.localNewsError)
 const deletingPlanId = ref('')
 const resumingPlanId = ref('')
+const stockRealtimeQuotes = computed(() => stockRealtimeOverview.value?.indices ?? [])
+const currentStockRealtimeQuote = computed(() => {
+  const currentSymbol = normalizeStockSymbol(detail.value?.quote?.symbol)
+  if (!currentSymbol) {
+    return null
+  }
+
+  return stockRealtimeQuotes.value.find(item => normalizeStockSymbol(item.symbol) === currentSymbol) ?? null
+})
+const stockRealtimeBenchmarks = computed(() => {
+  const currentSymbol = normalizeStockSymbol(currentStockRealtimeQuote.value?.symbol ?? detail.value?.quote?.symbol)
+  return stockRealtimeQuotes.value.filter(item => normalizeStockSymbol(item.symbol) !== currentSymbol)
+})
+const tradingPlanBoardRealtimeIndices = computed(() => {
+  const items = currentStockRealtimeQuote.value ? stockRealtimeBenchmarks.value : stockRealtimeQuotes.value
+  return items.slice(0, 3)
+})
 
 const isBlockingQuoteLoad = computed(() => loading.value && !detail.value)
 const isBackgroundQuoteRefresh = computed(() => loading.value && !!detail.value)
@@ -349,6 +373,16 @@ const applyHistorySymbol = item => {
 
 const buildDetailQuery = targetSymbol => {
   const params = new URLSearchParams({
+    symbol: targetSymbol
+  })
+  if (selectedSource.value) {
+    params.set('source', selectedSource.value)
+  }
+  return params
+}
+
+const buildChartQuery = targetSymbol => {
+  const params = new URLSearchParams({
     symbol: targetSymbol,
     interval: interval.value
   })
@@ -364,10 +398,24 @@ const applyLatestDetail = (workspace, requestToken, payload) => {
   }
 
   workspace.detail = {
+    ...(workspace.detail ?? {}),
     ...payload,
-    fundamentalSnapshot: payload.fundamentalSnapshot ?? workspace.pendingFundamentalSnapshot ?? null
+    messages: payload.messages ?? workspace.detail?.messages ?? [],
+    fundamentalSnapshot: payload.fundamentalSnapshot ?? workspace.pendingFundamentalSnapshot ?? workspace.detail?.fundamentalSnapshot ?? null
   }
   workspace.pendingFundamentalSnapshot = undefined
+  return true
+}
+
+const applyLatestMessages = (workspace, requestToken, messages) => {
+  if (!workspace || requestToken !== workspace.quoteRequestToken || !workspace.detail) {
+    return false
+  }
+
+  workspace.detail = {
+    ...workspace.detail,
+    messages: Array.isArray(messages) ? messages : []
+  }
   return true
 }
 
@@ -495,6 +543,47 @@ const normalizeNewsBucket = (level, payload) => ({
   items: Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items).map(normalizeLocalNewsItem) : []
 })
 
+const normalizeRealtimeQuote = item => ({
+  symbol: item?.symbol ?? item?.Symbol ?? '',
+  name: item?.name ?? item?.Name ?? '',
+  price: Number(item?.price ?? item?.Price ?? 0),
+  change: Number(item?.change ?? item?.Change ?? 0),
+  changePercent: Number(item?.changePercent ?? item?.ChangePercent ?? 0),
+  turnoverAmount: Number(item?.turnoverAmount ?? item?.TurnoverAmount ?? 0),
+  timestamp: item?.timestamp ?? item?.Timestamp ?? ''
+})
+
+const normalizeRealtimeOverviewSection = (payload, legacyPayload) => {
+  const source = payload ?? legacyPayload
+  if (!source) {
+    return null
+  }
+
+  return {
+    snapshotTime: source?.snapshotTime ?? source?.SnapshotTime ?? '',
+    amountUnit: source?.amountUnit ?? source?.AmountUnit ?? '亿元',
+    mainNetInflow: Number(source?.mainNetInflow ?? source?.MainNetInflow ?? 0),
+    superLargeOrderNetInflow: Number(source?.superLargeOrderNetInflow ?? source?.SuperLargeOrderNetInflow ?? 0),
+    totalNetInflow: Number(source?.totalNetInflow ?? source?.TotalNetInflow ?? 0),
+    shanghaiNetInflow: Number(source?.shanghaiNetInflow ?? source?.ShanghaiNetInflow ?? 0),
+    shenzhenNetInflow: Number(source?.shenzhenNetInflow ?? source?.ShenzhenNetInflow ?? 0),
+    tradingDate: source?.tradingDate ?? source?.TradingDate ?? '',
+    advancers: Number(source?.advancers ?? source?.Advancers ?? 0),
+    decliners: Number(source?.decliners ?? source?.Decliners ?? 0),
+    flatCount: Number(source?.flatCount ?? source?.FlatCount ?? 0),
+    limitUpCount: Number(source?.limitUpCount ?? source?.LimitUpCount ?? 0),
+    limitDownCount: Number(source?.limitDownCount ?? source?.LimitDownCount ?? 0)
+  }
+}
+
+const normalizeRealtimeOverview = payload => payload ? ({
+  snapshotTime: payload?.snapshotTime ?? payload?.SnapshotTime ?? '',
+  indices: Array.isArray(payload?.indices ?? payload?.Indices) ? (payload.indices ?? payload.Indices).map(normalizeRealtimeQuote) : [],
+  mainCapitalFlow: normalizeRealtimeOverviewSection(payload?.mainCapitalFlow, payload?.MainCapitalFlow),
+  northboundFlow: normalizeRealtimeOverviewSection(payload?.northboundFlow, payload?.NorthboundFlow),
+  breadth: normalizeRealtimeOverviewSection(payload?.breadth, payload?.Breadth)
+}) : null
+
 const normalizePlanNumber = value => {
   if (value === '' || value == null) return null
   const number = Number(value)
@@ -585,6 +674,26 @@ const formatPlanPrice = value => {
 const formatPlanScale = value => {
   const number = normalizePlanNumber(value)
   return Number.isFinite(number) ? `${(number * 100).toFixed(0)}%` : '--'
+}
+
+const formatRealtimeMoney = value => {
+  const number = Number(value ?? 0)
+  const abs = Math.abs(number)
+  if (abs >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
+  if (abs >= 10000) return `${(number / 10000).toFixed(2)} 万`
+  return number.toFixed(0)
+}
+
+const formatSignedRealtimeAmount = value => {
+  const number = Number(value ?? 0)
+  return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
+}
+
+const buildRealtimeContextSymbols = symbolKey => {
+  return [symbolKey, ...DEFAULT_REALTIME_CONTEXT_SYMBOLS]
+    .map(normalizeStockSymbol)
+    .filter(Boolean)
+    .filter((item, index, list) => list.indexOf(item) === index)
 }
 
 const getLatestPlanAlert = (workspace, planId) => {
@@ -1499,9 +1608,9 @@ const fetchQuote = async () => {
   })()
 
   try {
+    const stockRealtimePromise = fetchStockRealtimeOverview(targetSymbol, { force: true })
     const params = buildDetailQuery(targetSymbol)
-    const liveParams = new URLSearchParams(params)
-    liveParams.set('includeFundamentalSnapshot', 'false')
+    const chartParams = buildChartQuery(targetSymbol)
 
     const cachePromise = (async () => {
       try {
@@ -1527,8 +1636,8 @@ const fetchQuote = async () => {
       }
     })()
 
-    const liveDetailPromise = (async () => {
-      const response = await fetch(`/api/stocks/detail?${liveParams.toString()}`, { signal: controller.signal })
+    const liveChartPromise = (async () => {
+      const response = await fetch(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
       if (!response.ok) {
         throw new Error('接口请求失败')
       }
@@ -1536,10 +1645,30 @@ const fetchQuote = async () => {
       return response.json()
     })()
 
-    const liveDetail = await liveDetailPromise
-    applyLatestDetail(workspace, requestToken, liveDetail)
-    const klineCount = Array.isArray(liveDetail?.kLines ?? liveDetail?.KLines) ? (liveDetail.kLines ?? liveDetail.KLines).length : 0
-    const minuteCount = Array.isArray(liveDetail?.minuteLines ?? liveDetail?.MinuteLines) ? (liveDetail.minuteLines ?? liveDetail.MinuteLines).length : 0
+    const liveMessagesPromise = (async () => {
+      try {
+        const messageParams = new URLSearchParams({ symbol: targetSymbol })
+        if (selectedSource.value) {
+          messageParams.set('source', selectedSource.value)
+        }
+        const response = await fetch(`/api/stocks/messages?${messageParams.toString()}`, { signal: controller.signal })
+        if (!response.ok) {
+          throw new Error('盘中消息加载失败')
+        }
+
+        const messages = await response.json()
+        applyLatestMessages(workspace, requestToken, messages)
+      } catch (err) {
+        if (isAbortError(err)) {
+          return
+        }
+      }
+    })()
+
+    const liveChart = await liveChartPromise
+    applyLatestDetail(workspace, requestToken, liveChart)
+    const klineCount = Array.isArray(liveChart?.kLines ?? liveChart?.KLines) ? (liveChart.kLines ?? liveChart.KLines).length : 0
+    const minuteCount = Array.isArray(liveChart?.minuteLines ?? liveChart?.MinuteLines) ? (liveChart.minuteLines ?? liveChart.MinuteLines).length : 0
     setStockLoadStage(
       workspace,
       requestToken,
@@ -1547,7 +1676,15 @@ const fetchQuote = async () => {
       'success',
       `已返回 ${klineCount} 根K线 / ${minuteCount} 条分时`
     )
-    await Promise.allSettled([cachePromise, tencentQuoteProgressPromise, fundamentalSnapshotPromise])
+
+    if (requestToken === workspace.quoteRequestToken) {
+      workspace.loading = false
+      if (workspace.detailAbortController === controller) {
+        workspace.detailAbortController = null
+      }
+    }
+
+    await Promise.allSettled([cachePromise, tencentQuoteProgressPromise, fundamentalSnapshotPromise, stockRealtimePromise, liveMessagesPromise])
   } catch (err) {
     if (isAbortError(err)) {
       return
@@ -1557,7 +1694,60 @@ const fetchQuote = async () => {
       setStockLoadStage(workspace, requestToken, 'detail', 'error', err.message || '图表数据请求失败')
     }
   } finally {
+    if (requestToken === workspace.quoteRequestToken && workspace.loading) {
+      workspace.loading = false
+      if (workspace.detailAbortController === controller) {
+        workspace.detailAbortController = null
+      }
+    }
+  }
+}
+
+const refreshChartData = async (symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey)
+  const targetSymbol = normalizeStockSymbol(symbolKey || workspace?.detail?.quote?.symbol)
+  if (!workspace || !targetSymbol || !workspace.detail) {
+    return
+  }
+
+  const requestToken = ++workspace.quoteRequestToken
+  const controller = replaceAbortController(workspace.detailAbortController)
+  workspace.detailAbortController = controller
+  workspace.loading = true
+  workspace.error = ''
+  resetStockLoadStages(workspace)
+  setStockLoadStage(workspace, requestToken, 'cache', 'success', '沿用当前详情')
+  setStockLoadStage(workspace, requestToken, 'detail', 'pending')
+  const chartParams = buildChartQuery(targetSymbol)
+
+  try {
+    const chartResponse = await fetch(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
+    if (!chartResponse.ok) {
+      throw new Error('图表数据请求失败')
+    }
+
+    const chartPayload = await chartResponse.json()
+    applyLatestDetail(workspace, requestToken, chartPayload)
+    const klineCount = Array.isArray(chartPayload?.kLines ?? chartPayload?.KLines) ? (chartPayload.kLines ?? chartPayload.KLines).length : 0
+    const minuteCount = Array.isArray(chartPayload?.minuteLines ?? chartPayload?.MinuteLines) ? (chartPayload.minuteLines ?? chartPayload.MinuteLines).length : 0
+    setStockLoadStage(workspace, requestToken, 'detail', 'success', `已返回 ${klineCount} 根K线 / ${minuteCount} 条分时`)
+
     if (requestToken === workspace.quoteRequestToken) {
+      workspace.loading = false
+      if (workspace.detailAbortController === controller) {
+        workspace.detailAbortController = null
+      }
+    }
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    if (requestToken === workspace.quoteRequestToken) {
+      workspace.error = err.message || '图表数据请求失败'
+      setStockLoadStage(workspace, requestToken, 'detail', 'error', err.message || '图表数据请求失败')
+    }
+  } finally {
+    if (requestToken === workspace.quoteRequestToken && workspace.loading) {
       workspace.loading = false
       if (workspace.detailAbortController === controller) {
         workspace.detailAbortController = null
@@ -1652,6 +1842,55 @@ const fetchMarketNews = async (options = {}) => {
         rootWorkspace.localNewsAbortController = null
       }
     }
+  }
+}
+
+const fetchStockRealtimeOverview = async (symbolKey = currentStockKey.value, options = {}) => {
+  if (typeof fetch !== 'function') {
+    return
+  }
+
+  const normalizedSymbol = normalizeStockSymbol(symbolKey || detail.value?.quote?.symbol)
+  const effectiveSymbol = normalizedSymbol || ''
+
+  const force = Boolean(options.force)
+  if (!stockRealtimeOverviewEnabled.value && !force) {
+    return
+  }
+
+  if (!force && stockRealtimeLoading.value) {
+    return
+  }
+
+  if (!force && stockRealtimeOverview.value && stockRealtimeSymbol.value === effectiveSymbol) {
+    return
+  }
+
+  const controller = replaceAbortController(stockRealtimeAbortController)
+  stockRealtimeAbortController = controller
+  stockRealtimeLoading.value = true
+  stockRealtimeError.value = ''
+
+  try {
+    const params = new URLSearchParams({ symbols: buildRealtimeContextSymbols(effectiveSymbol).join(',') })
+    const response = await fetch(`/api/market/realtime/overview?${params.toString()}`, { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error('市场实时总览加载失败')
+    }
+
+    const payload = await response.json()
+    stockRealtimeOverview.value = normalizeRealtimeOverview(payload)
+    stockRealtimeSymbol.value = effectiveSymbol
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    stockRealtimeError.value = err.message || '市场实时总览加载失败'
+  } finally {
+    if (stockRealtimeAbortController === controller) {
+      stockRealtimeAbortController = null
+    }
+    stockRealtimeLoading.value = false
   }
 }
 
@@ -1968,7 +2207,7 @@ const setupPlanRefresh = () => {
 watch(interval, value => {
   localStorage.setItem('stock_interval', value)
   if (symbol.value.trim()) {
-    fetchQuote()
+    refreshChartData(currentStockKey.value || selectedSymbol.value || symbol.value)
   }
 })
 
@@ -2020,6 +2259,7 @@ onMounted(() => {
   fetchHistory()
   fetchMarketNews()
   refreshTradingPlanBoard()
+  fetchStockRealtimeOverview('', { force: true })
   setupHistoryRefresh()
   setupPlanRefresh()
   window.addEventListener('click', closeContextMenu)
@@ -2051,6 +2291,7 @@ onUnmounted(() => {
   rootWorkspace.agentHistoryAbortController?.abort()
   rootWorkspace.planListAbortController?.abort()
   rootWorkspace.planAlertsAbortController?.abort()
+  stockRealtimeAbortController?.abort()
   window.removeEventListener('click', closeContextMenu)
 })
 
@@ -2062,6 +2303,13 @@ watch(copilotPanelOpen, value => {
   localStorage.setItem('stock_copilot_panel_open', String(value))
 })
 
+watch(stockRealtimeOverviewEnabled, value => {
+  localStorage.setItem('stock_realtime_context_enabled', String(value))
+  if (value) {
+    fetchStockRealtimeOverview(currentStockKey.value || '', { force: true })
+  }
+})
+
 watch(
   () => detail.value?.quote?.symbol,
   symbolKey => {
@@ -2071,6 +2319,7 @@ watch(
     fetchNewsImpact(symbolKey)
     fetchLocalNews(symbolKey)
     refreshTradingPlanSection(symbolKey)
+    fetchStockRealtimeOverview(symbolKey)
   }
 )
 
@@ -2391,6 +2640,45 @@ watch(currentStockKey, () => {
             </button>
           </div>
 
+          <div class="plan-board-realtime-strip">
+            <div class="plan-board-realtime-head">
+              <div>
+                <strong>市场快链路</strong>
+                <small>{{ formatDate(stockRealtimeOverview?.snapshotTime) }}</small>
+              </div>
+              <div class="stock-realtime-actions">
+                <button @click="fetchStockRealtimeOverview(currentStockKey || '', { force: true })" :disabled="stockRealtimeLoading || !stockRealtimeOverviewEnabled">刷新市场</button>
+                <button @click="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled">
+                  {{ stockRealtimeOverviewEnabled ? '隐藏' : '显示' }}
+                </button>
+              </div>
+            </div>
+            <p v-if="!stockRealtimeOverviewEnabled" class="muted">市场快链路已隐藏，可在这里重新展开。</p>
+            <template v-else>
+              <p v-if="stockRealtimeError" class="muted error">{{ stockRealtimeError }}</p>
+              <p v-else-if="stockRealtimeLoading && !stockRealtimeOverview" class="muted">加载中...</p>
+              <template v-else-if="stockRealtimeOverview">
+                <div class="plan-board-realtime-metrics">
+                  <span class="plan-pill">主力 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}</span>
+                  <span class="plan-pill">北向 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}</span>
+                  <span class="plan-pill">涨跌 {{ stockRealtimeOverview.breadth?.advancers ?? 0 }} / {{ stockRealtimeOverview.breadth?.decliners ?? 0 }}</span>
+                  <span class="plan-pill">涨停 {{ stockRealtimeOverview.breadth?.limitUpCount ?? 0 }} / 跌停 {{ stockRealtimeOverview.breadth?.limitDownCount ?? 0 }}</span>
+                </div>
+                <div class="plan-board-index-list">
+                  <article v-for="item in tradingPlanBoardRealtimeIndices" :key="`plan-board-index-${item.symbol}`" class="plan-board-index-card">
+                    <div>
+                      <strong>{{ item.name }}</strong>
+                      <small>{{ item.symbol }}</small>
+                    </div>
+                    <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
+                    <small :class="getChangeClass(item.changePercent)">{{ formatPercent(item.changePercent.toFixed(2)) }}</small>
+                  </article>
+                </div>
+              </template>
+              <p v-else class="muted">暂无市场实时总览数据。</p>
+            </template>
+          </div>
+
           <p v-if="rootWorkspace.planError" class="muted error">{{ rootWorkspace.planError }}</p>
           <p v-else-if="rootWorkspace.planListLoading && !rootWorkspace.planList.length" class="muted">加载中...</p>
           <ul v-else-if="rootWorkspace.planList.length" class="plan-list plan-board-list">
@@ -2441,6 +2729,71 @@ watch(currentStockKey, () => {
             v-show="workspace.symbolKey === currentStockKey"
             class="sidebar-workspace"
           >
+            <section class="copilot-card stock-realtime-card">
+              <div class="news-impact-header">
+                <div>
+                  <h3>市场实时上下文</h3>
+                  <p class="muted">把当前标的和三大指数压在同一屏，快速判断个股强弱与市场环境。</p>
+                </div>
+                <div class="stock-realtime-actions">
+                  <button @click="fetchStockRealtimeOverview(workspace.symbolKey, { force: true })" :disabled="stockRealtimeLoading || !workspace.detail">刷新</button>
+                  <button @click="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled" :disabled="!workspace.detail">
+                    {{ stockRealtimeOverviewEnabled ? '隐藏' : '显示' }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="workspace.detail" class="stock-realtime-content">
+                <p v-if="!stockRealtimeOverviewEnabled" class="muted">实时总览已隐藏，可随时重新展开。</p>
+                <template v-else>
+                  <p v-if="stockRealtimeError" class="muted error">{{ stockRealtimeError }}</p>
+                  <p v-else-if="stockRealtimeLoading && !stockRealtimeOverview" class="muted">加载中...</p>
+                  <template v-else-if="stockRealtimeOverview">
+                    <div class="stock-realtime-meta">
+                      <span>{{ formatDate(stockRealtimeOverview.snapshotTime) }}</span>
+                      <span v-if="currentStockRealtimeQuote">当前 {{ currentStockRealtimeQuote.symbol }}</span>
+                    </div>
+
+                    <article v-if="currentStockRealtimeQuote" class="stock-realtime-focus">
+                      <div>
+                        <p class="muted">当前标的</p>
+                        <strong>{{ currentStockRealtimeQuote.name }}</strong>
+                        <small>{{ currentStockRealtimeQuote.symbol }}</small>
+                      </div>
+                      <div class="stock-realtime-focus-price">
+                        <strong :class="getChangeClass(currentStockRealtimeQuote.changePercent)">{{ currentStockRealtimeQuote.price.toFixed(2) }}</strong>
+                        <small :class="getChangeClass(currentStockRealtimeQuote.changePercent)">
+                          {{ currentStockRealtimeQuote.change >= 0 ? '+' : '' }}{{ currentStockRealtimeQuote.change.toFixed(2) }} / {{ formatPercent(currentStockRealtimeQuote.changePercent.toFixed(2)) }}
+                        </small>
+                        <small>成交额 {{ formatRealtimeMoney(currentStockRealtimeQuote.turnoverAmount) }}</small>
+                      </div>
+                    </article>
+
+                    <div class="stock-realtime-grid">
+                      <article v-for="item in stockRealtimeBenchmarks" :key="item.symbol" class="stock-realtime-mini-card">
+                        <div>
+                          <strong>{{ item.name }}</strong>
+                          <small>{{ item.symbol }}</small>
+                        </div>
+                        <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
+                        <small :class="getChangeClass(item.changePercent)">{{ formatPercent(item.changePercent.toFixed(2)) }}</small>
+                      </article>
+                    </div>
+
+                    <div class="stock-realtime-pill-row">
+                      <span class="plan-pill">主力 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}</span>
+                      <span class="plan-pill">北向 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}</span>
+                      <span class="plan-pill">涨跌 {{ stockRealtimeOverview.breadth?.advancers ?? 0 }} / {{ stockRealtimeOverview.breadth?.decliners ?? 0 }}</span>
+                      <span class="plan-pill">涨停 {{ stockRealtimeOverview.breadth?.limitUpCount ?? 0 }} / 跌停 {{ stockRealtimeOverview.breadth?.limitDownCount ?? 0 }}</span>
+                    </div>
+                  </template>
+                  <p v-else class="muted">暂无实时总览数据。</p>
+                </template>
+              </div>
+
+              <p v-else class="muted">选择股票后在此查看市场实时上下文。</p>
+            </section>
+
             <section class="copilot-card news-impact">
               <div class="news-impact-header">
                 <div>
@@ -3258,6 +3611,53 @@ watch(currentStockKey, () => {
   margin-bottom: 1rem;
 }
 
+.plan-board-realtime-strip {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 248, 237, 0.92), rgba(238, 248, 255, 0.88));
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.plan-board-realtime-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.plan-board-realtime-head strong,
+.plan-board-index-card strong {
+  color: #0f172a;
+}
+
+.plan-board-realtime-head small,
+.plan-board-index-card small {
+  color: #64748b;
+}
+
+.plan-board-realtime-metrics {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.plan-board-index-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.65rem;
+}
+
+.plan-board-index-card {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
 .trading-plan-header,
 .plan-item-header,
 .plan-modal-actions,
@@ -3271,6 +3671,71 @@ watch(currentStockKey, () => {
 .plan-refresh-button {
   color: #0f172a;
   background: rgba(15, 23, 42, 0.08);
+}
+
+.stock-realtime-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stock-realtime-content {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.stock-realtime-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.stock-realtime-focus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.05), rgba(37, 99, 235, 0.08));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.stock-realtime-focus p,
+.stock-realtime-focus strong,
+.stock-realtime-focus small,
+.stock-realtime-mini-card strong,
+.stock-realtime-mini-card small {
+  display: block;
+}
+
+.stock-realtime-focus-price {
+  text-align: right;
+}
+
+.stock-realtime-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.6rem;
+}
+
+.stock-realtime-mini-card {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.75rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.stock-realtime-pill-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .plan-board-list {
@@ -3961,6 +4426,14 @@ watch(currentStockKey, () => {
   .panel-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .stock-realtime-focus {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-realtime-focus-price {
+    text-align: left;
   }
 }
 </style>

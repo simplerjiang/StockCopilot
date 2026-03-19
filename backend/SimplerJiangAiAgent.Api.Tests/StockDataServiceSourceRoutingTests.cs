@@ -8,7 +8,7 @@ namespace SimplerJiangAiAgent.Api.Tests;
 public sealed class StockDataServiceSourceRoutingTests
 {
     [Fact]
-    public async Task GetMinuteLineAsync_UsesTencentFirst_WhenNoExplicitSource()
+    public async Task GetMinuteLineAsync_UsesEastmoneyFirst_WhenNoExplicitSource()
     {
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var tencent = new FakeSource(TencentName)
@@ -24,28 +24,28 @@ public sealed class StockDataServiceSourceRoutingTests
         var result = await service.GetMinuteLineAsync("sh600000");
 
         var item = Assert.Single(result);
-        Assert.Equal(10m, item.Price);
-        Assert.Equal(1, tencent.MinuteCallCount);
-        Assert.Equal(0, eastmoney.MinuteCallCount);
+        Assert.Equal(11m, item.Price);
+        Assert.Equal(0, tencent.MinuteCallCount);
+        Assert.Equal(1, eastmoney.MinuteCallCount);
     }
 
     [Fact]
-    public async Task GetMinuteLineAsync_FallsBackToEastmoney_WhenTencentReturnsEmpty()
+    public async Task GetMinuteLineAsync_FallsBackToTencent_WhenEastmoneyReturnsEmpty()
     {
         using var cache = new MemoryCache(new MemoryCacheOptions());
-        var tencent = new FakeSource(TencentName);
-        var eastmoney = new FakeSource(EastmoneyName)
+        var tencent = new FakeSource(TencentName)
         {
             MinuteLines = new[] { new MinuteLinePointDto(new DateOnly(2026, 3, 18), new TimeSpan(9, 31, 0), 11m, 11m, 200m) }
         };
+        var eastmoney = new FakeSource(EastmoneyName);
 
         var service = CreateService(cache, new[] { tencent, eastmoney });
         var result = await service.GetMinuteLineAsync("sh600000");
 
         var item = Assert.Single(result);
         Assert.Equal(11m, item.Price);
-        Assert.Equal(1, tencent.MinuteCallCount);
         Assert.Equal(1, eastmoney.MinuteCallCount);
+        Assert.Equal(1, tencent.MinuteCallCount);
     }
 
     [Fact]
