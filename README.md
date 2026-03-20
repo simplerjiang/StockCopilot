@@ -175,9 +175,29 @@ opencode
 - 用户机器不需要安装数据库
 - 桌面程序会自动启动同目录后端
 - 数据库、日志、LLM 本地配置统一落到 `%LOCALAPPDATA%\SimplerJiangAiAgent`
+- 若首次启动尚未配置任何可用 LLM Key，桌面端会自动落到 `LLM 设置` 页签，并在首页顶部显示引导横幅
 
 当前仍需用户自己准备的内容：
 - LLM Key，需要用户在首次使用时自行配置
+
+### Windows 安装器（Setup.exe）
+当前仓库已经补上 Inno Setup 安装器脚本与构建包装脚本：
+
+```powershell
+.\scripts\build-windows-installer.ps1
+```
+
+脚本会先生成 `artifacts\windows-package` 可运行目录，然后调用 Inno Setup 编译：
+- 安装器脚本：`scripts\windows-installer.iss`
+- 默认输出目录：`artifacts\installer`
+
+前提：
+- 本机需先安装 Inno Setup 6，并确保 `ISCC.exe` 在 PATH 中，或位于默认安装目录
+
+安装器交付内容：
+- `Setup.exe` 会把桌面端、后端和前端静态资源一起安装到目标目录
+- 运行期数据库、日志、LLM 本地设置仍然写入 `%LOCALAPPDATA%\SimplerJiangAiAgent`
+- 用户的 `llm-settings.local.json` 不会被打进安装包，也不会被升级覆盖
 
 ## 多 Agent 自动化开发与测试
 入口与说明： [.automation/README.md](.automation/README.md)

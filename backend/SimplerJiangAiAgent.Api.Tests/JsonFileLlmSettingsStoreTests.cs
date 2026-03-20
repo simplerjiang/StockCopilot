@@ -1,7 +1,11 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
+using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 using Xunit;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -128,6 +132,34 @@ public sealed class JsonFileLlmSettingsStoreTests
         Assert.Equal("gemini_official", active);
         Assert.Equal("gemini_official", activeRead);
     }
+
+      [Fact]
+      public void ServiceCollection_ShouldResolveStoreFromRuntimePaths()
+      {
+        using var envScope = ApiKeyEnvironmentScope.Clear();
+        var rootPath = CreateTempRoot();
+        var configuration = new ConfigurationBuilder()
+          .AddInMemoryCollection(new Dictionary<string, string?>
+          {
+            ["Database:DataRootPath"] = rootPath
+          })
+          .Build();
+        var environment = new FakeWebHostEnvironment(rootPath);
+        var services = new ServiceCollection();
+
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddSingleton<IHostEnvironment>(environment);
+        services.AddSingleton<IWebHostEnvironment>(environment);
+        services.AddSingleton<AppRuntimePaths>();
+        services.AddSingleton<ILlmSettingsStore>(serviceProvider =>
+          new JsonFileLlmSettingsStore(serviceProvider.GetRequiredService<AppRuntimePaths>()));
+
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var store = serviceProvider.GetRequiredService<ILlmSettingsStore>();
+
+        Assert.IsType<JsonFileLlmSettingsStore>(store);
+      }
 
     private static string CreateTempRoot()
     {

@@ -1,0 +1,77 @@
+# GOAL-016 DELIVERY REPORT - DESKTOP ONBOARDING + SETUP.EXE - 2026-03-20
+
+## English
+- Scope: finish the current distribution slice for GOAL-016 by proving the packaged desktop EXE can self-start the packaged backend, guide first-run users to LLM key setup, and compile a real Windows `Setup.exe` installer.
+- Backend actions:
+  - Added public `GET /api/llm/onboarding-status` to report whether any enabled provider has an API key, which provider is active, and which tab should be opened for onboarding.
+  - Fixed runtime DI for `ILlmSettingsStore` by switching to an explicit `AppRuntimePaths` factory registration, avoiding constructor ambiguity in real packaged runs.
+  - Added a regression test that resolves `JsonFileLlmSettingsStore` from a service collection built around `AppRuntimePaths`.
+- Frontend actions:
+  - Updated `frontend/src/App.vue` to read onboarding status on load, show a first-run banner, preserve explicit tab URLs, and auto-route first-time users to `admin-llm` when no key exists.
+  - Added app-shell tests for the onboarding redirect and banner behavior.
+- Desktop actions:
+  - Updated the WinForms host so it fetches `/api/llm/onboarding-status` after backend health succeeds and navigates to `/?tab=admin-llm&onboarding=1` when onboarding is required.
+- Packaging and installer actions:
+  - Fixed `scripts/publish-windows-package.ps1` so it clears stale output before publishing and copies frontend assets into `Backend/frontend/dist` without creating a nested `dist/dist` tree.
+  - Added `scripts/windows-installer.iss` and `scripts/build-windows-installer.ps1`.
+  - Installed Inno Setup 6 locally through `winget` and updated the build script to detect the per-user `ISCC.exe` path.
+- Test and verification commands:
+  - `dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj`
+  - `npm --prefix .\frontend run test:unit -- src\__tests__\App.spec.js src\modules\admin\AdminLlmSettings.spec.js`
+  - `dotnet build .\desktop\SimplerJiangAiAgent.Desktop\SimplerJiangAiAgent.Desktop.csproj`
+  - `& .\scripts\publish-windows-package.ps1 -SelfContained:$false`
+  - `winget install --id JRSoftware.InnoSetup --accept-package-agreements --accept-source-agreements --silent`
+  - `& .\scripts\build-windows-installer.ps1 -SkipPackagePublish`
+  - Launch packaged desktop EXE, then request `http://localhost:5119/api/health`
+  - Request `http://localhost:5119/api/llm/onboarding-status`
+  - CopilotBrowser validation against `http://localhost:5119/?tab=admin-llm&onboarding=1`
+- Results:
+  - Backend tests passed: `175/175`.
+  - Focused frontend tests passed: `6/6`.
+  - Desktop build passed.
+  - Packaged desktop EXE self-started the backend successfully; `/api/health` returned `{"status":"ok"}`.
+  - Packaged backend onboarding endpoint returned `{"hasAnyApiKey":false,"requiresOnboarding":true,"activeProviderKey":"default","recommendedTabKey":"admin-llm"}`.
+  - Browser validation confirmed the frontend renders the onboarding banner, `LLM 设置` tab, and `管理员登录` form.
+  - Real installer artifact produced successfully: `artifacts\installer\SimplerJiangAiAgent-Setup.exe`.
+- Issues:
+  - Initial packaged onboarding smoke returned HTTP 500 because `JsonFileLlmSettingsStore` had two resolvable constructors under DI. Fixed by using explicit factory registration.
+  - Initial installer build failed because the script only searched system-wide Inno Setup paths. Fixed by adding the winget per-user path under `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`.
+  - Initial installer compile referenced a Simplified Chinese language file that was not shipped in this local Inno Setup installation. Fixed by falling back to the default English installer language on this machine.
+
+## 中文
+- 范围：完成 GOAL-016 当前分发切片，证明发布版桌面 EXE 能自动拉起打包后端、首次启动时能明确引导用户去配置 LLM Key，并实际编译出真正可分发的 Windows `Setup.exe`。
+- 后端动作：
+  - 新增公共接口 `GET /api/llm/onboarding-status`，返回是否已有任一启用 Provider 配置了 API Key、当前激活通道，以及建议跳转的首启页签。
+  - 将 `ILlmSettingsStore` 的运行期 DI 改为显式 `AppRuntimePaths` 工厂注册，避免发布版真实运行时因双构造器可解析而触发歧义。
+  - 新增回归测试，覆盖基于 `AppRuntimePaths` 的 `JsonFileLlmSettingsStore` 服务解析。
+- 前端动作：
+  - 更新 `frontend/src/App.vue`，在启动时读取 onboarding 状态、显示首启横幅、保留显式 tab URL，并在没有 Key 时自动跳到 `admin-llm`。
+  - 为 App 壳新增首启跳转与横幅显示测试。
+- 桌面端动作：
+  - 更新 WinForms 宿主，在后端健康检查通过后调用 `/api/llm/onboarding-status`；若需要首启引导，则导航到 `/?tab=admin-llm&onboarding=1`。
+- 打包与安装器动作：
+  - 修复 `scripts/publish-windows-package.ps1`：重新打包前先清理旧输出，并把前端静态资源正确复制到 `Backend/frontend/dist`，不再生成错误的 `dist/dist` 嵌套目录。
+  - 新增 `scripts/windows-installer.iss` 与 `scripts/build-windows-installer.ps1`。
+  - 通过 `winget` 本机安装 Inno Setup 6，并更新脚本以识别 `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` 这种按用户安装的路径。
+- 测试与验证命令：
+  - `dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj`
+  - `npm --prefix .\frontend run test:unit -- src\__tests__\App.spec.js src\modules\admin\AdminLlmSettings.spec.js`
+  - `dotnet build .\desktop\SimplerJiangAiAgent.Desktop\SimplerJiangAiAgent.Desktop.csproj`
+  - `& .\scripts\publish-windows-package.ps1 -SelfContained:$false`
+  - `winget install --id JRSoftware.InnoSetup --accept-package-agreements --accept-source-agreements --silent`
+  - `& .\scripts\build-windows-installer.ps1 -SkipPackagePublish`
+  - 启动发布版桌面 EXE 后请求 `http://localhost:5119/api/health`
+  - 请求 `http://localhost:5119/api/llm/onboarding-status`
+  - 使用 CopilotBrowser 打开 `http://localhost:5119/?tab=admin-llm&onboarding=1` 做页面验收
+- 结果：
+  - 后端测试通过：`175/175`。
+  - 前端定向测试通过：`6/6`。
+  - 桌面项目构建通过。
+  - 发布版桌面 EXE 已成功自动拉起后端，`/api/health` 返回 `{"status":"ok"}`。
+  - 发布版后端首启接口返回 `{"hasAnyApiKey":false,"requiresOnboarding":true,"activeProviderKey":"default","recommendedTabKey":"admin-llm"}`。
+  - 浏览器验收确认页面能看到首启横幅、`LLM 设置` 页签和 `管理员登录` 表单。
+  - 已成功生成真实安装器：`artifacts\installer\SimplerJiangAiAgent-Setup.exe`。
+- 问题：
+  - 首次发布版 onboarding 烟测返回 500，根因是 `JsonFileLlmSettingsStore` 在 DI 中存在两个都可解析的构造器。已通过显式工厂注册修复。
+  - 首次安装器构建失败，根因是脚本只搜索系统级 Inno Setup 路径。已补上 winget 按用户安装路径 `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`。
+  - 首次安装器编译引用了当前本机未安装的简体中文语言文件。已调整为在本机回退到默认英文安装器语言。"

@@ -11,6 +11,12 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $packageRoot = Join-Path $root $OutputDir
 $backendOutput = Join-Path $packageRoot "Backend"
 
+if (Test-Path $packageRoot) {
+    Remove-Item $packageRoot -Recurse -Force
+}
+
+New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+
 Write-Host "Building frontend..."
 npm --prefix (Join-Path $root "frontend") run build
 
@@ -22,9 +28,9 @@ dotnet publish (Join-Path $root "backend/SimplerJiangAiAgent.Api/SimplerJiangAiA
     -o $backendOutput
 
 Write-Host "Copying frontend dist into backend package..."
-$backendFrontendDir = Join-Path $backendOutput "frontend"
+$backendFrontendDir = Join-Path $backendOutput "frontend\dist"
 New-Item -ItemType Directory -Force -Path $backendFrontendDir | Out-Null
-Copy-Item (Join-Path $root "frontend/dist") (Join-Path $backendFrontendDir "dist") -Recurse -Force
+Copy-Item (Join-Path $root "frontend/dist/*") $backendFrontendDir -Recurse -Force
 
 Write-Host "Seeding default LLM settings without local secrets..."
 $backendAppDataDir = Join-Path $backendOutput "App_Data"

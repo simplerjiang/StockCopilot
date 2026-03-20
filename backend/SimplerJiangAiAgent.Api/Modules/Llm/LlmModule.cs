@@ -10,6 +10,7 @@ using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 using SimplerJiangAiAgent.Api.Infrastructure.Security;
+using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 using SimplerJiangAiAgent.Api.Modules.Llm.Models;
 
 namespace SimplerJiangAiAgent.Api.Modules.Llm;
@@ -24,7 +25,8 @@ public sealed class LlmModule : IModule
             timeoutSeconds = 30;
         }
 
-        services.AddSingleton<ILlmSettingsStore, JsonFileLlmSettingsStore>();
+        services.AddSingleton<ILlmSettingsStore>(serviceProvider =>
+            new JsonFileLlmSettingsStore(serviceProvider.GetRequiredService<AppRuntimePaths>()));
         services.AddSingleton<ILlmService, LlmService>();
         services.AddSingleton<IAdminAuthService, AdminAuthService>();
         services.AddHttpClient<OpenAiProvider>(client =>
@@ -36,6 +38,21 @@ public sealed class LlmModule : IModule
 
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
+        app.MapGet("/api/llm/onboarding-status", async (ILlmSettingsStore store) =>
+        {
+            var settings = await store.GetAllAsync();
+            var activeProviderKey = await store.GetActiveProviderKeyAsync();
+            var hasAnyApiKey = settings.Any(item => item.Enabled && !string.IsNullOrWhiteSpace(item.ApiKey));
+
+            return Results.Ok(new LlmOnboardingStatusResponse(
+                hasAnyApiKey,
+                !hasAnyApiKey,
+                activeProviderKey,
+                "admin-llm"));
+        })
+        .WithName("GetLlmOnboardingStatus")
+        .WithOpenApi();
+
         var adminGroup = app.MapGroup("/api/admin");
 
         adminGroup.MapPost("/login", (AdminLoginRequest request, IAdminAuthService authService) =>

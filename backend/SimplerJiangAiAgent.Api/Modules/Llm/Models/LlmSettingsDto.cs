@@ -30,3 +30,9 @@ public sealed record ActiveLlmProviderResponse(
 
 public sealed record ActiveLlmProviderRequest(
     string ActiveProviderKey);
+
+public sealed record LlmOnboardingStatusResponse(
+    bool HasAnyApiKey,
+    bool RequiresOnboarding,
+    string ActiveProviderKey,
+    string RecommendedTabKey);

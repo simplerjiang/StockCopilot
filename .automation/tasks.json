@@ -174,7 +174,7 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "2026-03-20 已完成总体规划并落下第一阶段可运行基础：当前发布版后端默认切到 SQLite，运行期数据库/日志/LLM 本地配置统一迁到 `%LOCALAPPDATA%\\SimplerJiangAiAgent`，桌面宿主可自动拉起同目录后端，且已新增 `scripts/publish-windows-package.ps1` 生成“桌面 EXE + Backend + frontend dist”的可运行目录。验证已覆盖 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj` 174/174、桌面构建通过、打包脚本成功，以及发布版后端在 `Production` 下 `/api/health` 返回 `{\"status\":\"ok\"}` 且自动创建 SQLite 文件。剩余开发主要集中在 R2 冷热分层与 R4 安装器/升级链路。"
+      "notes": "2026-03-20 已完成当前交付切片：发布版后端默认切到 SQLite，运行期数据库/日志/LLM 本地配置统一迁到 `%LOCALAPPDATA%\\SimplerJiangAiAgent`，桌面宿主会自动拉起同目录后端，并在未配置任何 LLM Key 时自动落到 `LLM 设置` 页签。当前还新增了公共 `/api/llm/onboarding-status`、前端首页首启横幅、`scripts/build-windows-installer.ps1` 与 `scripts/windows-installer.iss`，并已成功产出 `artifacts\\installer\\SimplerJiangAiAgent-Setup.exe`。验证覆盖 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj` 175/175、`npm --prefix .\\frontend run test:unit -- src\\__tests__\\App.spec.js src\\modules\\admin\\AdminLlmSettings.spec.js` 6/6、桌面构建通过、打包脚本成功、安装器编译成功，以及发布版桌面 EXE 拉起后 `http://localhost:5119/api/health` 返回 `{\"status\":\"ok\"}`、`/api/llm/onboarding-status` 返回 `requiresOnboarding=true`、浏览器实测看到 `首次启动还没有 LLM Key` 与 `管理员登录`。剩余大项主要是 R2 冷热分层。"
     },
     {
       "id": "GOAL-016-R1",
@@ -201,24 +201,24 @@
     {
       "id": "GOAL-016-R3",
       "title": "Desktop host self-start integration",
-      "status": "todo",
-      "stages": {
-        "plan": "done",
-        "dev": "done",
-        "test": "todo"
-      },
-      "notes": "R3 已完成首轮开发：`SimplerJiangAiAgent.Desktop` 现在会优先复用 `http://localhost:5119` 的健康后端，否则自动在发布目录 `Backend/` 下查找 `SimplerJiangAiAgent.Api.exe` 或 `.dll` 并启动，自动注入 `ASPNETCORE_URLS`、`ASPNETCORE_ENVIRONMENT`、`DOTNET_ENVIRONMENT` 与 `SJAI_DATA_ROOT`，并在健康检查通过后再导航到前端页面。当前仍欠一次完整的发布版桌面 GUI 自动化验收，因此状态保留为未完结。"
-    },
-    {
-      "id": "GOAL-016-R4",
-      "title": "Installer and upgrade delivery pipeline",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
         "dev": "done",
         "test": "done"
       },
-      "notes": "R4 已完成基础打包链路：新增 `scripts/publish-windows-package.ps1`，串起前端 build、后端 publish、桌面 publish、前端 dist 复制、默认 `llm-settings.json` 投递以及 `llm-settings.local.json` 排除。已验证脚本可以稳定输出 `artifacts\\windows-package` 可运行目录，并确认包内不含本地 LLM 密钥文件。尚未完成的部分是正式安装器、升级迁移与回滚机制。"
+      "notes": "R3 已完成开发与验收：`SimplerJiangAiAgent.Desktop` 会优先复用 `http://localhost:5119` 的健康后端，否则自动在发布目录 `Backend/` 下查找 `SimplerJiangAiAgent.Api.exe` 或 `.dll` 并启动，自动注入 `ASPNETCORE_URLS`、`ASPNETCORE_ENVIRONMENT`、`DOTNET_ENVIRONMENT` 与 `SJAI_DATA_ROOT`。本轮进一步加入首启 LLM 引导：桌面端会先读取 `/api/llm/onboarding-status`，若未配置 key，则导航到 `/?tab=admin-llm&onboarding=1`。验证已覆盖桌面构建、发布版桌面 EXE 启动后 `/api/health` 返回成功，以及浏览器实测 `LLM 设置` 页和首启横幅同时可见。"
+    },
+    {
+      "id": "GOAL-016-R4",
+      "title": "Installer and upgrade delivery pipeline",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "R4 已完成当前安装交付链路：`scripts/publish-windows-package.ps1` 现在会先清理旧包并把前端静态资源正确复制到 `Backend/frontend/dist`，避免嵌套 `dist/dist`；新增 `scripts/windows-installer.iss` 与 `scripts/build-windows-installer.ps1`，并补齐对 winget per-user 安装的 Inno Setup 探测。已验证脚本能稳定输出 `artifacts\\windows-package` 可运行目录、包内不含 `llm-settings.local.json`，且 Inno Setup 已成功编译出 `artifacts\\installer\\SimplerJiangAiAgent-Setup.exe`。后续剩余工作主要是升级迁移与回滚策略，而不是首次安装产物本身。"
     },
     {
       "id": "GOAL-002",

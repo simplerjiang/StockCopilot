@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Text.Json;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace SimplerJiangAiAgent.Desktop;
@@ -9,6 +10,7 @@ public partial class Form1 : Form
 {
     private const int PreferredBackendPort = 5119;
     private static readonly HttpClient HealthClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly WebView2 _webView;
     private Process? _backendProcess;
 #if DEBUG
@@ -68,6 +70,7 @@ public partial class Form1 : Form
         try
         {
             var backendBaseUrl = await EnsureBackendAsync();
+            var startupUrl = await GetStartupUrlAsync(backendBaseUrl);
             await _webView.EnsureCoreWebView2Async();
 #if DEBUG
             _webView.CoreWebView2.ProcessFailed += (_, args) => AppendDebug($"WebView2 进程异常: {args.Reason}");
@@ -89,7 +92,7 @@ public partial class Form1 : Form
                 AppendDebug($"线程异常: {args.Exception}");
             };
 #endif
-            _webView.CoreWebView2.Navigate(backendBaseUrl);
+            _webView.CoreWebView2.Navigate(startupUrl);
         }
         catch (Exception ex)
         {
@@ -226,6 +229,40 @@ public partial class Form1 : Form
         }
     }
 
+    private static async Task<string> GetStartupUrlAsync(string baseUrl)
+    {
+        var onboardingStatus = await GetOnboardingStatusAsync(baseUrl);
+        if (onboardingStatus?.RequiresOnboarding != true)
+        {
+            return baseUrl;
+        }
+
+        var tabKey = string.IsNullOrWhiteSpace(onboardingStatus.RecommendedTabKey)
+            ? "admin-llm"
+            : onboardingStatus.RecommendedTabKey;
+
+        return $"{baseUrl}/?tab={Uri.EscapeDataString(tabKey)}&onboarding=1";
+    }
+
+    private static async Task<LlmOnboardingStatusResponse?> GetOnboardingStatusAsync(string baseUrl)
+    {
+        try
+        {
+            using var response = await HealthClient.GetAsync($"{baseUrl}/api/llm/onboarding-status");
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            return await JsonSerializer.DeserializeAsync<LlmOnboardingStatusResponse>(stream, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static int FindAvailablePort(int startInclusive, int endExclusive)
     {
         for (var port = startInclusive; port < endExclusive; port++)
@@ -282,4 +319,10 @@ public partial class Form1 : Form
 #endif
 
     private sealed record BackendLaunchCommand(string FileName, string Arguments, string WorkingDirectory);
+
+    private sealed record LlmOnboardingStatusResponse(
+        bool HasAnyApiKey,
+        bool RequiresOnboarding,
+        string ActiveProviderKey,
+        string RecommendedTabKey);
 }
