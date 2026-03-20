@@ -15,6 +15,8 @@
 ## Testing & Verification
 - If no backend code is changed, backend tests are optional.
 - If no frontend code is changed, frontend tests are optional.
+- Before any push to GitHub, verify the packaged Windows desktop chain at least once: run `scripts\publish-windows-package.ps1`, confirm `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe` exists, and record the result.
+- If the change affects desktop startup, packaging, installer, runtime paths, or launch behavior, also launch the packaged desktop EXE once and verify the bundled app actually comes up.
 - For UI tasks, verify:
   - UI renders correctly
   - Interaction is clickable/usable

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import StockCharts from './StockCharts.vue'
 import StockAgentPanels from './StockAgentPanels.vue'
+import StockSourceLoadProgress from './StockSourceLoadProgress.vue'
 import TerminalView from './TerminalView.vue'
 import CopilotPanel from './CopilotPanel.vue'
 import ChatWindow from '../../components/ChatWindow.vue'
@@ -2539,26 +2540,12 @@ watch(currentStockKey, () => {
               <p>当前价：{{ detail.quote.price }}</p>
               <p>涨跌：{{ detail.quote.change }}（{{ detail.quote.changePercent }}%）</p>
               <p class="muted">更新时间：{{ formatDate(detail.quote.timestamp) }}</p>
-              <div v-if="showSourceLoadProgress" class="source-progress-panel">
-                <div class="source-progress-header">
-                  <strong>{{ sourceLoadProgressTitle }}</strong>
-                  <span>{{ sourceLoadProgressPercent }}%</span>
-                </div>
-                <div class="source-progress-track">
-                  <span :style="{ width: `${sourceLoadProgressPercent}%` }"></span>
-                </div>
-                <div class="source-progress-list">
-                  <div
-                    v-for="stage in visibleSourceLoadStages"
-                    :key="stage.key"
-                    class="source-progress-item"
-                    :class="`status-${stage.status}`"
-                  >
-                    <span>{{ stage.label }}</span>
-                    <small>{{ stage.message }}</small>
-                  </div>
-                </div>
-              </div>
+              <StockSourceLoadProgress
+                v-if="showSourceLoadProgress"
+                :title="sourceLoadProgressTitle"
+                :progress-percent="sourceLoadProgressPercent"
+                :stages="visibleSourceLoadStages"
+              />
             </div>
 
             <div class="quote-card">
@@ -2603,26 +2590,13 @@ watch(currentStockKey, () => {
             <h4>等待加载股票</h4>
             <p>主视区只保留价格、分时、K 线、量价指标与消息带。</p>
             <p class="muted">数据来源：腾讯 / 新浪 / 百度（后端爬虫占位）</p>
-            <div v-if="showSourceLoadProgress" class="source-progress-panel empty-progress-panel">
-              <div class="source-progress-header">
-                <strong>{{ sourceLoadProgressTitle }}</strong>
-                <span>{{ sourceLoadProgressPercent }}%</span>
-              </div>
-              <div class="source-progress-track">
-                <span :style="{ width: `${sourceLoadProgressPercent}%` }"></span>
-              </div>
-              <div class="source-progress-list">
-                <div
-                  v-for="stage in visibleSourceLoadStages"
-                  :key="stage.key"
-                  class="source-progress-item"
-                  :class="`status-${stage.status}`"
-                >
-                  <span>{{ stage.label }}</span>
-                  <small>{{ stage.message }}</small>
-                </div>
-              </div>
-            </div>
+            <StockSourceLoadProgress
+              v-if="showSourceLoadProgress"
+              :title="sourceLoadProgressTitle"
+              :progress-percent="sourceLoadProgressPercent"
+              :stages="visibleSourceLoadStages"
+              empty
+            />
           </div>
         </template>
 
@@ -3481,92 +3455,6 @@ watch(currentStockKey, () => {
 .quote-card p,
 .terminal-empty p {
   margin: 0.2rem 0;
-}
-
-.source-progress-panel {
-  display: grid;
-  gap: 0.55rem;
-  margin-top: 0.9rem;
-  padding: 0.8rem 0.85rem;
-  border-radius: 14px;
-  background: rgba(148, 163, 184, 0.1);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.empty-progress-panel {
-  margin-top: 1rem;
-  width: min(520px, 100%);
-}
-
-.source-progress-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.source-progress-header strong {
-  color: #f8fafc;
-  font-size: 0.92rem;
-}
-
-.source-progress-header span {
-  color: #cbd5e1;
-  font-size: 0.82rem;
-}
-
-.source-progress-track {
-  position: relative;
-  overflow: hidden;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.36);
-}
-
-.source-progress-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #38bdf8, #f59e0b);
-  transition: width 0.22s ease;
-}
-
-.source-progress-list {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.source-progress-item {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  font-size: 0.84rem;
-}
-
-.source-progress-item span {
-  color: #f8fafc;
-  font-weight: 600;
-}
-
-.source-progress-item small {
-  color: #cbd5e1;
-  text-align: right;
-}
-
-.source-progress-item.status-pending span,
-.source-progress-item.status-pending small {
-  color: #fde68a;
-}
-
-.source-progress-item.status-success span,
-.source-progress-item.status-success small {
-  color: #86efac;
-}
-
-.source-progress-item.status-error span,
-.source-progress-item.status-error small {
-  color: #fca5a5;
 }
 
 .fundamental-facts {

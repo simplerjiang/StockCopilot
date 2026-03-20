@@ -1,6 +1,17 @@
 {
   "tasks": [
     {
+      "id": "MANUAL-20260320-VUE-READABILITY",
+      "title": "Vue page readability split refactor",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-20 已完成前端长 Vue 页面可读性拆分，保持行为不变的前提下把 `StockAgentPanels.vue` 拆出 `StockAgentCard.vue`，把 `MarketSentimentTab.vue` 的实时总览拆出 `MarketRealtimeOverview.vue`，把 `StockInfoTab.vue` 的加载进度拆出 `StockSourceLoadProgress.vue`。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockAgentPanels.spec.js src/modules/market/MarketSentimentTab.spec.js src/modules/stocks/StockInfoTab.spec.js` 57/57 通过，以及 Browser MCP 在 `http://localhost:5119/` 实测确认股票页与情绪页渲染正常。情绪页浏览器验收中 `/api/market/sectors?boardType=concept&page=1&pageSize=12&sort=strength` 返回服务端错误，属于现有后端运行态问题，不是本次模板拆分回归。"
+    },
+    {
       "id": "MANUAL-20260318-DUAL-SOURCE",
       "title": "Dual-source market data strategy",
       "status": "done",

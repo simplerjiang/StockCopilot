@@ -153,6 +153,17 @@ $env:LLM__GEMINI_OFFICIAL__APIKEY="你的 Gemini 官方_API_KEY"
 opencode
 ```
 
+如果需要本地快速验证当前前后端联调页面，直接运行：
+
+```powershell
+.\start-all.bat
+```
+
+说明：
+- `start-all.bat` 会先构建前端，再以 `Production + SQLite + --no-launch-profile` 启动后端，并自动打开浏览器到 `http://localhost:5119`
+- 这个入口适合日常快速看页面和联调 API，不依赖桌面 EXE 或 WebView2 运行时
+- 如果要验证最终桌面打包链路，单独执行 `scripts\publish-windows-package.ps1` 后运行 `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe`
+
 首次建议执行：
 - `/models` 确认已选中 `zai/glm-5`
 - `/init` 让 OpenCode 读取仓库结构与规则

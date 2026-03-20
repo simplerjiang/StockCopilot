@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import MarketRealtimeOverview from './MarketRealtimeOverview.vue'
 
 const boardType = ref('concept')
 const sort = ref('strength')
@@ -67,12 +68,7 @@ const stageToneClass = computed(() => {
   if (label === '分歧') return 'tone-warning'
   return 'tone-neutral'
 })
-const realtimeIndices = computed(() => realtimeOverview.value?.indices ?? [])
 const realtimeSectorItems = computed(() => realtimeSectorBoard.value?.items ?? [])
-const realtimeBreadthBuckets = computed(() => {
-  const buckets = realtimeOverview.value?.breadth?.buckets ?? []
-  return buckets.filter(item => item.count > 0)
-})
 
 const normalizeSummary = payload => payload ? ({
   snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
@@ -285,12 +281,6 @@ const formatMoney = value => {
 const formatSignedAmount = value => {
   const number = Number(value ?? 0)
   return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
-}
-
-const formatBucketWidth = count => {
-  const maxCount = realtimeBreadthBuckets.value.reduce((current, item) => Math.max(current, Number(item.count ?? 0)), 0)
-  if (!maxCount) return '0%'
-  return `${Math.max(8, Math.round((Number(count ?? 0) / maxCount) * 100))}%`
 }
 
 const formatScale = value => `${(Number(value ?? 0) * 100).toFixed(0)}%`
@@ -556,78 +546,16 @@ onMounted(() => {
       </div>
     </header>
 
-    <section v-if="realtimeOverviewEnabled" class="realtime-deck">
-      <article class="realtime-card realtime-index-card">
-        <div class="realtime-card-head">
-          <div>
-            <p class="market-kicker realtime-kicker">Realtime Tape</p>
-            <h3>指数快照</h3>
-          </div>
-          <small>{{ formatDate(realtimeOverview?.snapshotTime) }}</small>
-        </div>
-        <p v-if="realtimeError" class="feedback error compact">{{ realtimeError }}</p>
-        <p v-else-if="realtimeLoading && !realtimeIndices.length" class="feedback compact">实时总览加载中...</p>
-        <div v-else class="ticker-grid">
-          <article v-for="item in realtimeIndices" :key="item.symbol" class="ticker-card">
-            <span>{{ item.name }}</span>
-            <strong>{{ item.price.toFixed(2) }}</strong>
-            <small :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</small>
-            <small>成交额 {{ formatMoney(item.turnoverAmount) }}</small>
-          </article>
-        </div>
-      </article>
-
-      <article class="realtime-card realtime-flow-card">
-        <div class="realtime-card-head">
-          <div>
-            <p class="market-kicker realtime-kicker">Capital Flow</p>
-            <h3>资金与广度</h3>
-          </div>
-          <small>{{ formatDate(realtimeOverview?.mainCapitalFlow?.snapshotTime || realtimeOverview?.northboundFlow?.snapshotTime) }}</small>
-        </div>
-        <div class="flow-grid">
-          <div class="flow-metric">
-            <span>主力净流入</span>
-            <strong :class="{ positive: (realtimeOverview?.mainCapitalFlow?.mainNetInflow ?? 0) >= 0, negative: (realtimeOverview?.mainCapitalFlow?.mainNetInflow ?? 0) < 0 }">
-              {{ formatSignedAmount(realtimeOverview?.mainCapitalFlow?.mainNetInflow) }}
-            </strong>
-            <small>超大单 {{ formatSignedAmount(realtimeOverview?.mainCapitalFlow?.superLargeOrderNetInflow) }}</small>
-          </div>
-          <div class="flow-metric">
-            <span>北向总净流入</span>
-            <strong :class="{ positive: (realtimeOverview?.northboundFlow?.totalNetInflow ?? 0) >= 0, negative: (realtimeOverview?.northboundFlow?.totalNetInflow ?? 0) < 0 }">
-              {{ formatSignedAmount(realtimeOverview?.northboundFlow?.totalNetInflow) }}
-            </strong>
-            <small>沪股通 {{ formatSignedAmount(realtimeOverview?.northboundFlow?.shanghaiNetInflow) }} / 深股通 {{ formatSignedAmount(realtimeOverview?.northboundFlow?.shenzhenNetInflow) }}</small>
-          </div>
-          <div class="flow-metric">
-            <span>涨跌分布</span>
-            <strong>{{ realtimeOverview?.breadth?.advancers ?? 0 }} / {{ realtimeOverview?.breadth?.decliners ?? 0 }}</strong>
-            <small>涨停 {{ realtimeOverview?.breadth?.limitUpCount ?? 0 }} / 跌停 {{ realtimeOverview?.breadth?.limitDownCount ?? 0 }} / 平盘 {{ realtimeOverview?.breadth?.flatCount ?? 0 }}</small>
-          </div>
-        </div>
-      </article>
-
-      <article class="realtime-card realtime-breadth-card">
-        <div class="realtime-card-head">
-          <div>
-            <p class="market-kicker realtime-kicker">Breadth Map</p>
-            <h3>涨跌分布桶</h3>
-          </div>
-          <small>{{ formatDate(realtimeOverview?.breadth?.tradingDate) }}</small>
-        </div>
-        <div v-if="realtimeBreadthBuckets.length" class="breadth-buckets">
-          <div v-for="item in realtimeBreadthBuckets" :key="item.label" class="breadth-bucket">
-            <span>{{ item.label }}</span>
-            <div class="breadth-bar-track">
-              <span class="breadth-bar-fill" :style="{ width: formatBucketWidth(item.count) }"></span>
-            </div>
-            <strong>{{ item.count }}</strong>
-          </div>
-        </div>
-        <p v-else class="feedback compact">暂无涨跌分布数据。</p>
-      </article>
-    </section>
+    <MarketRealtimeOverview
+      v-if="realtimeOverviewEnabled"
+      :overview="realtimeOverview"
+      :loading="realtimeLoading"
+      :error="realtimeError"
+      :format-date="formatDate"
+      :format-money="formatMoney"
+      :format-signed-percent="formatSignedPercent"
+      :format-signed-amount="formatSignedAmount"
+    />
 
     <section class="metric-grid">
       <article class="metric-card">
@@ -931,86 +859,6 @@ onMounted(() => {
   gap: 14px;
 }
 
-.realtime-deck {
-  display: grid;
-  grid-template-columns: 1.1fr 1fr 1fr;
-  gap: 14px;
-}
-
-.realtime-card {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 22px;
-  border: 1px solid rgba(226, 232, 240, 0.92);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.98)),
-    linear-gradient(135deg, rgba(194, 65, 12, 0.04), rgba(14, 165, 233, 0.05));
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
-}
-
-.realtime-card-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: start;
-}
-
-.realtime-card-head h3 {
-  margin: 0;
-}
-
-.realtime-kicker {
-  margin-bottom: 6px;
-}
-
-.ticker-grid,
-.flow-grid,
-.breadth-buckets {
-  display: grid;
-  gap: 10px;
-}
-
-.ticker-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.ticker-card,
-.flow-metric {
-  display: grid;
-  gap: 6px;
-  padding: 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(226, 232, 240, 0.85);
-}
-
-.ticker-card strong,
-.flow-metric strong {
-  font-size: 24px;
-}
-
-.breadth-bucket {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 40px;
-  gap: 10px;
-  align-items: center;
-}
-
-.breadth-bar-track {
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(226, 232, 240, 0.92);
-  overflow: hidden;
-}
-
-.breadth-bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #fb7185 0%, #f59e0b 50%, #0ea5e9 100%);
-}
-
 .metric-card,
 .board-toolbar,
 .detail-panel,
@@ -1237,22 +1085,10 @@ onMounted(() => {
   background: #fff7f7;
 }
 
-.feedback.compact {
-  padding: 12px 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-}
-
 @media (max-width: 1100px) {
-  .realtime-deck,
   .metric-grid,
   .market-grid,
   .board-toolbar {
-    grid-template-columns: 1fr;
-  }
-
-  .ticker-grid {
     grid-template-columns: 1fr;
   }
 

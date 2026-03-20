@@ -26,6 +26,8 @@
 - In split frontend/backend work, start backend first, confirm health, then start frontend and run Browser MCP.
 - If no backend code changed, backend tests are optional. If no frontend code changed, frontend tests are optional.
 - If new work breaks an existing feature, fix both in the same task; completion requires new and old behavior to work together.
+- Before any GitHub push, verify the Windows packaged desktop chain at least once in the same round: run `scripts\publish-windows-package.ps1`, confirm `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe` is produced, and record the command plus result in the report.
+- If the change touches desktop startup, packaging, installer, runtime paths, or launch flow, the push gate is stricter: after packaging, actually launch the packaged desktop EXE once and record whether the bundled backend and UI start successfully.
 - After tests pass, create a focused commit, include report updates, and push. If no remote is configured, ask the user for the remote URL before pushing.
 - After each commit, remove useless local modifications such as caches, temp outputs, and browser profile artifacts; keep useful artifacts only via ignore rules.
 - If OpenCode performs development, it must still be re-tested and accepted through the existing review flow before replying to the user.

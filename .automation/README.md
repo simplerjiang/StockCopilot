@@ -40,4 +40,6 @@ Typical Edge profile path for the fallback flow (Windows):
    (English for agents, Chinese for you).
 - After planning and after development, run unit tests and Browser MCP checks in order.
 - If any test fails, fix and re-run both tests until they pass.
+- Before any GitHub push, run one packaged desktop verification round: execute `scripts\publish-windows-package.ps1`, confirm `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe` was produced, and write the command plus result into the report.
+- If the current change touches desktop startup, packaging, installer, runtime paths, or launch flow, the packaged verification round must also include one real launch of the packaged desktop EXE and the observed result.
 - After both tests pass, update git (commit + push).
