@@ -1,4 +1,4 @@
-# SimplerJiangAiAgent
+# Stock Copilot
 
 一个更像“会看盘、会整理、会提醒”的本地股票助手。
 
