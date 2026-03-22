@@ -41,7 +41,7 @@ internal static class StockAgentLocalFactProjection
     }
 }
 
-internal sealed record StockAgentLocalNewsItemDto(
+public sealed record StockAgentLocalNewsItemDto(
     long? LocalFactId,
     string? SourceRecordId,
     string Title,
@@ -62,13 +62,13 @@ internal sealed record StockAgentLocalNewsItemDto(
     IReadOnlyList<string> AiTags
 );
 
-internal sealed record StockAgentLocalFundamentalFactDto(
+public sealed record StockAgentLocalFundamentalFactDto(
     string Label,
     string Value,
     string Source
 );
 
-internal sealed record StockAgentLocalFactPackageDto(
+public sealed record StockAgentLocalFactPackageDto(
     string Symbol,
     string? Name,
     string? SectorName,

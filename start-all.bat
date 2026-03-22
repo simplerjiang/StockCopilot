@@ -1,58 +1,71 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
-set ROOT=%~dp0
-set APP_URL=http://localhost:5119
-set HEALTH_URL=%APP_URL%/api/health
-pushd "%ROOT%"
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
+set "APP_URL=http://localhost:5119"
+set "HEALTH_URL=%APP_URL%/api/health"
+set "BACKEND_ROOT=%ROOT%\backend\SimplerJiangAiAgent.Api"
+set "PACKAGE_ROOT=%ROOT%\artifacts\windows-package"
+set "PACKAGE_SCRIPT=%ROOT%\scripts\publish-windows-package.ps1"
+set "PACKAGE_EXE=%PACKAGE_ROOT%\SimplerJiangAiAgent.Desktop.exe"
 
-echo Building frontend...
-pushd "frontend"
-call npm run build
-if errorlevel 1 (
-	popd
-	popd
-	endlocal
-	exit /b 1
-)
-popd
+pushd "%ROOT%" || exit /b 1
 
-echo Checking backend state on %APP_URL%...
+echo Stopping existing desktop and backend instances...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$healthUrl = '%HEALTH_URL%';" ^
-  "try { $response = Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 3; if ($response.Content -match '\"status\"\s*:\s*\"ok\"') { exit 10 } } catch {}" ^
+  "$backendRoot = [System.IO.Path]::GetFullPath('%BACKEND_ROOT%');" ^
+  "$packageRoot = [System.IO.Path]::GetFullPath('%PACKAGE_ROOT%');" ^
+  "$escapedBackendRoot = [Regex]::Escape($backendRoot);" ^
+  "$escapedPackageRoot = [Regex]::Escape($packageRoot);" ^
+  "$repoProcesses = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and ($_.CommandLine -match $escapedBackendRoot -or $_.CommandLine -match $escapedPackageRoot) -and $_.CommandLine -match 'SimplerJiangAiAgent\.(Desktop|Api)' };" ^
+  "foreach ($process in $repoProcesses) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }" ^
+  "if ($repoProcesses) { Start-Sleep -Seconds 2 }" ^
   "$portOwner = Get-NetTCPConnection -LocalPort 5119 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess;" ^
   "if (-not $portOwner) { exit 0 }" ^
-  "$process = Get-CimInstance Win32_Process -Filter \"ProcessId = $portOwner\" -ErrorAction SilentlyContinue;" ^
-  "if ($process -and (($process.Name -eq 'dotnet.exe' -and $process.CommandLine -like '*SimplerJiangAiAgent.Api*') -or $process.Name -eq 'SimplerJiangAiAgent.Api.exe')) { Stop-Process -Id $portOwner -Force -ErrorAction Stop; Start-Sleep -Seconds 2; exit 0 }" ^
-  "Write-Host 'Port 5119 is already occupied by another process.'; exit 20"
+  "$portProcess = Get-CimInstance Win32_Process -Filter \"ProcessId = $portOwner\" -ErrorAction SilentlyContinue;" ^
+  "Write-Host ('Port 5119 is already occupied by another process: ' + $portOwner);" ^
+  "if ($portProcess) { Write-Host $portProcess.Name; Write-Host $portProcess.CommandLine }" ^
+  "exit 20"
+if errorlevel 20 goto :port_conflict
+if errorlevel 1 goto :fail
 
-set BACKEND_STATUS=%ERRORLEVEL%
-if "%BACKEND_STATUS%"=="10" (
-	echo Backend already healthy. Reusing existing instance.
-) else if "%BACKEND_STATUS%"=="20" (
-	echo Backend start aborted because port 5119 is occupied by another process.
-	popd
-	endlocal
-	exit /b 1
-) else (
-	echo Starting backend in Production mode with SQLite...
-	start "SimplerJiangAiAgent.Api" cmd /k "set ASPNETCORE_ENVIRONMENT=Production && set DOTNET_ENVIRONMENT=Production && dotnet run --no-launch-profile --project backend\SimplerJiangAiAgent.Api\SimplerJiangAiAgent.Api.csproj --urls %APP_URL%"
-	powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-	  "$healthUrl = '%HEALTH_URL%';" ^
-	  "$deadline = (Get-Date).AddSeconds(30);" ^
-	  "do { try { $response = Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 2; if ($response.Content -match '\"status\"\s*:\s*\"ok\"') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline);" ^
-	  "Write-Host 'Backend did not become healthy in time.'; exit 1"
-	if errorlevel 1 (
-		echo Backend failed to become healthy. Check the backend terminal window.
-		popd
-		endlocal
-		exit /b 1
-	)
+echo Packaging latest desktop build...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PACKAGE_SCRIPT%"
+if errorlevel 1 goto :fail
+
+if not exist "%PACKAGE_EXE%" (
+	echo Packaged desktop executable was not produced: %PACKAGE_EXE%
+	goto :fail
 )
 
-echo Opening app in browser...
-start "SimplerJiangAiAgent.Web" "%APP_URL%"
+echo Starting packaged desktop EXE...
+start "SimplerJiangAiAgent.Desktop" "%PACKAGE_EXE%"
 
+echo Waiting for packaged backend health check...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$healthUrl = '%HEALTH_URL%';" ^
+  "$deadline = (Get-Date).AddSeconds(60);" ^
+  "do { try { $response = Invoke-WebRequest -UseBasicParsing $healthUrl -TimeoutSec 3; if ($response.Content -match '\"status\"\s*:\s*\"ok\"') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline);" ^
+  "Write-Host 'Packaged desktop backend did not become healthy in time.'; exit 1"
+if errorlevel 1 (
+	echo Packaged desktop failed to become healthy. Check the desktop window and packaged backend logs.
+	goto :fail
+)
+
+echo Packaged desktop started successfully.
+goto :success
+
+:port_conflict
+echo Backend start aborted because port 5119 is occupied by another process.
+goto :fail
+
+:fail
 popd
 endlocal
+exit /b 1
+
+:success
+popd
+endlocal
+exit /b 0

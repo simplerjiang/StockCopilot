@@ -4,20 +4,18 @@ import StockInfoTab from './modules/stocks/StockInfoTab.vue'
 import NewsArchiveTab from './modules/stocks/NewsArchiveTab.vue'
 import StockRecommendTab from './modules/stocks/StockRecommendTab.vue'
 import MarketSentimentTab from './modules/market/MarketSentimentTab.vue'
-import SocialOptimizeTab from './modules/social/SocialOptimizeTab.vue'
-import SocialCrawlerTab from './modules/social/SocialCrawlerTab.vue'
 import AdminLlmSettings from './modules/admin/AdminLlmSettings.vue'
 import SourceGovernanceDeveloperMode from './modules/admin/SourceGovernanceDeveloperMode.vue'
+import StockCopilotDeveloperMode from './modules/admin/StockCopilotDeveloperMode.vue'
 
 const tabs = [
   { key: 'stock-info', name: '股票信息', component: StockInfoTab },
   { key: 'market-sentiment', name: '情绪轮动', component: MarketSentimentTab },
   { key: 'news-archive', name: '全量资讯库', component: NewsArchiveTab },
   { key: 'stock-recommend', name: '股票推荐', component: StockRecommendTab },
-  { key: 'social-optimize', name: '社媒优化', component: SocialOptimizeTab },
-  { key: 'social-crawler', name: '社媒爬虫', component: SocialCrawlerTab },
   { key: 'admin-llm', name: 'LLM 设置', component: AdminLlmSettings },
-  { key: 'source-governance-dev', name: '治理开发者模式', component: SourceGovernanceDeveloperMode }
+  { key: 'source-governance-dev', name: '治理开发者模式', component: SourceGovernanceDeveloperMode },
+  { key: 'stock-copilot-dev', name: '股票 Copilot 开发模式', component: StockCopilotDeveloperMode }
 ]
 
 const defaultTabKey = tabs[0].key

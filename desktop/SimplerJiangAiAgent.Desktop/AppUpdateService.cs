@@ -17,9 +17,9 @@ internal static partial class AppUpdateService
 {
     private const string RepositoryOwner = "simplerjiang";
     private const string RepositoryName = "AiAgent";
-    private static readonly HttpClient UpdateClient = CreateClient();
-
     public static Version CurrentVersion { get; } = ReadCurrentVersion();
+
+    private static readonly HttpClient UpdateClient = CreateClient();
 
     public static string CurrentVersionLabel => $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Build}";
 

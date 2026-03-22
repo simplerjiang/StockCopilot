@@ -138,14 +138,58 @@ public sealed class SourceGovernanceReadServiceTests
 
         var paired = Assert.Single(logs, x => x.TraceId == "t1");
         Assert.Equal("response", paired.Status);
-        Assert.Equal("hello", paired.RequestText);
+        Assert.Contains("已脱敏", paired.RequestText);
         Assert.Equal("ok", paired.ResponseText);
         Assert.Equal(3, paired.Lines.Count);
 
         var failed = Assert.Single(logs, x => x.TraceId == "t2");
         Assert.Equal("error", failed.Status);
-        Assert.Equal("bye", failed.RequestText);
+        Assert.Contains("已脱敏", failed.RequestText);
         Assert.Equal("failed", failed.ErrorText);
+    }
+
+    [Fact]
+    public async Task GetLlmConversationLogsAsync_ShouldStripReasoningSectionsFromResponse()
+    {
+        await using var db = CreateDb();
+        var env = new FakeHostEnvironment();
+        var logDir = Path.Combine(env.ContentRootPath, "App_Data", "logs");
+        Directory.CreateDirectory(logDir);
+        var logPath = Path.Combine(logDir, "llm-requests.txt");
+        await File.WriteAllLinesAsync(logPath, new[]
+        {
+            "2026-03-12 10:00:00.000 [LLM-AUDIT] traceId=t3 stage=request provider=openai model=gpt prompt=hello",
+            "2026-03-12 10:00:03.000 [LLM-AUDIT] traceId=t3 stage=response provider=openai model=gpt content=<think>hidden</think>最终建议\n## 思考过程\n不应展示"
+        });
+
+        var service = new SourceGovernanceReadService(db, env);
+        var logs = await service.GetLlmConversationLogsAsync(10, "t3");
+
+        var item = Assert.Single(logs);
+        Assert.Equal("最终建议", item.ResponseText);
+        Assert.DoesNotContain("hidden", item.ResponseText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("思考过程", item.ResponseText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetLlmConversationLogsAsync_ShouldRedactEnglishReasoningScaffold()
+    {
+        await using var db = CreateDb();
+        var env = new FakeHostEnvironment();
+        var logDir = Path.Combine(env.ContentRootPath, "App_Data", "logs");
+        Directory.CreateDirectory(logDir);
+        var logPath = Path.Combine(logDir, "llm-requests.txt");
+        await File.WriteAllLinesAsync(logPath, new[]
+        {
+            "2026-03-12 10:00:00.000 [LLM-AUDIT] traceId=t4 stage=request provider=openai model=gpt prompt=hello",
+            "2026-03-12 10:00:03.000 [LLM-AUDIT] traceId=t4 stage=response provider=openai model=gpt content=**My Thought Process** Let's break this down before answering."
+        });
+
+        var service = new SourceGovernanceReadService(db, env);
+        var logs = await service.GetLlmConversationLogsAsync(10, "t4");
+
+        var item = Assert.Single(logs);
+        Assert.Equal("返回内容包含中间推理，已脱敏。", item.ResponseText);
     }
 
     private static AppDbContext CreateDb()

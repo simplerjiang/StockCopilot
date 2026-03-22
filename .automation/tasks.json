@@ -12,17 +12,6 @@
       "notes": "2026-03-20 已完成前端长 Vue 页面可读性拆分，保持行为不变的前提下把 `StockAgentPanels.vue` 拆出 `StockAgentCard.vue`，把 `MarketSentimentTab.vue` 的实时总览拆出 `MarketRealtimeOverview.vue`，把 `StockInfoTab.vue` 的加载进度拆出 `StockSourceLoadProgress.vue`。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockAgentPanels.spec.js src/modules/market/MarketSentimentTab.spec.js src/modules/stocks/StockInfoTab.spec.js` 57/57 通过，以及 Browser MCP 在 `http://localhost:5119/` 实测确认股票页与情绪页渲染正常。情绪页浏览器验收中 `/api/market/sectors?boardType=concept&page=1&pageSize=12&sort=strength` 返回服务端错误，属于现有后端运行态问题，不是本次模板拆分回归。"
     },
     {
-      "id": "MANUAL-20260318-DUAL-SOURCE",
-      "title": "Dual-source market data strategy",
-      "status": "done",
-      "stages": {
-        "plan": "done",
-        "dev": "done",
-        "test": "done"
-      },
-      "notes": "2026-03-18 已将腾讯/东方财富两套行情接口正式封装进后端默认策略：分时默认腾讯优先、东财回退；K 线默认东财优先、腾讯回退；显式 source 参数仍可强制指定单一来源。同步补齐东方财富日/周/月/年 K 获取实现与 StockDataService 自动回退测试。"
-    },
-    {
       "id": "MANUAL-20260319-EXTENSION-INTERFACE",
       "title": "Stock-and-fund extension interface adoption plan",
       "status": "done",
@@ -124,13 +113,13 @@
     {
       "id": "GOAL-AGENT-001",
       "title": "Multi-agent evidence and commander redesign plan",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "父级规划任务已完成，当前正式拆分为 R1/R2/R3 三个开发切片。R1 先做 evidence object、URL-first 展示、正文抓取/摘要、readMode/readStatus、evidence 归一化与 commander 证据采信闸门；R2 再做子 Agent 职责重切、marketReports 抗污染、确定性特征前置计算，以及 commander 覆盖率/冲突/降级惩罚；R3 最后做 replay 校准闭环、1/3/5/10 日收益对齐、命中率/Brier score/分组胜率与开发者验收基线。2026-03-17 已继续补充两份衍生设计稿：`GOAL-AGENT-001-STOCK-COPILOT-TOOL-CATALOG-V1-20260317.md` 与 `GOAL-AGENT-001-STOP-POLICY-READINESS-V1-20260317.md`，用于后续 planner/governor/tool runtime 的接口与规则落地。该目标继续作为 GOAL-015 与 ISSUE-20260310-P1/P2 在 Agent 决策层的上游总纲。"
+      "notes": "父级规划任务已完成并于 2026-03-22 收口全部开发切片。R1 已先前完成证据可追溯底座；本轮继续完成 R2/R3/R4：后端新增确定性特征工程、A 股 marketReports 抗污染、commander 概率与 guardrails 收口、traceId 回传、replay 校准基线服务，以及 `StockKlineMcp` / `StockMinuteMcp` / `StockStrategyMcp` / `StockNewsMcp` / `StockSearchMcp` 五类领域 MCP 运行时与 `/api/stocks/agents/replay/baseline`、`/api/stocks/mcp/*` 接口。同步补齐后端单测覆盖特征工程、replay 计算与 MCP envelope。验证命令：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore`，结果 181/181 通过。该目标继续作为 GOAL-015 与 ISSUE-20260310-P1/P2 在 Agent 决策层的上游总纲。"
     },
     {
       "id": "GOAL-AGENT-001-R1",
@@ -146,24 +135,101 @@
     {
       "id": "GOAL-AGENT-001-R2",
       "title": "Agent role narrowing and commander hardening",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "R2 由 Dev2 优先负责，但必须以前置确认的 R1 contract 为准。范围：1) 重写 stock_news/sector_news/financial_analysis/trend_analysis prompt contract，移除重复的方向/仓位/风控字段，只保留各自专业结论；2) 清理 A 股场景下不相关的 marketReports/海外加密噪音，建立 context hygiene 闸门；3) 在后端先计算 freshness/coverage/conflict/trend/valuation/volatility 等确定性特征，再交给 LLM 解释；4) commander 只做综合，不再引入上游未引用的新证据；5) 将 coverage penalty、conflict penalty、degraded-path penalty 做成系统逻辑；6) 强化异常/超时/HTML/non-JSON 场景的保守降级。验收重点：子 Agent 不再做半个 commander，伪共识显著下降，异常路径下最终结论明显保守。"
+      "notes": "2026-03-22 已完成 R2：重写 stock/sector/financial/trend/commander prompt contract，收窄子 Agent 职责；对 A 股场景 marketReports 引入海外个股/加密/Seeking Alpha 等噪音过滤；后端新增确定性特征工程服务，前置计算 freshness、coverage、conflict、trend、ATR、VWAP、估值和风险标记；commander 新增 `directional_bias`、`probabilities`、coverage/conflict/expanded-window/degraded-path penalty，并把 traceId 回传到结果 DTO。验证包含新增单测 `StockAgentFeatureEngineeringServiceTests`，并通过 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore` 全量 181/181。"
     },
     {
       "id": "GOAL-AGENT-001-R3",
       "title": "Replay calibration and acceptance baseline",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-22 已完成 R3：新增 replay 校准服务，基于 `StockAgentAnalysisHistories`、日 K 数据和 `llm-requests.txt` 构建 replay 样本，对齐 1/3/5/10 日收益，输出命中率、平均收益、Brier score、分组胜率、证据可追溯率、污染混入率、解析修复率与改判解释完整率，并通过 `/api/stocks/agents/replay/baseline` 暴露验收基线。验证包含新增单测 `StockAgentReplayCalibrationServiceTests`，并通过 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore` 全量 181/181。"
+    },
+    {
+      "id": "GOAL-AGENT-001-R4",
+      "title": "Copilot-style MCP tool runtime foundation",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-22 已完成 R4：新增统一 MCP envelope 与 `local_required` / `external_gated` policyClass，落地 `StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp` 五类运行时服务，并开放 `/api/stocks/mcp/kline`、`/api/stocks/mcp/minute`、`/api/stocks/mcp/strategy`、`/api/stocks/mcp/news`、`/api/stocks/mcp/search`。其中策略 MCP 直接输出 MA/MACD/RSI/KDJ/VWAP/TD/breakout/gap 等确定性结果，搜索 MCP 在 provider 不可用时走受控降级并回写 warnings/degradedFlags。验证包含新增单测 `StockCopilotMcpServiceTests`，并通过 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore` 全量 181/181。"
+    },
+    {
+      "id": "GOAL-AGENT-002",
+      "title": "Stock Copilot sessionized orchestration and product surface",
       "status": "todo",
       "stages": {
         "plan": "done",
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "R3 在 R1/R2 稳定后启动，可由空闲开发者接手。范围：1) 基于 llm-requests.txt、历史 commander 记录和本地事实库构建 replay 样本；2) 将过去 1/3/5/10 日实际收益与方向、概率、confidence_score 对齐；3) 计算命中率、Brier score、分组胜率、证据可追溯率、解析修复率、污染混入率、改判解释完整率；4) 将这些指标接入开发者模式或离线验收报告；5) 为后续模型/路由/提示词迭代提供硬验收门槛。验收重点：系统第一次拥有真实校准回路，而不是只输出格式化观点。"
+      "notes": "2026-03-22 已完成父级规划：R4 之后的下一阶段不再继续补裸工具，而是把现有 evidence/replay/MCP 底座提升为真正类似 GitHub Copilot 的股票协驾产品层。范围拆为 P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。优先级：先收口 buglist 中直接阻塞 Copilot 的高优先级运行问题，再做会话 runtime 与面板化交互，量化双引擎 GOAL-017 作为并行但次优先的底座线。"
+    },
+    {
+      "id": "GOAL-AGENT-002-P0",
+      "title": "Runtime stability and output safety gate",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "P0 已于 2026-03-22 收口。范围覆盖 `.automation/buglist.md` 中直接阻塞 Copilot 的运行稳定性与输出安全问题：1) 为 `MarketSentimentSchemaInitializer` 增补 SQLite 幂等补列，修复开发/本地 SQLite 回退场景下 `情绪轮动` sectors API 因旧表缺列导致的 500；2) 清理根导航中的 `社媒优化/社媒爬虫` 占位入口；3) 修复 `JsonFileLlmSettingsStore` 对空字符串更新无效的问题，使 LLM `Project`/`Organization`/`BaseUrl`/`Model`/`SystemPrompt` 能被显式清空；4) 将 `ChatWindow.vue` 的历史保存改为串行落库，避免流式返回期间重复 PUT 造成会话保存假成功和 500；5) 在用户聊天展示与开发者模式日志视图中收口 raw reasoning/中间推理外泄；6) 为本地事实资讯新增标题失真抑制与个股强相关过滤，避免无关资讯和失真翻译直接出现在股票页。2026-03-22 复核补修中又发现 `/api/stocks/mcp/*` 在客户端主动取消或浏览器超时中断时会把 `RequestAborted` 冒泡成 500，因此新增 `StockMcpEndpointExecutor` 统一把取消请求映射为 499，避免开发模式和 Browser MCP 把超时取消误报成服务端错误。验证包括后端定向单测 20/20 通过、追加 SourceGovernance 定向单测 7/7 通过、前端定向单测 `StockInfoTab.spec.js + StockRecommendTab.spec.js` 51/51 通过、新增 `StockMcpEndpointExecutorTests` 3/3 通过，以及 Browser MCP / 终端复核确认：新会话 `sh600000-1774155740107` 聊天保存与回读 200 成功，正常 `StockKlineMcp`/`StockStrategyMcp` 在 `http://localhost:5000` 分别返回 200 / 200，超时探针则在后端日志中落为 `GET /api/stocks/mcp/strategy -> 499 (1015ms)`。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R1",
+      "title": "Session contract and planner/governor timeline",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-22 已完成 R1：后端新增 `StockCopilotSessionDto`、`StockCopilotTurnDto`、`StockCopilotPlanStepDto`、`StockCopilotToolCallDto`、`StockCopilotToolResultDto`、`StockCopilotFinalAnswerDto`、`StockCopilotFollowUpActionDto` 等会话 contract，并落地 `IStockCopilotSessionService` / `StockCopilotSessionService` 与 `POST /api/stocks/copilot/turns/draft`。该服务会把用户问题先组装成 planner/governor 时间线草案：识别 K 线/分时/策略/新闻/搜索意图，给出 local-first 工具建议，并对 `StockSearchMcp` 应用 external-gated 审批。验证采用隔离输出目录，避免运行中的本地 API 锁住默认 bin：`dotnet build .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore -p:OutDir=C:\\Users\\kong\\AiAgent\\.automation\\tmp\\goal-agent002-r1\\` 成功，随后 `dotnet vstest .\\.automation\\tmp\\goal-agent002-r1\\SimplerJiangAiAgent.Api.Tests.dll --Tests:...StockCopilotSessionServiceTests...` 结果 3/3 通过。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R2",
+      "title": "Stock Copilot panel UX",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "R2 把股票页右侧从静态分析卡片升级为会话化 Copilot 面板。范围包括：问题输入框、可视 plan/timeline、工具调用卡片、evidence/source 区、follow-up action chips 与最近一轮会话回放。验收重点：首个用户体验应是“提问 -> 看计划 -> 看工具 -> 看受控回答”，而不是点击后读长篇报告。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R3",
+      "title": "Action-oriented workflow integration",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "R3 把 Copilot 回答接到实际工作流。范围包括：统一 judgment/trigger/invalidation/risk/next-step answer contract，动作卡如“看 60 日 K 线结构 / 检查今日分时承接 / 查看主线板块共振 / 起草交易计划”，以及与图表叠加、新闻证据、市场上下文、交易计划草稿的联动。目标是把 Copilot 从‘解释器’推进成‘建议下一步动作的协驾层’。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R4",
+      "title": "Copilot acceptance and replay metrics",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "R4 建立新的产品层验收指标：工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、final answer traceability、action card 使用质量，以及可回放的 session acceptance baseline。目标是让后续 prompt/runtime 变更都能回答“这次改动是否真的让 Copilot 变好”。"
     },
     {
       "id": "GOAL-015",
@@ -241,6 +307,50 @@
         "test": "done"
       },
       "notes": "2026-03-20 已完成版本号、GitHub Releases 更新检测、桌面端自动升级提示、发布工作流与用户文档收口：新增根级 `Directory.Build.props` 统一版本号；桌面端新增 `AppUpdateService` 与启动后 GitHub Release 检查/下载安装器逻辑；后端新增 `/api/app/version`；前端顶栏展示版本号；安装器输出改为 `SimplerJiangAiAgent-Setup-<version>.exe`；新增 `.github/workflows/release-windows.yml` 用于 tag 驱动发布安装版和 portable zip。文档侧已将原根 README 备份为 `README.llm.md`，并将新的根 `README.md` 改为面向普通用户的安装、升级、功能说明，附带 3 张 1920x1080 新截图。验证覆盖后端定向回归 9/9、前端定向单测 8/8、桌面/后端构建、隔离端口下 `/api/app/version` 烟测、截图脚本执行、安装包重建与 `artifacts\\installer\\SimplerJiangAiAgent-Setup-0.0.1.exe` 产出。真正对外发布仍需后续把提交推到 GitHub 并推送 `v0.0.1` tag 触发 Actions。"
+    },
+    {
+      "id": "GOAL-017",
+      "title": "Quant dual-engine agent/chart integration plan",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "2026-03-22 新增量化双引擎规划任务：目标是在现有 K线/分时/图表策略注册表、多 Agent 分析与交易计划链路之间补上一层统一的量化特征与策略能力。总体路线采用 `Skender primary + Lean shadow`：Skender 或同类轻量 .NET 指标库作为在线主引擎，负责 feature/signal 生成；Lean 作为 shadow/replay/calibration 引擎，默认不直接参与线上主决策。规划切片包括：R1 统一 normalized market-data 输入层与 feature/signal/comparison contract；R2 Skender 主运行时整合；R3 Lean shadow replay/calibration 整合；R4 图表、MCP、Agent、交易计划产品层整合。关键约束：前端图表、Agent、交易计划默认只消费 primary 结果，shadow 结果主要用于开发者模式、回放、校准和研究。"
+    },
+    {
+      "id": "GOAL-017-R1",
+      "title": "Normalized market-data layer and quant contracts",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "2026-03-22 已完成 R1 详细设计：本切片先不真正接入 Skender 或 Lean，而是先锁定双引擎共享底座。范围包括：1) 统一 `NormalizedBar` / `NormalizedBarSeries` 行情输入模型；2) 定义 `QuantEngineDescriptorDto`、`QuantFeatureSnapshotDto`、`QuantStrategySignalDto`、`QuantEngineComparisonDto`、`AgentQuantContextDto`；3) 统一 `warmupState`、`degradedFlags`、`engine role`、`execution mode` 语义；4) 明确现有 `StockCopilotKLineDataDto`、`StockCopilotMinuteDataDto`、`StockCopilotStrategySignalDto` 到新 contract 的兼容映射；5) 明确后续与 MCP、图表策略注册表、Agent、交易计划的接缝。验收重点：后续开发者可以直接按该文档新增 DTO、service interface 与测试，而不需要再次重拆边界。"
+    },
+    {
+      "id": "MANUAL-20260322-START-ALL-FIX",
+      "title": "Repair root startup batch flow",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-22 已按新要求把根目录 `start-all.bat` 从浏览器联调启动器改成桌面发布物启动器。脚本现在会先停止当前仓库残留的桌面/后端实例，确认 `5119` 未被无关程序占用，再执行 `scripts\\publish-windows-package.ps1` 打包最新代码，最后直接启动 `artifacts\\windows-package\\SimplerJiangAiAgent.Desktop.exe`，并等待打包版内置后端的 `/api/health` 成功。联调时又发现打包 EXE 会在启动阶段因 `AppUpdateService` 静态初始化顺序错误而直接崩溃，因此已同步修复 `desktop\\SimplerJiangAiAgent.Desktop\\AppUpdateService.cs`，让 `CurrentVersion` 先于 `UpdateClient` 初始化。验证包括：`scripts\\publish-windows-package.ps1` 成功产出 `artifacts\\windows-package\\SimplerJiangAiAgent.Desktop.exe`，`start-all.bat` 成功启动该 EXE，`Invoke-WebRequest http://localhost:5119/api/health` 返回 200，`Invoke-WebRequest http://localhost:5119/` 返回 200 首页 HTML，以及 `Get-Process SimplerJiangAiAgent.Desktop` 能看到桌面进程仍在运行。"
+    },
+    {
+      "id": "MANUAL-20260322-START-ALL-EXE",
+      "title": "Retarget root launcher to packaged EXE",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-22 已按新要求把根目录 `start-all.bat` 从浏览器联调启动器改成桌面发布物启动器。脚本现在会先停止当前仓库残留的桌面/后端实例，确认 `5119` 未被无关程序占用，再执行 `scripts\\publish-windows-package.ps1` 打包最新代码，最后直接启动 `artifacts\\windows-package\\SimplerJiangAiAgent.Desktop.exe`，并等待打包版内置后端的 `/api/health` 成功。验证包括：`scripts\\publish-windows-package.ps1` 成功产出 `artifacts\\windows-package\\SimplerJiangAiAgent.Desktop.exe`，`start-all.bat` 成功启动该 EXE，`Invoke-WebRequest http://localhost:5119/api/health` 返回 200，以及 `Get-Process SimplerJiangAiAgent.Desktop` 能看到桌面进程仍在运行。"
     },
     {
       "id": "GOAL-002",

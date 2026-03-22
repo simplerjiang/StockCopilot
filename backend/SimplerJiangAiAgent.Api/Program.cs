@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.EventLog;
@@ -52,12 +53,12 @@ builder.Services.AddSingleton(runtimePaths);
 builder.Services.AddSingleton<IFileLogWriter, FileLogWriter>();
 
 var databaseOptions = builder.Configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>() ?? new DatabaseOptions();
-var provider = string.IsNullOrWhiteSpace(databaseOptions.Provider)
-    ? "Sqlite"
-    : databaseOptions.Provider.Trim();
-var connectionString = string.IsNullOrWhiteSpace(databaseOptions.ConnectionString)
-    ? ResolveDefaultConnectionString(provider, builder.Configuration, runtimePaths)
-    : databaseOptions.ConnectionString;
+var (provider, connectionString, databaseStartupWarning) = ResolveDatabaseStartupConfiguration(databaseOptions, builder.Configuration, runtimePaths, builder.Environment);
+
+if (!string.IsNullOrWhiteSpace(databaseStartupWarning))
+{
+    Console.WriteLine($"[DatabaseStartup] {databaseStartupWarning}");
+}
 
 if (provider.Equals("MySql", StringComparison.OrdinalIgnoreCase))
 {
@@ -151,6 +152,66 @@ static string ResolveDefaultConnectionString(string provider, IConfiguration con
     }
 
     return configuration.GetConnectionString("Default") ?? string.Empty;
+}
+
+static (string Provider, string ConnectionString, string? Warning) ResolveDatabaseStartupConfiguration(DatabaseOptions databaseOptions, IConfiguration configuration, AppRuntimePaths runtimePaths, IHostEnvironment environment)
+{
+    var provider = string.IsNullOrWhiteSpace(databaseOptions.Provider)
+        ? "Sqlite"
+        : databaseOptions.Provider.Trim();
+    var connectionString = string.IsNullOrWhiteSpace(databaseOptions.ConnectionString)
+        ? ResolveDefaultConnectionString(provider, configuration, runtimePaths)
+        : databaseOptions.ConnectionString;
+
+    if (!environment.IsDevelopment())
+    {
+        return (provider, connectionString, null);
+    }
+
+    if (!provider.Equals("SqlServer", StringComparison.OrdinalIgnoreCase))
+    {
+        return (provider, connectionString, null);
+    }
+
+    if (string.Equals(configuration["SJAI_DISABLE_DEV_DB_FALLBACK"], "1", StringComparison.OrdinalIgnoreCase))
+    {
+        return (provider, connectionString, null);
+    }
+
+    if (CanOpenSqlServerConnection(connectionString))
+    {
+        return (provider, connectionString, null);
+    }
+
+    var sqliteConnectionString = runtimePaths.GetDefaultSqliteConnectionString();
+    return (
+        "Sqlite",
+        sqliteConnectionString,
+        $"Development detected unreachable SQL Server, fallback to SQLite at '{runtimePaths.DatabaseFilePath}'. Set SJAI_DISABLE_DEV_DB_FALLBACK=1 to disable this behavior.");
+}
+
+static bool CanOpenSqlServerConnection(string connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        return false;
+    }
+
+    try
+    {
+        var builder = new SqlConnectionStringBuilder(connectionString)
+        {
+            ConnectTimeout = 3
+        };
+
+        using var connection = new SqlConnection(builder.ConnectionString);
+        connection.Open();
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 static string GetAppVersion()

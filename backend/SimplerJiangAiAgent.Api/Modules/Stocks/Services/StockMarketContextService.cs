@@ -57,26 +57,26 @@ public sealed class StockMarketContextService : IStockMarketContextService
             return BuildNeutral(latestSentiment, stockSectorName);
         }
 
-        var mainline = await _dbContext.SectorRotationSnapshots
+        var latestSectorCandidates = await _dbContext.SectorRotationSnapshots
             .AsNoTracking()
             .Where(item => item.SnapshotTime == latestSectorSnapshotTime.Value)
+            .ToListAsync(cancellationToken);
+
+        var orderedLatestSectorCandidates = latestSectorCandidates
             .OrderByDescending(item => item.IsMainline)
             .ThenByDescending(item => item.MainlineScore)
             .ThenBy(item => item.RankNo)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToList();
+
+        var mainline = orderedLatestSectorCandidates.FirstOrDefault();
 
         var matchedSector = string.IsNullOrWhiteSpace(stockSectorName)
             ? null
-            : await _dbContext.SectorRotationSnapshots
-                .AsNoTracking()
-                .Where(item => item.SnapshotTime == latestSectorSnapshotTime.Value)
-                .OrderByDescending(item => item.IsMainline)
-                .ThenByDescending(item => item.MainlineScore)
-                .ThenBy(item => item.RankNo)
-                .FirstOrDefaultAsync(item =>
+            : orderedLatestSectorCandidates
+                .FirstOrDefault(item =>
                     item.SectorName == stockSectorName
                     || item.SectorName.Contains(stockSectorName)
-                    || stockSectorName.Contains(item.SectorName), cancellationToken);
+                    || stockSectorName.Contains(item.SectorName));
 
         var effectiveStage = string.IsNullOrWhiteSpace(latestSentiment.StageLabelV2)
             ? latestSentiment.StageLabel

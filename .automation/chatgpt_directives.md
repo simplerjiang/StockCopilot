@@ -1,7 +1,7 @@
 # 给 ChatGPT-5.4 (开发人员) 的当前有效任务书
 
 > 致 ChatGPT-5.4：
-> 从当前轮开始，本文件只保留 GOAL-AGENT-001-R1 / R2 / R3 三个活跃任务，以及仍然生效的架构约束。
+> 2026-03-22 更新：GOAL-AGENT-001 已完成，当前主线切换为 GOAL-AGENT-002 的 Copilot 产品层规划；GOAL-017 保留为并行量化底座线。
 > 你的角色不是产品 owner，而是开发执行者；我负责指挥、拆任务、定边界、做 review。Dev1、Dev2 为并行开发人员。
 
 ---
@@ -10,22 +10,68 @@
 
 1. 我是指挥者：负责架构、contract、review、验收口径。
 2. Dev1、Dev2 是开发执行者：按当前任务书各自完成代码、测试、报告。
-3. 当前主线只围绕 GOAL-AGENT-001-R1 / R2 / R3 展开，不再把旧的 Step 4.x、图表支线、旧返工记录当作当前主开发清单重复展开。
-4. 若需要追溯历史实现细节，请查 `.automation/reports/`，不要把旧回执重新堆回本文件。
+3. 当前主线优先围绕 GOAL-AGENT-002 展开：先做运行态稳定性与输出安全闸门，再做股票 Copilot 的 session runtime、planner/governor 时间线、面板化 UX 和动作化工作流。
+4. GOAL-017 继续存在，但当前是并行次优先底座线；不要让量化引擎深度先于 Copilot session contract 与产品层闭环。
+5. GOAL-016-R6 已补成详细设计并进入“待其他 Agent 执行”的并行规划态，但它不是当前主线，不要因此打乱 GOAL-AGENT-002 的既定开发顺序。
+6. 若需要追溯 GOAL-AGENT-001 或旧 Step 4.x 的实现细节，请查 `.automation/reports/`，不要把旧回执重新堆回本文件。
 
 ---
 
-## 当前活跃范围
+## 当前状态
 
-1. GOAL-AGENT-001-R1：证据可追溯底座。
-2. GOAL-AGENT-001-R2：Agent 职责重切与 commander 推理收口。
-3. GOAL-AGENT-001-R3：回放校准闭环与验收基线。
+1. GOAL-AGENT-001：已完成并转入归档参考态。
+2. GOAL-AGENT-002：已完成父级规划，开发已启动。
+3. GOAL-AGENT-002-P0：并行高优先级，当前由另一条修复线处理。
+4. GOAL-AGENT-002-R1：已完成后端 session contract 与 draft timeline 切片。
+5. GOAL-AGENT-002-R2：当前最自然的后续切片。
+6. GOAL-017-R1：已完成详细设计，但当前优先级低于 GOAL-AGENT-002。
+7. GOAL-016-R6：已完成详细设计，等待后续桌面/runtime 专线接手。
 
-### 当前分派
+### 当前分派结果
 
-1. Dev1 当前主责：GOAL-AGENT-001-R1。
-2. Dev2 当前主责：GOAL-AGENT-001-R2。
-3. GOAL-AGENT-001-R3 先作为紧随其后的验收主线保留；待 R1/R2 contract 稳定后，由空闲开发者接手，或由我再二次分派。
+1. GOAL-AGENT-001 的已完成交付继续作为 Copilot 产品层的底座，不再单独作为活跃开发主线。
+2. 当前新的执行顺序是：`GOAL-AGENT-002-P0(并行) -> GOAL-AGENT-002-R2 -> GOAL-AGENT-002-R3 -> GOAL-AGENT-002-R4`。
+3. GOAL-AGENT-002-R1 已作为后端 contract 基础完成，前端和 runtime 后续直接消费 `/api/stocks/copilot/turns/draft`。
+4. GOAL-017 作为量化双引擎底座线，在 `GOAL-AGENT-002-R2` 开始后并行推进。
+5. GOAL-016-R6 作为桌面宿主化深入切片，保持并行待命，不抢当前 Copilot 主线。
+
+---
+
+## GOAL-016-R6：单宿主单进程 packaged runtime
+
+状态标签：`已规划，待其他 Agent 开发`
+
+### 目标
+
+把当前“桌面宿主 EXE + 独立 Backend 进程”的发布形态，收敛成真正的“一个主 EXE 统一控制应用生命周期”的单宿主、单进程本地应用，同时保持用户与测试者无需预装 SDK 或 .NET runtime。
+
+### 非目标边界
+
+1. 不把“磁盘上绝对只有一个文件”作为硬目标。
+2. 允许应用携带自身管理的附属文件、前端静态资源、原生依赖和 Fixed Version WebView2 Runtime。
+3. 本切片的重点是宿主化、生命周期、打包结构和 runtime 策略，不是重写整套前端为原生 UI。
+
+### 核心约束
+
+1. 主 EXE 必须成为唯一用户入口，并统一控制启动和关闭。
+2. 后端不得再以独立后台进程长期存在；关闭桌面窗口时，后端 host 与后台服务应在同进程内一起停止。
+3. 保留现有 localhost + WebView2 契约，优先避免大规模重写前端请求层。
+4. 发布版仍需 self-contained，用户机器不需要额外安装 .NET runtime。
+5. 如果继续使用 WebView2，则必须把 Fixed Version Runtime 的打包、升级与回滚策略纳入交付链路。
+
+### 建议执行顺序
+
+1. 先抽离后端宿主构建逻辑，把当前顶层 `Program.cs` 重构为可被桌面宿主调用的 host builder/runtime service。
+2. 再让 `SimplerJiangAiAgent.Desktop` 直接在进程内启动和停止 ASP.NET Core host，删除 `Process.Start` 拉起 `Backend/` 的路径。
+3. 然后重做 `publish-windows-package.ps1` 与安装器，使桌面 EXE 成为唯一主入口，不再输出独立可运行的 `Backend` 子进程形态。
+4. 最后补齐 WebView2 Fixed Version Runtime 与升级/回滚验证。
+
+### 验收口径
+
+1. 干净 Windows 机器上，用户不需要安装 SDK/.NET runtime 即可启动。
+2. 用户只操作一个主 EXE；关闭窗口后没有残留独立 Backend 进程。
+3. 桌面启动后核心健康检查、首页、管理员登录和 LLM 首启引导都保持可用。
+4. 安装包与便携包都能在不依赖系统预装 WebView2 的前提下稳定运行，或至少在文档/安装器中明确处理该依赖。
 
 ---
 
@@ -44,159 +90,190 @@
 
 ---
 
-## GOAL-AGENT-001-R1：证据可追溯底座
+## GOAL-AGENT-002：股票 Copilot 会话化编排与产品层
+
+状态标签：`已规划，待开发`
+
+### 目标
+
+把现有 evidence / replay / MCP 底座收口成真正类似 GitHub Copilot 的股票协驾产品层，让系统从“可生成结构化分析”升级为“可会话化规划、可显示工具时间线、可给出下一步动作建议”的受控协驾体验。
+
+### 活跃开发顺序
+
+1. `GOAL-AGENT-002-P0`：运行态稳定性与输出安全闸门。
+2. `GOAL-AGENT-002-R1`：会话 contract 与 planner/governor 时间线。
+3. `GOAL-AGENT-002-R2`：股票 Copilot 面板 UX。
+4. `GOAL-AGENT-002-R3`：动作化工作流集成。
+5. `GOAL-AGENT-002-R4`：Copilot 验收与 replay 指标。
+
+### 持续约束
+
+1. Local-First 事实策略继续生效，CN-A 事实不可回退到自由联网主导。
+2. planner 可以提议工具调用，但 commander 不得绕过 tool result/evidence 自行补新事实。
+3. 产品层允许展示 plan、tool usage、evidence 和 degraded 状态，但不允许展示 raw chain-of-thought。
+4. 图表/策略/数值推导继续来自确定性代码链路。
+5. GOAL-017 是并行底座线，不能抢在 GOAL-AGENT-002 的会话 runtime 与产品闭环之前成为主开发顺序。
+
+---
+
+## GOAL-AGENT-002-P0：运行态稳定性与输出安全闸门
 
 状态标签：`待开发（当前第一优先级）`
 
 ### 目标
 
-把当前“source + publishedAt + url 的弱约束 evidence”升级为真正可回溯、可审查、可降权的 evidence object，并让 commander 只采信带阅读状态的证据。
+在正式开放更复杂的 Copilot 会话 UX 前，先把当前运行态高优先级问题和输出安全问题收口，避免未来产品层建立在不稳定或脏输出之上。
 
 ### 输入
 
-1. `StockAgentOrchestrator.cs` 当前 stock/sector/financial/trend/commander prompt contract。
-2. `llm-requests.txt` 中暴露出的伪来源、空 URL、不可验证 evidence 问题。
-3. 现有 local facts 查询链路、normalizer、history 落库结构、前端 evidence 展示。
+1. `.automation/buglist.md` 中当前高优先级问题。
+2. Browser MCP 对 `股票信息`、`情绪轮动`、`股票推荐`、`治理开发者模式` 的真实运行态表现。
+3. 已完成的 MCP、chart、news、developer-mode 现有链路。
 
 ### 输出
 
-1. 统一 evidence object contract。
-2. 后端正文抓取、清洗、摘要/摘录链路。
-3. `readMode` / `readStatus` 语义与降权规则。
-4. commander 证据采信闸门。
-5. 与现有前端展示兼容的 evidence 返回 shape。
+1. 修复直接阻塞 Copilot 的高优先级运行问题。
+2. 修复图表轻链路失效与后端稳定性问题。
+3. 修复用户面向结果中的 raw reasoning / non-JSON 泄漏。
+4. 修复 developer-mode 审计 UI 对脏输出的无收口展示。
 
 ### 核心任务
 
-1. 统一 evidence schema：至少包含 `source`、`publishedAt`、`url`、`title`、`excerpt`、`readMode`、`readStatus`、`ingestedAt`，内部按需保留 `localFactId` 或 `sourceRecordId`。
-2. 落地后端优先的 article ingest/read 链路：抓正文、去广告、去导航、截断、生成本地可复用的正文摘要或摘录。
-3. 规范 `readMode`：至少区分 `local_fact`、`url_fetched`、`url_unavailable`。
-4. 规范 `readStatus`：至少区分 `full_text_read`、`summary_only`、`title_only`、`metadata_only`、`fetch_failed`、`unverified`。
-5. 更新 prompt / parser / normalizer / history 存储，使 5 个 Agent 的 evidence 字段一致。
-6. 建立 commander 证据采信规则：没有可回溯证据对象，或证据只是 `metadata_only` / `fetch_failed` / `unverified` 时，不允许进入高置信判断。
-7. 前端只做兼容展示，不得在前端自行脑补 evidence 字段。
-
-### 约束
-
-1. 不要把“让模型自己去网页读全文”当主链。
-2. 不要把面向人的主字段重新做成 evidenceId。
-3. 不要一次性把所有新闻都全文抓取；全文抓取必须有触发条件。
-4. 如需改表或扩历史存储，必须保持旧记录兼容读取。
+1. 收掉 `情绪轮动` sectors API 500 之类会破坏市场上下文采集的运行问题。
+2. 收掉股票图表不真正走 `/api/stocks/chart` 的链路回退问题。
+3. 阻断股票推荐、developer-mode 等用户面向结果中的原始推理文本外泄。
+4. 对首次查股后疑似后端崩溃风险做稳定性复现与修复。
+5. 用 Browser MCP 做真实点击验收，不只做命令行 smoke test。
 
 ### 验收
 
-1. evidence URL 可点击，来源与发布时间可见。
-2. evidence 能区分 full text、summary、title、metadata、fetch failed 等阅读状态。
-3. commander 在没有高质量 evidence 时不会继续输出高 confidence。
-4. 后端定向测试覆盖 prompt/normalizer/解析/兼容读取。
-
-### Dev1 交付边界
-
-1. 优先改后端 evidence contract、正文抓取、normalizer、history persistence。
-2. 前端只允许做 evidence 展示兼容，不要扩展成新的页面工程。
+1. `情绪轮动` 页面恢复可用。
+2. 股票图表重新命中轻量 `/api/stocks/chart` 链路。
+3. 推荐结果与开发者模式展示不再暴露 thought leak。
+4. 查询与图表交互后后端稳定，健康检查持续通过。
 
 ---
 
-## GOAL-AGENT-001-R2：Agent 职责重切与 commander 收口
+## GOAL-AGENT-002-R1：会话 Contract 与 planner/governor 时间线
 
-状态标签：`待开发（可与 R1 约定 contract 后并行）`
+状态标签：`已完成（2026-03-22）`
 
 ### 目标
 
-让 4 个子 Agent 各做各的专业结论，减少重复推理与伪共识；同时把上下文净化、确定性特征前置计算、以及 commander 的覆盖率/冲突/降级惩罚变成系统逻辑。
+定义一轮股票 Copilot 会话的结构化 contract，让 planner、governor、commander 在同一 turn 内职责清晰、可审计、可复跑。
 
-### 输入
+### 核心输出
 
-1. 当前四个子 Agent 过宽的 prompt contract。
-2. `localFacts.marketReports` 中对 A 股单票造成污染的上游样本。
-3. R1 固定下来的 evidence object contract。
+1. `StockCopilotSessionDto`
+2. `StockCopilotTurnDto`
+3. `StockCopilotPlanStepDto`
+4. `StockCopilotToolCallDto`
+5. `StockCopilotToolResultDto`
+6. `StockCopilotFinalAnswerDto`
+7. `StockCopilotFollowUpActionDto`
 
-### 输出
+### 已完成实现
 
-1. 新的 stock/sector/financial/trend prompt contract。
-2. A 股场景下的 context hygiene 闸门。
-3. 一组由代码先算的确定性特征。
-4. commander 的 coverage/conflict/degraded-path penalty 逻辑。
+1. 后端已新增上述 DTO，并统一放入 `StockAgentRuntimeModels.cs`。
+2. 已新增 `IStockCopilotSessionService` / `StockCopilotSessionService`。
+3. 已新增 `POST /api/stocks/copilot/turns/draft`，可把用户问题直接转成 planner/governor draft timeline。
+4. draft service 已具备基础 question routing：识别 K 线 / 分时 / 策略 / 新闻 / 搜索意图。
+5. `StockSearchMcp` 已在 draft 阶段应用 `external_gated` 审批，不会默认放行。
+6. final answer contract 已明确标记 `needs_tool_execution`，并限制只能引用 tool result/evidence 中存在的事实。
+
+### 验收结果
+
+1. 隔离输出目录构建成功，避免运行中的本地 API 锁定默认 bin 目录。
+2. `StockCopilotSessionServiceTests` 3/3 通过，覆盖：
+	- session + timeline draft 生成，
+	- 外部搜索默认拦截，
+	- 显式授权后外部搜索可放行。
 
 ### 核心任务
 
-1. 收口职责边界：
-   - `stock_news` 只做个股事件事实、催化、情绪方向、证据覆盖率。
-   - `sector_news` 只做板块强弱、同类股联动、政策与资金环境。
-   - `financial_analysis` 只做财务质量、估值、预期差、订单与利润结构。
-   - `trend_analysis` 只做趋势状态、关键位、波动率、量价结构。
-   - `commander` 才能输出方向、赔率、触发条件、失效条件、仓位建议。
-2. 移除四个子 Agent 中重复的 `signals/triggers/invalidations/riskLimits` 泛化输出，或降为各自领域的专用字段。
-3. 对 `marketReports` 做 A 股场景净化，隔离/降权 Seeking Alpha、CoinTelegraph、海外个股、加密资产等噪音。
-4. 在代码里前置计算确定性特征，例如 freshness、coverage、conflict、trend state、ATR、估值偏离、波动、历史改判差异。
-5. commander 只综合上游证据和特征，不再自由补新闻。
-6. 将 coverage penalty、conflict penalty、expanded-window penalty、degraded-path penalty 做成系统逻辑，而不是让模型自由发挥。
-
-### 约束
-
-1. 不要在 R2 中重做 R1 的正文抓取链路。
-2. 不要为追求“看起来完整”而保留旧的全员半 commander 输出结构。
-3. degraded path 必须优先保守，而不是优先格式完整。
+1. planner 只负责分步计划与工具意图，不负责最终结论。
+2. governor 负责审批哪些 MCP/tool 可以调用，以及何时必须走 local-first / external-gated。
+3. commander 只消费已返回的 tool result、evidence、degradedFlags 给出结论。
+4. final answer 中的事实必须都能回到 tool result 或历史 evidence。
+5. 把 degradedFlags 对 confidence 和 action strength 的约束做成系统逻辑。
 
 ### 验收
 
-1. 四个子 Agent 的字段明显收窄，职责边界清晰。
-2. commander 的结论增量来自综合，而不是重复搬运四份半成品结论。
-3. marketReports 对 A 股个股的噪音污染显著下降。
-4. 异常/超时/HTML/non-JSON 情况下，最终 confidence 明显下调。
-
-### Dev2 交付边界
-
-1. 优先改 prompt contract、context building、feature precompute、commander penalty 逻辑。
-2. 依赖 R1 的 evidence object shape，但不要自行发散修改 R1 已确认字段。
+1. 一轮会话内的 plan/tool/result/final answer 边界清晰。
+2. 无工具结果支撑的事实无法进入最终回答。
+3. 开发者可以复盘一轮 turn 中 planner 提了什么、governor 放行了什么、tool 返回了什么、commander 最后如何得出结论。
 
 ---
 
-## GOAL-AGENT-001-R3：回放校准闭环与验收基线
+## GOAL-AGENT-002-R2：股票 Copilot 面板 UX
 
-状态标签：`待开发（R1/R2 后启动）`
+状态标签：`待开发`
 
 ### 目标
 
-把系统从“格式化观点”推进到“可被真实校准和持续验收的分析系统”，建立 replay、收益对齐、命中率与 Brier score 基线。
-
-### 输入
-
-1. `llm-requests.txt` 历史日志。
-2. `StockAgentAnalysisHistory` 与 commander 历史记录。
-3. 可对齐的本地行情/收益数据。
-
-### 输出
-
-1. replay 样本集。
-2. 1/3/5/10 日收益对齐结果。
-3. 命中率、Brier score、分组胜率等校准指标。
-4. 开发者可观察的验收基线与报告。
+把股票页右侧侧栏从静态卡片升级为会话化 Copilot 面板。
 
 ### 核心任务
 
-1. 构建一批代表性的 replay 样本：正常样本、证据不足样本、污染样本、异常修复样本。
-2. 对齐历史方向/概率/confidence 与后续 1/3/5/10 日实际收益。
-3. 计算至少以下指标：命中率、Brier score、分组胜率、证据可追溯率、解析修复率、污染混入率、改判解释完整率。
-4. 将指标接入开发者模式或离线报告，作为后续提示词/路由/模型改动的硬验收门槛。
-5. 明确“高置信度”在历史样本上的真实表现，必要时反推阈值。
-
-### 约束
-
-1. R3 不是新一轮文案优化，而是验收和校准工程。
-2. 没有真实收益对齐与评分，不要声称概率已经校准。
-3. 校准指标必须可复跑、可留档、可比较。
+1. 增加问题输入框。
+2. 增加 plan / timeline 可视化。
+3. 增加工具调用卡片与结果摘要。
+4. 增加 evidence/source 展示。
+5. 增加 follow-up action chips。
+6. 增加最近一轮会话回放能力。
 
 ### 验收
 
-1. 系统第一次具备真实 replay 和校准闭环。
-2. 后续迭代可以明确回答“这次改动让命中率/Brier score 变好了还是变差了”。
-3. 开发者能通过报告或开发者模式直接看到关键基线指标。
+1. 用户体验从“点击一个分析按钮”升级为“提问 -> 看计划 -> 看工具 -> 看回答”。
+2. 用户可以直接看到本轮用了哪些工具、证据来自哪里、下一步还能点什么。
+
+---
+
+## GOAL-AGENT-002-R3：动作化工作流集成
+
+状态标签：`待开发`
+
+### 目标
+
+把 Copilot 回答接到图表、市场上下文、新闻证据和交易计划等真实工作流，形成可执行下一步动作。
+
+### 核心任务
+
+1. 统一 judgment / trigger / invalidation / risk / next-step answer contract。
+2. 提供动作卡，例如 `看 60 日 K 线结构`、`检查今日分时承接`、`查看主线板块共振`、`起草交易计划`。
+3. 让 Copilot 回答能驱动图表叠加、新闻证据查看、市场上下文查看、计划草稿生成。
+
+### 验收
+
+1. Copilot 不只是回答问题，还能建议下一步怎么查、怎么验证、怎么起草动作。
+2. 用户能从一轮问答自然进入图表、新闻和交易计划工作流。
+
+---
+
+## GOAL-AGENT-002-R4：Copilot 验收与 replay 指标
+
+状态标签：`待开发`
+
+### 目标
+
+把股票 Copilot 的新产品层纳入可量化验收，形成后续迭代的硬基线。
+
+### 核心任务
+
+1. 统计工具调用效率与无效调用比例。
+2. 统计 evidence 覆盖率与 final answer traceability。
+3. 统计 local-first 命中率与外部搜索触发率。
+4. 统计 action card 使用质量与 session replay 可复跑性。
+
+### 验收
+
+1. 后续改 prompt/runtime/UX 时，可以明确回答哪些指标变好了、哪些变差了。
+2. Copilot 层不再只靠主观体验验收，而有可留档、可对比的产品指标。
 
 ---
 
 ## 归档说明
 
 1. 旧的 Step 4.x、图表策略、GOAL-009、GOAL-012 详细任务书已进入归档，不再作为当前主开发清单。
-2. 如确需复盘旧实现边界，请去 `.automation/reports/` 查对应报告。
-3. 本文件后续只维护 GOAL-AGENT-001-R1/R2/R3 的活跃指挥信息；完成后再收缩归档。
+2. GOAL-AGENT-001 详细实现边界也已进入归档参考态；如需复盘，请去 `.automation/reports/` 查对应报告。
+3. 本文件当前只维护 GOAL-AGENT-002 的活跃指挥信息，以及与之直接相关的全局架构约束。

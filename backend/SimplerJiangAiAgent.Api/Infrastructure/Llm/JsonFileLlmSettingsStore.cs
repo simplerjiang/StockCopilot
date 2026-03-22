@@ -130,32 +130,17 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
             existingSecrets.Provider = providerKey;
             existingSecrets.ProviderType = existingDefaults.ProviderType;
 
-            if (!string.IsNullOrWhiteSpace(settings.BaseUrl))
-            {
-                existingDefaults.BaseUrl = settings.BaseUrl.Trim();
-            }
+            existingDefaults.BaseUrl = settings.BaseUrl?.Trim() ?? string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(settings.Model))
-            {
-                existingDefaults.Model = settings.Model.Trim();
-            }
+            existingDefaults.Model = settings.Model?.Trim() ?? string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(settings.SystemPrompt))
-            {
-                existingDefaults.SystemPrompt = settings.SystemPrompt.Trim();
-            }
+            existingDefaults.SystemPrompt = settings.SystemPrompt?.Trim() ?? string.Empty;
 
             existingDefaults.ForceChinese = settings.ForceChinese;
 
-            if (!string.IsNullOrWhiteSpace(settings.Organization))
-            {
-                existingDefaults.Organization = settings.Organization.Trim();
-            }
+            existingDefaults.Organization = settings.Organization?.Trim() ?? string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(settings.Project))
-            {
-                existingDefaults.Project = settings.Project.Trim();
-            }
+            existingDefaults.Project = settings.Project?.Trim() ?? string.Empty;
 
             existingDefaults.Enabled = settings.Enabled;
             existingDefaults.UpdatedAt = DateTimeOffset.UtcNow;

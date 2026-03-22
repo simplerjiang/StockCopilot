@@ -27,19 +27,22 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
     private readonly IFileLogWriter _fileLogWriter;
     private readonly IStockAgentHistoryService _agentHistoryService;
     private readonly IQueryLocalFactDatabaseTool _queryLocalFactDatabaseTool;
+    private readonly IStockAgentFeatureEngineeringService _featureEngineeringService;
 
     public StockAgentOrchestrator(
         IStockDataService dataService,
         ILlmService llmService,
         IFileLogWriter fileLogWriter,
         IStockAgentHistoryService agentHistoryService,
-        IQueryLocalFactDatabaseTool queryLocalFactDatabaseTool)
+        IQueryLocalFactDatabaseTool queryLocalFactDatabaseTool,
+        IStockAgentFeatureEngineeringService featureEngineeringService)
     {
         _dataService = dataService;
         _llmService = llmService;
         _fileLogWriter = fileLogWriter;
         _agentHistoryService = agentHistoryService;
         _queryLocalFactDatabaseTool = queryLocalFactDatabaseTool;
+        _featureEngineeringService = featureEngineeringService;
     }
 
     public async Task<StockAgentResponseDto> RunAsync(StockAgentRequestDto request, CancellationToken cancellationToken = default)
@@ -131,8 +134,9 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         var minuteLines = await _dataService.GetMinuteLineAsync(symbol, source);
         var messages = await _dataService.GetIntradayMessagesAsync(symbol, source);
         var newsContext = StockAgentNewsContextPolicy.Apply(messages, DateTime.Now);
-        var localFacts = StockAgentLocalFactProjection.Create(await _queryLocalFactDatabaseTool.QueryAsync(symbol, cancellationToken));
+        var projectedLocalFacts = StockAgentLocalFactProjection.Create(await _queryLocalFactDatabaseTool.QueryAsync(symbol, cancellationToken));
         var queryPolicy = StockAgentInternetRoutingPolicy.Build(symbol, requestedUseInternet);
+        var prepared = _featureEngineeringService.Prepare(symbol, quote, kLines, minuteLines, newsContext.Messages, newsContext.Policy, projectedLocalFacts, DateTime.Now);
 
         return new StockAgentContextDto(
             quote,
@@ -140,7 +144,8 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             minuteLines.OrderBy(item => item.Date).ThenBy(item => item.Time).TakeLast(120).ToArray(),
             newsContext.Messages,
             newsContext.Policy,
-            localFacts,
+            prepared.LocalFacts,
+            prepared.Features,
             queryPolicy,
             DateTime.Now);
     }
@@ -187,14 +192,14 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
                         {
                             normalizedRepairData = StockAgentCommanderConsistencyGuardrails.Apply(normalizedRepairData, dependencyResults, contextJson);
                         }
-                        return new StockAgentResultDto(definition.Id, definition.Name, true, null, normalizedRepairData, repairRaw);
+                        return new StockAgentResultDto(definition.Id, definition.Name, true, null, normalizedRepairData, repairRaw, repair.TraceId);
                     }
 
                     _fileLogWriter.Write("LLM", $"parse_error agent={definition.Id} stage=repair attempt={attempt} raw={repairRaw}");
                     currentRaw = repairRaw;
                 }
 
-                return new StockAgentResultDto(definition.Id, definition.Name, false, parseError, null, currentRaw);
+                return new StockAgentResultDto(definition.Id, definition.Name, false, parseError, null, currentRaw, result.TraceId);
             }
 
             var normalizedData = StockAgentResultNormalizer.Normalize(kind, data!.Value);
@@ -202,7 +207,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             {
                 normalizedData = StockAgentCommanderConsistencyGuardrails.Apply(normalizedData, dependencyResults, contextJson);
             }
-            return new StockAgentResultDto(definition.Id, definition.Name, true, null, normalizedData, raw);
+            return new StockAgentResultDto(definition.Id, definition.Name, true, null, normalizedData, raw, result.TraceId);
         }
         catch (Exception ex)
         {
@@ -225,6 +230,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IReadOnlyList<IntradayMessageDto> Messages,
         StockAgentNewsPolicyDto NewsPolicy,
         StockAgentLocalFactPackageDto LocalFacts,
+        StockAgentDeterministicFeaturesDto DeterministicFeatures,
         StockAgentQueryPolicyDto QueryPolicy,
         DateTime RequestTime
     );
@@ -241,6 +247,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             context.Messages,
             context.NewsPolicy,
             context.LocalFacts,
+            context.DeterministicFeatures,
             context.QueryPolicy,
             context.RequestTime);
 
@@ -254,6 +261,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             context.Messages,
             context.NewsPolicy,
             context.LocalFacts,
+            context.DeterministicFeatures,
             context.QueryPolicy,
             commanderHistory,
             context.KLines.TakeLast(30).ToArray(),
@@ -267,6 +275,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IReadOnlyList<IntradayMessageDto> Messages,
         StockAgentNewsPolicyDto NewsPolicy,
         StockAgentLocalFactPackageDto LocalFacts,
+        StockAgentDeterministicFeaturesDto DeterministicFeatures,
         StockAgentQueryPolicyDto QueryPolicy,
         DateTime RequestTime
     );
@@ -276,6 +285,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IReadOnlyList<IntradayMessageDto> Messages,
         StockAgentNewsPolicyDto NewsPolicy,
         StockAgentLocalFactPackageDto LocalFacts,
+        StockAgentDeterministicFeaturesDto DeterministicFeatures,
         StockAgentQueryPolicyDto QueryPolicy,
         StockAgentCommanderHistoryPackageDto CommanderHistory,
         IReadOnlyList<KLinePointDto> KLines,
@@ -305,7 +315,7 @@ internal static class StockAgentModelRoutingPolicy
     }
 }
 
-internal sealed record StockAgentNewsPolicyDto(
+public sealed record StockAgentNewsPolicyDto(
     int PreferredLookbackHours,
     int ActualLookbackHours,
     bool ExpandedWindow,
@@ -825,6 +835,8 @@ internal static class StockAgentPromptBuilder
             "8. 必须执行状态机与滞后机制：状态=延续/震荡/反转；单日波动不应轻易翻转方向，除非出现强反证（如关键失效条件触发）。\n" +
             "9. 必须把流通市值、市盈率、量比、股东户数、所属板块纳入推理和结论。\n" +
             "10. evidence 中每条必须显式标注 readMode/readStatus；优先使用 full_text_read 或 summary_only 证据，metadata_only / unverified / fetch_failed 只能作为弱证据。\n\n" +
+            "11. deterministicFeatures 是代码先算好的硬特征，必须优先引用，不要自行脑补数值。coverageScore/conflictScore/degradedFlags 是系统惩罚输入。\n" +
+            "12. 只有 commander 可以输出方向、概率分布、触发条件、失效条件、仓位倾向；不得引入上游未引用的新证据。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"commander\",\n" +
@@ -840,6 +852,8 @@ internal static class StockAgentPromptBuilder
             "    \"sector\": \"string|null\",\n" +
             "    \"date\": \"YYYY-MM-DD\"\n" +
             "  },\n" +
+            "  \"directional_bias\": \"看多|观察|看空\",\n" +
+            "  \"probabilities\": { \"bull\": number, \"base\": number, \"bear\": number },\n" +
             "  \"analysis_opinion\": \"深度的逻辑推理与走势判断\",\n" +
             "  \"confidence_score\": number,\n" +
             "  \"trigger_conditions\": \"明确写出什么价格/指标发生意味着看多/看空信号触发\",\n" +
@@ -899,11 +913,15 @@ internal static class StockAgentPromptBuilder
             "4. 证据默认只允许最近72小时；若有效证据不足可扩窗到7天，并在summary中明确标注“扩窗到7天”。\n" +
             "5. 禁止将无来源或无发布时间（publishedAt）的内容作为核心证据。\n" +
             "6. evidence中每条都必须包含source、publishedAt、crawledAt（抓取时间）、title、readMode、readStatus；如来自本地事实库，优先附带localFactId/sourceRecordId。\n\n" +
+            "7. 你只负责个股事件事实、催化、情绪方向、证据覆盖率，不负责仓位建议、最终方向、触发条件、失效条件。triggers/invalidations/riskLimits 默认留空数组。\n" +
+            "8. 必须优先引用 deterministicFeatures.evidence，不要伪造概率或价格路径。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"stock_news\",\n" +
             "  \"summary\": \"string\",\n" +
             "  \"confidence\": number,\n" +
+            "  \"eventBias\": \"利好|中性|利空\",\n" +
+            "  \"coverage\": { \"highQualityCount\": number, \"recentCount\": number, \"note\": \"string|null\" },\n" +
             "  \"sentiment\": {\n" +
             "    \"positive\": number,\n" +
             "    \"neutral\": number,\n" +
@@ -960,12 +978,16 @@ internal static class StockAgentPromptBuilder
             "4. 证据默认只允许最近72小时；若有效证据不足可扩窗到7天，并在summary中明确标注“扩窗到7天”。\n" +
             "5. 禁止将无来源或无发布时间（publishedAt）的内容作为核心证据。\n" +
             "6. evidence中每条都必须包含source、publishedAt、crawledAt（抓取时间）、title、readMode、readStatus；如来自本地事实库，优先附带localFactId/sourceRecordId。\n\n" +
+            "7. 你只负责板块强弱、同类股联动、政策与资金环境，不负责最终方向、仓位、触发条件或失效条件。triggers/invalidations/riskLimits 默认留空数组。\n" +
+            "8. deterministicFeatures 已经提供市场噪音过滤后的 coverage/conflict/degradedFlags，必须沿用。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"sector_news\",\n" +
             "  \"sector\": \"string\",\n" +
             "  \"summary\": \"string\",\n" +
             "  \"confidence\": number,\n" +
+            "  \"regime\": \"偏强|中性|偏弱\",\n" +
+            "  \"linkageNote\": \"string|null\",\n" +
             "  \"sectorChangePercent\": number,\n" +
             "  \"topMovers\": [\n" +
             "    {\n" +
@@ -1011,12 +1033,15 @@ internal static class StockAgentPromptBuilder
             "要求：\n" +
             "1. 必须输出严格JSON，不要Markdown，不要代码块，不要多余文字。\n" +
             "2. 所有字段必须存在；没有数据用null或空数组。\n" +
-            "3. 百分比字段用数值，不带%符号。\n\n" +
+            "3. 百分比字段用数值，不带%符号。\n" +
+            "4. 你只负责财务质量、估值、预期差和慢变量，不负责最终方向、触发条件、失效条件、仓位建议。triggers/invalidations/riskLimits 默认留空数组。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"financial_analysis\",\n" +
             "  \"summary\": \"string\",\n" +
             "  \"confidence\": number,\n" +
+            "  \"qualityView\": \"改善|平稳|承压\",\n" +
+            "  \"valuationView\": \"低估|合理|偏贵|未知\",\n" +
             "  \"metrics\": {\n" +
             "    \"revenue\": number|null,\n" +
             "    \"revenueYoY\": number|null,\n" +
@@ -1062,12 +1087,16 @@ internal static class StockAgentPromptBuilder
             "要求：\n" +
             "1. 必须输出严格JSON，不要Markdown，不要代码块，不要多余文字。\n" +
             "2. 所有字段必须存在；没有数据用null或空数组。\n" +
-            "3. 百分比字段用数值，不带%符号。\n\n" +
+            "3. 百分比字段用数值，不带%符号。\n" +
+            "4. 你只负责趋势状态、关键位、波动率、量价结构；不要输出最终仓位建议或新闻结论。triggers/invalidations/riskLimits 默认留空数组。\n" +
+            "5. deterministicFeatures 已经提供 MA/ATR/VWAP/coverage/degradedFlags，必须优先参考。\n\n" +
             "输出JSON结构：\n" +
             "{\n" +
             "  \"agent\": \"trend_analysis\",\n" +
             "  \"summary\": \"string\",\n" +
             "  \"confidence\": number,\n" +
+            "  \"trendState\": \"上涨|盘整|震荡|下跌\",\n" +
+            "  \"keyLevels\": { \"support\": number|null, \"resistance\": number|null, \"vwap\": number|null },\n" +
             "  \"timeframeSignals\": [\n" +
             "    {\n" +
             "      \"timeframe\": \"1D|1W|1M\",\n" +
@@ -1144,6 +1173,8 @@ internal static class StockAgentPromptBuilder
                 "    \"sector\": \"string|null\",\n" +
                 "    \"date\": \"YYYY-MM-DD\"\n" +
                 "  },\n" +
+                "  \"directional_bias\": \"看多|观察|看空\",\n" +
+                "  \"probabilities\": { \"bull\": number, \"base\": number, \"bear\": number },\n" +
                 "  \"analysis_opinion\": \"string\",\n" +
                 "  \"confidence_score\": number,\n" +
                 "  \"trigger_conditions\": \"string\",\n" +
@@ -1497,11 +1528,14 @@ internal static class StockAgentCommanderConsistencyGuardrails
         var revision = EnsureObject(root, "revision");
         var consistency = EnsureObject(root, "consistency");
         var marketState = EnsureObject(root, "marketState");
+        var guardrails = EnsureObject(root, "guardrails");
 
         var history = ParseCommanderHistory(contextJson);
         var previousDirection = history.FirstOrDefault()?.Direction;
         var currentDirection = GetCurrentDirection(root);
         var confidence = TryReadDecimal(root, "confidence_score") ?? 50m;
+        var contextFeatures = ParseContextFeatures(contextJson);
+        var dependencyFailures = dependencyResults.Count(item => !item.Success);
 
         var (shortTrend, midTrend, divergence) = EvaluateTimeframeConsistency(dependencyResults);
         consistency["shortTermTrend"] = shortTrend;
@@ -1544,11 +1578,58 @@ internal static class StockAgentCommanderConsistencyGuardrails
         }
 
         var trustAssessment = AssessEvidenceTrust(root);
-        if (confidence > trustAssessment.MaxConfidence)
+        var confidenceCap = trustAssessment.MaxConfidence;
+        var guardrailSignals = new List<string>();
+
+        if (contextFeatures.CoverageScore > 0m && contextFeatures.CoverageScore < 45m)
         {
-            root["confidence_score"] = trustAssessment.MaxConfidence;
+            confidenceCap = Math.Min(confidenceCap, 58m);
+            guardrailSignals.Add("coverage_penalty");
+            AppendUniqueSignal(root, "证据覆盖不足：coverageScore 偏低，置信度已压低");
+        }
+
+        if (contextFeatures.ConflictScore >= 45m)
+        {
+            confidenceCap = Math.Min(confidenceCap, 60m);
+            guardrailSignals.Add("conflict_penalty");
+            AppendUniqueSignal(root, "证据分歧较大：conflictScore 偏高，倾向保守");
+        }
+
+        if (contextFeatures.ExpandedWindow)
+        {
+            confidenceCap = Math.Min(confidenceCap, 68m);
+            guardrailSignals.Add("expanded_window_penalty");
+            AppendUniqueSignal(root, "证据已扩窗到 7 天：时效性下降，置信度受限");
+        }
+
+        if (dependencyFailures > 0 || contextFeatures.DegradedFlags.Count > 0)
+        {
+            confidenceCap = Math.Min(confidenceCap, dependencyFailures > 0 ? 48m : 55m);
+            guardrailSignals.Add("degraded_path_penalty");
+            AppendUniqueSignal(root, "存在依赖失败或 degradedFlags，最终结论已主动降级");
+        }
+
+        if (confidence > confidenceCap)
+        {
+            root["confidence_score"] = confidenceCap;
             AppendUniqueSignal(root, trustAssessment.Signal);
         }
+
+        guardrails["confidenceCap"] = confidenceCap;
+        guardrails["coveragePenaltyApplied"] = guardrailSignals.Any(flag => string.Equals(flag, "coverage_penalty", StringComparison.Ordinal));
+        guardrails["conflictPenaltyApplied"] = guardrailSignals.Any(flag => string.Equals(flag, "conflict_penalty", StringComparison.Ordinal));
+        guardrails["degradedPenaltyApplied"] = guardrailSignals.Any(flag => string.Equals(flag, "degraded_path_penalty", StringComparison.Ordinal));
+        guardrails["dependencyFailureCount"] = dependencyFailures;
+        guardrails["degradedFlags"] = new JsonArray(contextFeatures.DegradedFlags.Select(flag => JsonValue.Create(flag)).ToArray());
+        guardrails["notes"] = new JsonArray(guardrailSignals.Select(flag => JsonValue.Create(flag)).ToArray());
+
+        root["directional_bias"] = currentDirection switch
+        {
+            "加仓" => "看多",
+            "减仓" => "看空",
+            _ => "观察"
+        };
+        NormalizeProbabilities(root, currentDirection ?? "观察", TryReadDecimal(root, "confidence_score") ?? confidenceCap);
 
         revision["required"] = changed;
         revision["previousDirection"] = previousDirection;
@@ -1786,6 +1867,73 @@ internal static class StockAgentCommanderConsistencyGuardrails
         return (55m, "证据仅为元数据或未核验，置信度受限");
     }
 
+    private static void NormalizeProbabilities(JsonObject root, string direction, decimal confidence)
+    {
+        var probabilities = EnsureObject(root, "probabilities");
+        var bull = TryReadDecimal(probabilities, "bull");
+        var @base = TryReadDecimal(probabilities, "base");
+        var bear = TryReadDecimal(probabilities, "bear");
+        if (bull.HasValue && @base.HasValue && bear.HasValue && bull + @base + bear > 0m)
+        {
+            return;
+        }
+
+        var capped = Math.Clamp(confidence, 0m, 100m);
+        if (string.Equals(direction, "加仓", StringComparison.OrdinalIgnoreCase))
+        {
+            var bullProbability = Math.Min(85m, 35m + capped * 0.5m);
+            probabilities["bull"] = bullProbability;
+            probabilities["base"] = 100m - bullProbability - 15m;
+            probabilities["bear"] = 15m;
+            return;
+        }
+
+        if (string.Equals(direction, "减仓", StringComparison.OrdinalIgnoreCase))
+        {
+            var bearProbability = Math.Min(85m, 35m + capped * 0.5m);
+            probabilities["bull"] = 15m;
+            probabilities["base"] = 100m - 15m - bearProbability;
+            probabilities["bear"] = bearProbability;
+            return;
+        }
+
+        probabilities["bull"] = Math.Max(15m, 30m - capped * 0.1m);
+        probabilities["base"] = Math.Min(70m, 40m + capped * 0.2m);
+        probabilities["bear"] = Math.Max(15m, 30m - capped * 0.1m);
+    }
+
+    private static (decimal CoverageScore, decimal ConflictScore, bool ExpandedWindow, IReadOnlyList<string> DegradedFlags) ParseContextFeatures(string contextJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(contextJson);
+            if (!TryGetPropertyIgnoreCase(doc.RootElement, "deterministicFeatures", out var features)
+                || features.ValueKind != JsonValueKind.Object)
+            {
+                return (0m, 0m, false, Array.Empty<string>());
+            }
+
+            decimal coverageScore = 0m;
+            decimal conflictScore = 0m;
+            var expandedWindow = false;
+            if (TryGetPropertyIgnoreCase(features, "evidence", out var evidence) && evidence.ValueKind == JsonValueKind.Object)
+            {
+                coverageScore = TryReadDecimal(evidence, "coverageScore") ?? 0m;
+                conflictScore = TryReadDecimal(evidence, "conflictScore") ?? 0m;
+                expandedWindow = TryGetPropertyIgnoreCase(evidence, "expandedWindow", out var expanded) && expanded.ValueKind is JsonValueKind.True or JsonValueKind.False && expanded.GetBoolean();
+            }
+
+            var degradedFlags = TryGetPropertyIgnoreCase(features, "degradedFlags", out var degraded) && degraded.ValueKind == JsonValueKind.Array
+                ? degraded.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()).Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item!).ToArray()
+                : Array.Empty<string>();
+            return (coverageScore, conflictScore, expandedWindow, degradedFlags);
+        }
+        catch
+        {
+            return (0m, 0m, false, Array.Empty<string>());
+        }
+    }
+
     private static IReadOnlyList<StockAgentCommanderHistoryItemDto> ParseCommanderHistory(string contextJson)
     {
         try
@@ -2013,9 +2161,15 @@ internal static class StockAgentResultNormalizer
 
         EnsureProperty(root, "analysis_opinion", null);
         EnsureProperty(root, "confidence_score", null);
+        EnsureProperty(root, "directional_bias", null);
         EnsureProperty(root, "trigger_conditions", null);
         EnsureProperty(root, "invalid_conditions", null);
         EnsureProperty(root, "risk_warning", null);
+
+        var probabilities = EnsureObject(root, "probabilities");
+        EnsureProperty(probabilities, "bull", null);
+        EnsureProperty(probabilities, "base", null);
+        EnsureProperty(probabilities, "bear", null);
 
         var revision = EnsureObject(root, "revision");
         EnsureProperty(revision, "required", false);
@@ -2034,6 +2188,15 @@ internal static class StockAgentResultNormalizer
         EnsureProperty(marketState, "strongCounterEvidence", false);
         EnsureProperty(marketState, "overrideReason", null);
 
+        var guardrails = EnsureObject(root, "guardrails");
+        EnsureProperty(guardrails, "confidenceCap", null);
+        EnsureProperty(guardrails, "coveragePenaltyApplied", false);
+        EnsureProperty(guardrails, "conflictPenaltyApplied", false);
+        EnsureProperty(guardrails, "degradedPenaltyApplied", false);
+        EnsureProperty(guardrails, "dependencyFailureCount", 0);
+        EnsureArray(guardrails, "degradedFlags");
+        EnsureArray(guardrails, "notes");
+
         TryReadString(root, "analysis_opinion", out var analysisOpinion);
         TryReadString(root, "summary", out var summaryText);
 
@@ -2045,6 +2208,15 @@ internal static class StockAgentResultNormalizer
         if (string.IsNullOrWhiteSpace(analysisOpinion) && !string.IsNullOrWhiteSpace(summaryText))
         {
             root["analysis_opinion"] = summaryText;
+        }
+
+        if ((!TryReadString(root, "directional_bias", out var biasText) || string.IsNullOrWhiteSpace(biasText)) && !string.IsNullOrWhiteSpace(analysisOpinion))
+        {
+            root["directional_bias"] = analysisOpinion.Contains("减仓", StringComparison.OrdinalIgnoreCase) || analysisOpinion.Contains("看空", StringComparison.OrdinalIgnoreCase)
+                ? "看空"
+                : analysisOpinion.Contains("加仓", StringComparison.OrdinalIgnoreCase) || analysisOpinion.Contains("试仓", StringComparison.OrdinalIgnoreCase) || analysisOpinion.Contains("看多", StringComparison.OrdinalIgnoreCase)
+                    ? "看多"
+                    : "观察";
         }
 
         if ((!TryReadString(root, "trigger_conditions", out var triggerText) || string.IsNullOrWhiteSpace(triggerText))

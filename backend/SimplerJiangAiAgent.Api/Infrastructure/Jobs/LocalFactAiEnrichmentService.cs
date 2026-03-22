@@ -260,13 +260,7 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
 
     private static string? NormalizeTranslatedTitle(string originalTitle, string? translatedTitle)
     {
-        var normalized = NormalizeText(translatedTitle);
-        if (string.IsNullOrWhiteSpace(normalized) || string.Equals(normalized, originalTitle, StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        return normalized;
+        return LocalFactDisplayPolicy.SanitizeTranslatedTitle(originalTitle, translatedTitle);
     }
 
     private static string NormalizeSentiment(string? value)

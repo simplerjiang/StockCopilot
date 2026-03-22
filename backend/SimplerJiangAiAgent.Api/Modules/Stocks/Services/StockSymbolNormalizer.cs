@@ -10,7 +10,7 @@ public static class StockSymbolNormalizer
             return trimmed;
         }
 
-        if (trimmed.Length == 6)
+        if (trimmed.Length == 6 && trimmed.All(char.IsDigit))
         {
             return trimmed.StartsWith("6") ? $"sh{trimmed}" : $"sz{trimmed}";
         }

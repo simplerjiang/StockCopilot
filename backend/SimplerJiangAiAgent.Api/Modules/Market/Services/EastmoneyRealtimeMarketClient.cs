@@ -9,6 +9,16 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
 {
     private const decimal YuanPerHundredMillion = 100000000m;
     private const decimal TenThousandPerHundredMillion = 10000m;
+    private static readonly IReadOnlyDictionary<string, string> GlobalIndexSecIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["hsi"] = "100.HSI",
+        ["hstech"] = "124.HSTECH",
+        ["n225"] = "100.N225",
+        ["ndx"] = "100.NDX",
+        ["spx"] = "100.SPX",
+        ["ftse"] = "100.FTSE",
+        ["ks11"] = "100.KS11"
+    };
     private readonly HttpClient _httpClient;
 
     public EastmoneyRealtimeMarketClient(HttpClient httpClient)
@@ -373,7 +383,18 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
 
     private static string ToEastmoneySecId(string symbol)
     {
+        var raw = symbol.Trim();
+        if (GlobalIndexSecIds.TryGetValue(raw, out var rawGlobalSecId))
+        {
+            return rawGlobalSecId;
+        }
+
         var normalized = StockSymbolNormalizer.Normalize(symbol);
+        if (GlobalIndexSecIds.TryGetValue(normalized, out var globalSecId))
+        {
+            return globalSecId;
+        }
+
         if (normalized.StartsWith("bj", StringComparison.OrdinalIgnoreCase))
         {
             return $"0.{normalized[2..]}";
@@ -392,7 +413,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             0 when code.StartsWith('8') || code.StartsWith('4') => $"bj{code}",
             0 => $"sz{code}",
             2 => $"bj{code}",
-            _ => code
+            _ => code.ToLowerInvariant()
         };
     }
 

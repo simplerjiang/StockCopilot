@@ -48,7 +48,8 @@ const stockRealtimeError = ref('')
 const stockRealtimeSymbol = ref('')
 let stockRealtimeAbortController = null
 const chatWindowRefs = new Map()
-const DEFAULT_REALTIME_CONTEXT_SYMBOLS = ['sh000001', 'sz399001', 'sz399006']
+const DOMESTIC_REALTIME_CONTEXT_SYMBOLS = ['sh000001', 'sz399001', 'sz399006']
+const GLOBAL_REALTIME_CONTEXT_SYMBOLS = ['hsi', 'hstech', 'n225', 'ndx', 'spx', 'ftse', 'ks11']
 
 const STOCK_LOAD_STAGE_DEFINITIONS = [
   {
@@ -245,13 +246,45 @@ const currentStockRealtimeQuote = computed(() => {
 
   return stockRealtimeQuotes.value.find(item => normalizeStockSymbol(item.symbol) === currentSymbol) ?? null
 })
-const stockRealtimeBenchmarks = computed(() => {
-  const currentSymbol = normalizeStockSymbol(currentStockRealtimeQuote.value?.symbol ?? detail.value?.quote?.symbol)
-  return stockRealtimeQuotes.value.filter(item => normalizeStockSymbol(item.symbol) !== currentSymbol)
+const stockRealtimeDomesticIndices = computed(() =>
+  stockRealtimeQuotes.value.filter(item => DOMESTIC_REALTIME_CONTEXT_SYMBOLS.includes(normalizeStockSymbol(item.symbol)))
+)
+const stockRealtimeGlobalIndices = computed(() =>
+  stockRealtimeQuotes.value.filter(item => GLOBAL_REALTIME_CONTEXT_SYMBOLS.includes(normalizeStockSymbol(item.symbol)))
+)
+const stockRealtimeRelativeStrength = computed(() => {
+  const focusQuote = currentStockRealtimeQuote.value
+  const shanghaiQuote = stockRealtimeDomesticIndices.value.find(item => normalizeStockSymbol(item.symbol) === 'sh000001')
+  if (!focusQuote || !shanghaiQuote) {
+    return null
+  }
+
+  const spread = Number(focusQuote.changePercent) - Number(shanghaiQuote.changePercent)
+  return {
+    spread,
+    label: spread >= 0 ? '强于沪指' : '弱于沪指'
+  }
 })
-const tradingPlanBoardRealtimeIndices = computed(() => {
-  const items = currentStockRealtimeQuote.value ? stockRealtimeBenchmarks.value : stockRealtimeQuotes.value
-  return items.slice(0, 3)
+const stockRealtimeBreadthBias = computed(() => {
+  const breadth = stockRealtimeOverview.value?.breadth
+  if (!breadth) {
+    return null
+  }
+
+  const advancers = Number(breadth.advancers ?? 0)
+  const decliners = Number(breadth.decliners ?? 0)
+  const delta = advancers - decliners
+  let label = '多空拉锯'
+  if (delta >= 300) {
+    label = '普涨扩散'
+  } else if (delta <= -300) {
+    label = '普跌扩散'
+  }
+
+  return {
+    delta,
+    label
+  }
 })
 
 const isBlockingQuoteLoad = computed(() => loading.value && !detail.value)
@@ -700,8 +733,22 @@ const formatSignedRealtimeAmount = value => {
   return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
 }
 
+const formatSignedNumber = (value, digits = 2) => {
+  const number = Number(value)
+  if (Number.isNaN(number)) {
+    return ''
+  }
+
+  return `${number >= 0 ? '+' : ''}${number.toFixed(digits)}`
+}
+
+const formatSignedPercent = value => {
+  const formatted = formatSignedNumber(value, 2)
+  return formatted ? `${formatted}%` : ''
+}
+
 const buildRealtimeContextSymbols = symbolKey => {
-  return [symbolKey, ...DEFAULT_REALTIME_CONTEXT_SYMBOLS]
+  return [symbolKey, ...DOMESTIC_REALTIME_CONTEXT_SYMBOLS, ...GLOBAL_REALTIME_CONTEXT_SYMBOLS]
     .map(normalizeStockSymbol)
     .filter(Boolean)
     .filter((item, index, list) => list.indexOf(item) === index)
@@ -2472,6 +2519,166 @@ watch(currentStockKey, () => {
       </section>
     </div>
 
+    <section class="copilot-card page-top-market-overview-belt">
+      <div class="market-overview-belt-header">
+        <div>
+          <p class="market-overview-kicker">Top Market Tape</p>
+          <h3>顶部市场总览带</h3>
+          <p class="muted">把当前标的、A 股主场、全球指数和资金温度压成一屏，开页先看这里。</p>
+        </div>
+        <div class="stock-realtime-actions">
+          <button @click="fetchStockRealtimeOverview(currentStockKey || '', { force: true })" :disabled="stockRealtimeLoading">刷新市场</button>
+          <button @click="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled">
+            {{ stockRealtimeOverviewEnabled ? '隐藏' : '显示' }}
+          </button>
+        </div>
+      </div>
+
+      <div class="market-overview-belt-content">
+        <p v-if="!stockRealtimeOverviewEnabled" class="muted">顶部市场总览带已隐藏，可随时重新展开。</p>
+        <template v-else>
+          <p v-if="stockRealtimeError" class="muted error">{{ stockRealtimeError }}</p>
+          <p v-else-if="stockRealtimeLoading && !stockRealtimeOverview" class="muted">加载中...</p>
+          <template v-else-if="stockRealtimeOverview">
+            <div class="market-overview-meta">
+              <span>{{ formatDate(stockRealtimeOverview.snapshotTime) }}</span>
+              <span v-if="detail?.quote?.symbol">当前 {{ detail.quote.symbol }}</span>
+              <span>涨红跌绿</span>
+            </div>
+
+            <div class="market-overview-grid">
+              <article class="market-overview-hero" :class="{ 'is-placeholder': !currentStockRealtimeQuote }">
+                <div class="market-overview-hero-head">
+                  <div class="market-overview-hero-name">
+                    <p class="muted">当前标的</p>
+                    <strong>{{ currentStockRealtimeQuote?.name ?? detail?.quote?.name ?? '未选股票' }}</strong>
+                    <small>{{ currentStockRealtimeQuote?.symbol ?? detail?.quote?.symbol ?? '先搜索股票即可加入对照' }}</small>
+                  </div>
+                  <div v-if="currentStockRealtimeQuote" class="market-overview-hero-price">
+                    <strong :class="getChangeClass(currentStockRealtimeQuote.changePercent)">{{ currentStockRealtimeQuote.price.toFixed(2) }}</strong>
+                    <small :class="getChangeClass(currentStockRealtimeQuote.changePercent)">
+                      {{ formatSignedNumber(currentStockRealtimeQuote.change) }} / {{ formatSignedPercent(currentStockRealtimeQuote.changePercent) }}
+                    </small>
+                  </div>
+                </div>
+                <p v-if="currentStockRealtimeQuote" class="market-overview-hero-summary">
+                  成交额 {{ formatRealtimeMoney(currentStockRealtimeQuote.turnoverAmount) }}
+                </p>
+                <p v-else class="market-overview-hero-summary muted">
+                  未选个股时，这里会保留市场全局快照，选股后自动补入个股强弱对照。
+                </p>
+                <div class="market-overview-tag-row">
+                  <span v-if="stockRealtimeRelativeStrength" class="market-overview-tag" :class="getChangeClass(stockRealtimeRelativeStrength.spread)">
+                    {{ stockRealtimeRelativeStrength.label }} {{ formatSignedPercent(stockRealtimeRelativeStrength.spread) }}
+                  </span>
+                  <span class="market-overview-tag" :class="getChangeClass(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow)">
+                    主力 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}
+                  </span>
+                  <span class="market-overview-tag" :class="getChangeClass(stockRealtimeOverview.northboundFlow?.totalNetInflow)">
+                    北向 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}
+                  </span>
+                </div>
+              </article>
+
+              <section class="market-overview-cluster">
+                <div class="market-overview-cluster-head">
+                  <strong>A 股主场</strong>
+                  <small>三大指数与当前市场底色</small>
+                </div>
+                <div v-if="stockRealtimeDomesticIndices.length" class="market-overview-quote-list">
+                  <article v-for="item in stockRealtimeDomesticIndices" :key="`domestic-${item.symbol}`" class="market-overview-quote-card">
+                    <div class="market-overview-quote-card-head">
+                      <div>
+                        <strong>{{ item.name }}</strong>
+                        <small>{{ item.symbol }}</small>
+                      </div>
+                      <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
+                    </div>
+                    <div class="market-overview-quote-card-foot">
+                      <small :class="getChangeClass(item.changePercent)">{{ formatSignedPercent(item.changePercent) }}</small>
+                      <small :class="getChangeClass(item.change)">{{ formatSignedNumber(item.change) }}</small>
+                    </div>
+                  </article>
+                </div>
+                <p v-else class="muted">暂无 A 股指数数据。</p>
+              </section>
+
+              <section class="market-overview-cluster market-overview-cluster-global">
+                <div class="market-overview-cluster-head">
+                  <strong>全球指数</strong>
+                  <small>港股、日股、美股、欧洲与亚洲联动</small>
+                </div>
+                <div v-if="stockRealtimeGlobalIndices.length" class="market-overview-quote-list market-overview-quote-list-global">
+                  <article v-for="item in stockRealtimeGlobalIndices" :key="`global-${item.symbol}`" class="market-overview-quote-card">
+                    <div class="market-overview-quote-card-head">
+                      <div>
+                        <strong>{{ item.name }}</strong>
+                        <small>{{ item.symbol }}</small>
+                      </div>
+                      <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
+                    </div>
+                    <div class="market-overview-quote-card-foot">
+                      <small :class="getChangeClass(item.changePercent)">{{ formatSignedPercent(item.changePercent) }}</small>
+                      <small :class="getChangeClass(item.change)">{{ formatSignedNumber(item.change) }}</small>
+                    </div>
+                  </article>
+                </div>
+                <p v-else class="muted">暂无全球指数数据。</p>
+              </section>
+            </div>
+
+            <div class="market-overview-pulse-grid">
+              <article class="market-overview-pulse-card">
+                <span>主力净流</span>
+                <strong :class="getChangeClass(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow)">{{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}</strong>
+                <small>
+                  超大单 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.superLargeOrderNetInflow) }}
+                </small>
+              </article>
+
+              <article class="market-overview-pulse-card">
+                <span>北向净流</span>
+                <strong :class="getChangeClass(stockRealtimeOverview.northboundFlow?.totalNetInflow)">{{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}</strong>
+                <small>
+                  沪 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.shanghaiNetInflow) }} / 深 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.shenzhenNetInflow) }}
+                </small>
+              </article>
+
+              <article class="market-overview-pulse-card">
+                <span>市场广度</span>
+                <strong :class="getChangeClass(stockRealtimeBreadthBias?.delta)">
+                  {{ stockRealtimeOverview.breadth?.advancers ?? 0 }} / {{ stockRealtimeOverview.breadth?.decliners ?? 0 }}
+                </strong>
+                <small>
+                  {{ stockRealtimeBreadthBias?.label ?? '多空拉锯' }} · 平盘 {{ stockRealtimeOverview.breadth?.flatCount ?? 0 }}
+                </small>
+              </article>
+
+              <article class="market-overview-pulse-card">
+                <span>封板温度</span>
+                <strong :class="getChangeClass((stockRealtimeOverview.breadth?.limitUpCount ?? 0) - (stockRealtimeOverview.breadth?.limitDownCount ?? 0))">
+                  {{ stockRealtimeOverview.breadth?.limitUpCount ?? 0 }} / {{ stockRealtimeOverview.breadth?.limitDownCount ?? 0 }}
+                </strong>
+                <small>涨停 / 跌停</small>
+              </article>
+
+              <article class="market-overview-pulse-card">
+                <span>个股对照</span>
+                <strong :class="getChangeClass(stockRealtimeRelativeStrength?.spread)">
+                  {{ stockRealtimeRelativeStrength ? `${stockRealtimeRelativeStrength.label} ${formatSignedPercent(stockRealtimeRelativeStrength.spread)}` : '未选标的' }}
+                </strong>
+                <small v-if="currentStockRealtimeQuote">
+                  {{ currentStockRealtimeQuote.name }} {{ formatSignedPercent(currentStockRealtimeQuote.changePercent) }}
+                </small>
+                <small v-else>搜索股票后自动加入比较</small>
+              </article>
+            </div>
+          </template>
+          <p v-else class="muted">暂无市场实时总览数据。</p>
+        </template>
+      </div>
+    </section>
+
     <section class="market-news-panel" :class="{ empty: !detail && !marketNewsLoading && !marketNewsError && !marketNewsItems.length }">
       <div class="market-news-header">
         <div>
@@ -2628,45 +2835,6 @@ watch(currentStockKey, () => {
             </button>
           </div>
 
-          <div class="plan-board-realtime-strip">
-            <div class="plan-board-realtime-head">
-              <div>
-                <strong>市场快链路</strong>
-                <small>{{ formatDate(stockRealtimeOverview?.snapshotTime) }}</small>
-              </div>
-              <div class="stock-realtime-actions">
-                <button @click="fetchStockRealtimeOverview(currentStockKey || '', { force: true })" :disabled="stockRealtimeLoading || !stockRealtimeOverviewEnabled">刷新市场</button>
-                <button @click="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled">
-                  {{ stockRealtimeOverviewEnabled ? '隐藏' : '显示' }}
-                </button>
-              </div>
-            </div>
-            <p v-if="!stockRealtimeOverviewEnabled" class="muted">市场快链路已隐藏，可在这里重新展开。</p>
-            <template v-else>
-              <p v-if="stockRealtimeError" class="muted error">{{ stockRealtimeError }}</p>
-              <p v-else-if="stockRealtimeLoading && !stockRealtimeOverview" class="muted">加载中...</p>
-              <template v-else-if="stockRealtimeOverview">
-                <div class="plan-board-realtime-metrics">
-                  <span class="plan-pill">主力 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}</span>
-                  <span class="plan-pill">北向 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}</span>
-                  <span class="plan-pill">涨跌 {{ stockRealtimeOverview.breadth?.advancers ?? 0 }} / {{ stockRealtimeOverview.breadth?.decliners ?? 0 }}</span>
-                  <span class="plan-pill">涨停 {{ stockRealtimeOverview.breadth?.limitUpCount ?? 0 }} / 跌停 {{ stockRealtimeOverview.breadth?.limitDownCount ?? 0 }}</span>
-                </div>
-                <div class="plan-board-index-list">
-                  <article v-for="item in tradingPlanBoardRealtimeIndices" :key="`plan-board-index-${item.symbol}`" class="plan-board-index-card">
-                    <div>
-                      <strong>{{ item.name }}</strong>
-                      <small>{{ item.symbol }}</small>
-                    </div>
-                    <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
-                    <small :class="getChangeClass(item.changePercent)">{{ formatPercent(item.changePercent.toFixed(2)) }}</small>
-                  </article>
-                </div>
-              </template>
-              <p v-else class="muted">暂无市场实时总览数据。</p>
-            </template>
-          </div>
-
           <p v-if="rootWorkspace.planError" class="muted error">{{ rootWorkspace.planError }}</p>
           <p v-else-if="rootWorkspace.planListLoading && !rootWorkspace.planList.length" class="muted">加载中...</p>
           <ul v-else-if="rootWorkspace.planList.length" class="plan-list plan-board-list">
@@ -2717,71 +2885,6 @@ watch(currentStockKey, () => {
             v-show="workspace.symbolKey === currentStockKey"
             class="sidebar-workspace"
           >
-            <section class="copilot-card stock-realtime-card">
-              <div class="news-impact-header">
-                <div>
-                  <h3>市场实时上下文</h3>
-                  <p class="muted">把当前标的和三大指数压在同一屏，快速判断个股强弱与市场环境。</p>
-                </div>
-                <div class="stock-realtime-actions">
-                  <button @click="fetchStockRealtimeOverview(workspace.symbolKey, { force: true })" :disabled="stockRealtimeLoading || !workspace.detail">刷新</button>
-                  <button @click="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled" :disabled="!workspace.detail">
-                    {{ stockRealtimeOverviewEnabled ? '隐藏' : '显示' }}
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="workspace.detail" class="stock-realtime-content">
-                <p v-if="!stockRealtimeOverviewEnabled" class="muted">实时总览已隐藏，可随时重新展开。</p>
-                <template v-else>
-                  <p v-if="stockRealtimeError" class="muted error">{{ stockRealtimeError }}</p>
-                  <p v-else-if="stockRealtimeLoading && !stockRealtimeOverview" class="muted">加载中...</p>
-                  <template v-else-if="stockRealtimeOverview">
-                    <div class="stock-realtime-meta">
-                      <span>{{ formatDate(stockRealtimeOverview.snapshotTime) }}</span>
-                      <span v-if="currentStockRealtimeQuote">当前 {{ currentStockRealtimeQuote.symbol }}</span>
-                    </div>
-
-                    <article v-if="currentStockRealtimeQuote" class="stock-realtime-focus">
-                      <div>
-                        <p class="muted">当前标的</p>
-                        <strong>{{ currentStockRealtimeQuote.name }}</strong>
-                        <small>{{ currentStockRealtimeQuote.symbol }}</small>
-                      </div>
-                      <div class="stock-realtime-focus-price">
-                        <strong :class="getChangeClass(currentStockRealtimeQuote.changePercent)">{{ currentStockRealtimeQuote.price.toFixed(2) }}</strong>
-                        <small :class="getChangeClass(currentStockRealtimeQuote.changePercent)">
-                          {{ currentStockRealtimeQuote.change >= 0 ? '+' : '' }}{{ currentStockRealtimeQuote.change.toFixed(2) }} / {{ formatPercent(currentStockRealtimeQuote.changePercent.toFixed(2)) }}
-                        </small>
-                        <small>成交额 {{ formatRealtimeMoney(currentStockRealtimeQuote.turnoverAmount) }}</small>
-                      </div>
-                    </article>
-
-                    <div class="stock-realtime-grid">
-                      <article v-for="item in stockRealtimeBenchmarks" :key="item.symbol" class="stock-realtime-mini-card">
-                        <div>
-                          <strong>{{ item.name }}</strong>
-                          <small>{{ item.symbol }}</small>
-                        </div>
-                        <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
-                        <small :class="getChangeClass(item.changePercent)">{{ formatPercent(item.changePercent.toFixed(2)) }}</small>
-                      </article>
-                    </div>
-
-                    <div class="stock-realtime-pill-row">
-                      <span class="plan-pill">主力 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}</span>
-                      <span class="plan-pill">北向 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}</span>
-                      <span class="plan-pill">涨跌 {{ stockRealtimeOverview.breadth?.advancers ?? 0 }} / {{ stockRealtimeOverview.breadth?.decliners ?? 0 }}</span>
-                      <span class="plan-pill">涨停 {{ stockRealtimeOverview.breadth?.limitUpCount ?? 0 }} / 跌停 {{ stockRealtimeOverview.breadth?.limitDownCount ?? 0 }}</span>
-                    </div>
-                  </template>
-                  <p v-else class="muted">暂无实时总览数据。</p>
-                </template>
-              </div>
-
-              <p v-else class="muted">选择股票后在此查看市场实时上下文。</p>
-            </section>
-
             <section class="copilot-card news-impact">
               <div class="news-impact-header">
                 <div>
@@ -3269,6 +3372,227 @@ watch(currentStockKey, () => {
 
 .history-chip strong {
   color: #0f172a;
+}
+
+.page-top-market-overview-belt {
+  display: grid;
+  gap: 0.9rem;
+  margin: 1rem 0;
+  padding: 1rem 1.1rem;
+  border-radius: 24px;
+  border: 1px solid rgba(251, 146, 60, 0.2);
+  background:
+    radial-gradient(circle at top left, rgba(248, 113, 113, 0.14), transparent 24%),
+    radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 22%),
+    linear-gradient(145deg, rgba(255, 250, 245, 0.98), rgba(248, 250, 252, 0.98));
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.09);
+}
+
+.market-overview-belt-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.market-overview-belt-header h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.market-overview-kicker {
+  margin: 0 0 0.2rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #b45309;
+}
+
+.market-overview-belt-content {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.market-overview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.market-overview-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: minmax(240px, 1.05fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.market-overview-hero,
+.market-overview-cluster,
+.market-overview-pulse-card {
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.market-overview-hero {
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.9rem;
+  background:
+    radial-gradient(circle at top left, rgba(254, 215, 170, 0.32), transparent 35%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+}
+
+.market-overview-hero.is-placeholder {
+  opacity: 0.92;
+}
+
+.market-overview-hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.market-overview-hero-name,
+.market-overview-hero-price {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.market-overview-hero-name strong {
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.market-overview-hero-name small,
+.market-overview-hero-summary,
+.market-overview-hero-price small {
+  color: #64748b;
+}
+
+.market-overview-hero-price {
+  text-align: right;
+}
+
+.market-overview-hero-price strong {
+  font-size: 1.45rem;
+}
+
+.market-overview-hero-summary {
+  margin: 0;
+}
+
+.market-overview-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.market-overview-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.62rem;
+  border-radius: 999px;
+  background: rgba(241, 245, 249, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.market-overview-cluster {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+}
+
+.market-overview-cluster-global {
+  background:
+    radial-gradient(circle at top right, rgba(191, 219, 254, 0.3), transparent 30%),
+    rgba(255, 255, 255, 0.88);
+}
+
+.market-overview-cluster-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.market-overview-cluster-head strong {
+  color: #0f172a;
+}
+
+.market-overview-cluster-head small {
+  color: #64748b;
+}
+
+.market-overview-quote-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.market-overview-quote-list-global {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-overview-quote-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.market-overview-quote-card-head,
+.market-overview-quote-card-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.market-overview-quote-card-head > div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.market-overview-quote-card-head strong:first-child {
+  color: #0f172a;
+}
+
+.market-overview-quote-card small {
+  color: #64748b;
+}
+
+.market-overview-pulse-grid {
+  display: grid;
+  gap: 0.7rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.market-overview-pulse-card {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.8rem 0.85rem;
+}
+
+.market-overview-pulse-card span {
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.market-overview-pulse-card strong {
+  font-size: 1.05rem;
+}
+
+.market-overview-pulse-card small {
+  color: #475569;
 }
 
 .error-text {
@@ -4315,13 +4639,26 @@ watch(currentStockKey, () => {
   .workspace-grid.focused {
     grid-template-columns: 1fr;
   }
+
+  .market-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .market-overview-quote-list-global {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
   .panel-header,
   .deck-card-header,
   .quote-card-header,
-  .news-impact-header {
+  .news-impact-header,
+  .market-overview-belt-header,
+  .market-overview-hero-head,
+  .market-overview-cluster-head,
+  .market-overview-quote-card-head,
+  .market-overview-quote-card-foot {
     flex-direction: column;
   }
 
@@ -4336,6 +4673,14 @@ watch(currentStockKey, () => {
 
   .stock-realtime-focus-price {
     text-align: left;
+  }
+
+  .market-overview-hero-price {
+    text-align: left;
+  }
+
+  .market-overview-quote-list-global {
+    grid-template-columns: 1fr;
   }
 }
 </style>

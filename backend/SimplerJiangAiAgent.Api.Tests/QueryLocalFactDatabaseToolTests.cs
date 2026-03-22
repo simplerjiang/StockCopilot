@@ -434,6 +434,55 @@ public sealed class QueryLocalFactDatabaseToolTests
         Assert.Equal("Market 2", item.Title);
     }
 
+    [Fact]
+    public async Task QueryAsync_ShouldFilterOutWeakStockMatchesAndHideDistortedChineseTranslation()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.StockCompanyProfiles.Add(new StockCompanyProfile
+        {
+            Symbol = "sz000021",
+            Name = "深科技",
+            SectorName = "半导体",
+            UpdatedAt = new DateTime(2026, 3, 18, 8, 0, 0, DateTimeKind.Utc)
+        });
+        dbContext.LocalStockNews.AddRange(
+            new LocalStockNews
+            {
+                Symbol = "sz000021",
+                Name = "深科技",
+                SectorName = "半导体",
+                Title = "深科技与某客户签署战略合作协议",
+                TranslatedTitle = "深科技与某客户签署战略合作协议（失真改写）",
+                Source = "测试源",
+                SourceTag = "stock-1",
+                AiSentiment = "利好",
+                AiTarget = "个股:深科技",
+                PublishTime = new DateTime(2026, 3, 18, 8, 10, 0, DateTimeKind.Utc),
+                CrawledAt = new DateTime(2026, 3, 18, 8, 11, 0, DateTimeKind.Utc)
+            },
+            new LocalStockNews
+            {
+                Symbol = "sz000021",
+                Name = "深科技",
+                SectorName = "半导体",
+                Title = "半导体板块震荡，市场观望情绪升温",
+                Source = "测试源",
+                SourceTag = "stock-2",
+                AiSentiment = "中性",
+                AiTarget = "板块:半导体",
+                PublishTime = new DateTime(2026, 3, 18, 8, 5, 0, DateTimeKind.Utc),
+                CrawledAt = new DateTime(2026, 3, 18, 8, 6, 0, DateTimeKind.Utc)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryAsync("sz000021");
+
+        var item = Assert.Single(result.StockNews);
+        Assert.Equal("深科技与某客户签署战略合作协议", item.Title);
+        Assert.Null(item.TranslatedTitle);
+    }
+
     private static AppDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

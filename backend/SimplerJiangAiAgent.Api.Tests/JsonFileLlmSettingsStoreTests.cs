@@ -133,6 +133,58 @@ public sealed class JsonFileLlmSettingsStoreTests
         Assert.Equal("gemini_official", activeRead);
     }
 
+    [Fact]
+    public async Task UpsertAsync_ShouldPersistExplicitlyClearedOptionalFields()
+    {
+        using var envScope = ApiKeyEnvironmentScope.Clear();
+        var rootPath = CreateTempRoot();
+        var appDataPath = Path.Combine(rootPath, "App_Data");
+        Directory.CreateDirectory(appDataPath);
+
+        await File.WriteAllTextAsync(
+            Path.Combine(appDataPath, "llm-settings.json"),
+            """
+            {
+              "activeProviderKey": "default",
+              "providers": {
+                "default": {
+                  "provider": "default",
+                  "providerType": "openai",
+                  "baseUrl": "https://api.example.com",
+                  "model": "gpt-test",
+                  "organization": "org-old",
+                  "project": "proj-old",
+                  "systemPrompt": "old prompt"
+                }
+              }
+            }
+            """);
+
+        var store = new JsonFileLlmSettingsStore(new FakeWebHostEnvironment(rootPath));
+
+        await store.UpsertAsync(new LlmProviderSettings
+        {
+            Provider = "default",
+            ProviderType = "openai",
+            ApiKey = string.Empty,
+            BaseUrl = string.Empty,
+            Model = string.Empty,
+            Organization = string.Empty,
+            Project = string.Empty,
+            SystemPrompt = string.Empty,
+            Enabled = true
+        });
+
+        var settings = await store.GetProviderAsync("default");
+
+        Assert.NotNull(settings);
+        Assert.Equal(string.Empty, settings!.BaseUrl);
+        Assert.Equal(string.Empty, settings.Model);
+        Assert.Equal(string.Empty, settings.Organization);
+        Assert.Equal(string.Empty, settings.Project);
+        Assert.Equal(string.Empty, settings.SystemPrompt);
+    }
+
       [Fact]
       public void ServiceCollection_ShouldResolveStoreFromRuntimePaths()
       {

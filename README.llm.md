@@ -153,16 +153,16 @@ $env:LLM__GEMINI_OFFICIAL__APIKEY="你的 Gemini 官方_API_KEY"
 opencode
 ```
 
-如果需要本地快速验证当前前后端联调页面，直接运行：
+如果需要本地快速打包最新代码并启动和 GitHub 发布物一致的桌面 EXE，直接运行：
 
 ```powershell
 .\start-all.bat
 ```
 
 说明：
-- `start-all.bat` 会先构建前端，再以 `Production + SQLite + --no-launch-profile` 启动后端，并自动打开浏览器到 `http://localhost:5119`
-- 这个入口适合日常快速看页面和联调 API，不依赖桌面 EXE 或 WebView2 运行时
-- 如果要验证最终桌面打包链路，单独执行 `scripts\publish-windows-package.ps1` 后运行 `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe`
+- `start-all.bat` 会先停止当前仓库残留的桌面/后端实例，再执行 `scripts\publish-windows-package.ps1` 打包最新代码，然后直接启动 `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe`
+- 这个入口现在验证的是“GitHub 用户下载后会运行的桌面 EXE”，不是浏览器联调页
+- 脚本会等待打包版桌面拉起内置后端，并用 `http://localhost:5119/api/health` 确认 packaged runtime 已经就绪
 
 首次建议执行：
 - `/models` 确认已选中 `zai/glm-5`
@@ -187,6 +187,11 @@ opencode
 - 桌面程序会自动启动同目录后端
 - 数据库、日志、LLM 本地配置统一落到 `%LOCALAPPDATA%\SimplerJiangAiAgent`
 - 若首次启动尚未配置任何可用 LLM Key，桌面端会自动落到 `LLM 设置` 页签，并在首页顶部显示引导横幅
+
+当前阶段已明确接受的宿主化边界：
+- 长期目标不是强行追求“磁盘上绝对只有一个文件”，而是追求“一个主 EXE 统一控制启动与关闭 + 用户无需预装 SDK/.NET runtime + 应用可自带必要附属文件”
+- 后续 GOAL-016-R6 会把当前“桌面 EXE 拉起独立 Backend 进程”的形态，收敛成“桌面宿主进程内直接托管 ASP.NET Core 后端”的单宿主、单进程架构
+- 如果继续采用 WebView2，则需要在交付链路中明确 Fixed Version WebView2 Runtime 随包发布与升级策略，而不是继续依赖系统预装状态
 
 当前仍需用户自己准备的内容：
 - LLM Key，需要用户在首次使用时自行配置
@@ -230,12 +235,22 @@ opencode
 - [x] GOAL-012-R2 `klinecharts` 受控替换试验（已在 `frontend/src/modules/stocks/charting/**` 内完成底层引擎从 `lightweight-charts` 到 `klinecharts` 的受控替换，保持 `minuteLines` / `kLines` / `interval` / `aiLevels` / `update:interval` 父层 contract 不变，并补齐 `klinechartsRegistry.js` 作为 MA/VOL/AI 价位线与后续策略标记层的 registry 入口；`frontend/package.json` / lockfile 已精确锁定 `10.0.0-beta1` 且移除旧 `lightweight-charts` 依赖。后续回归已补齐日K 时间戳毫秒化、月线/年线真实数据渲染、分时成交量按“手”显示，并将图表图例升级为可点击开关，可直接切换分时主线/量能/昨收基线/AI 价位与 K 线蜡烛/量能/MA5/MA10/AI 价位；前端单测、build 与后端托管页面的查股 + 图例点击 Browser MCP 验收已通过）
 - [x] GOAL-012-R3 统一策略注册表与多信号叠加（Phase A/B/C 已完成并验收：`chartStrategyRegistry.js` / `chartPanes.js` 已将图表能力收敛为统一 strategy registry + grouped chips + render plan。当前已接入并验证策略：MA5/10/20/60、VWAP、BOLL、Donchian、MACD、RSI、ATR、KDJ、ORB，以及完整 Phase C 信号 `MA5/MA10 金叉/死叉`、`TD九转`、`MACD金叉/死叉`、`KDJ金叉/死叉`、`放量突破/假突破`、`缺口`、`量价背离`、`VWAP强弱`；其中 `TD九转` 现已收敛为只显示 `6/7/8/9`，并按 `6-7` 弱提示、`8-9` 强提示做视觉分层；其余日K专属信号只在 `日K图` 展示，分时专属信号只在 `分时图` 展示。可读性层也已收口：图表头部浮动小标按颜色区分当前激活策略，鼠标悬浮可查看“介绍 / 解释 / 用法”，并支持 `隐藏小标 / 显示小标` 总开关，以及 `全屏 / 退出全屏` 放大控制；K 线鼠标悬浮时也会直接显示开高低收、成交量、MA5/MA10、涨跌额与涨跌幅。对于 RSI/KDJ/BOLL/Donchian/MACD 这类多线指标，tooltip 已补齐“颜色对照”；KDJ 也已完成真实图面修复，不再让 render-plan 聚合器错误地去重/排序 `[9,3,3]` 参数，而是在同一 KDJ 副图挂载 `K/D/J` 三条受控单线。整套 R3 已通过前端定向单测、build 与后端托管页面 Browser MCP 点击验收。）
 - [x] GOAL-013 双轨数据中枢（Local+Global Dual-Track）与 LLM 职能调度中心（已完成 Step 2：本地事实库、受控外网路由、新闻精准过滤、Step 2.2 Task 4 的标准/Pro 模型分流、Step 2.3 的新浪板块资讯抓取/大盘多源聚合/无选股即可查看的大盘资讯与完整查询历史展示、Step 2.4 的本地事实批量 AI 清洗/翻译/标签隔离投喂、Step 2.5 的大盘资讯内嵌交互/外媒 RSS 时效清洗/本地事实 AI 重试补漏，以及 Step 2.6 的纯财经大盘源切换、活跃 RSS 替换与 `全量资讯库` 归档工作台）
-- [ ] GOAL-AGENT-001 多 Agent 分析链路重构规划（本轮先完成规划，不急于编码；目标是把现有系统从“结构化研报生成”提升为“证据可追溯、上下文低污染、置信度可校准、预测口径可回放”的决策辅助引擎。规划共分 8 步：Step 1 证据对象与 URL 追溯重构；Step 2 正文抓取/摘要/可读状态链路；Step 3 子 Agent 职责重新切分；Step 4 上下文净化与新闻抗污染闸门；Step 5 代码侧先算特征再交给 LLM 解释；Step 6 commander 置信度/冲突惩罚/降级机制；Step 7 最终输出 contract 改为“观点+概率+条件+风险+证据”；Step 8 建立日志回放、校准集与验收基线。当前已补充 `Stock Copilot Tool Catalog v1` 与 `Stop Policy / Readiness Evaluator v1` 两份衍生设计稿。）
-- [ ] GOAL-AGENT-001-R1 证据可追溯底座（URL-first evidence object、正文抓取/摘要/readMode/readStatus、evidence 归一化与 commander 采信闸门）
-- [ ] GOAL-AGENT-001-R2 Agent 职责重切与推理收口（stock/sector/financial/trend 边界重划、marketReports 抗污染、代码先算特征、commander 覆盖率/冲突/降级惩罚）
-- [ ] GOAL-AGENT-001-R3 回放校准闭环与验收基线（历史回放样本、1/3/5/10 日收益对齐、命中率/Brier score/分组胜率、开发者可观测验收指标）
+- [x] GOAL-AGENT-001 多 Agent 分析链路重构规划（已于 2026-03-22 收口全部执行切片：R1 evidence object 与正文链路、R2 子 Agent 职责收窄与 commander hardening、R3 replay 校准基线、R4 Copilot 风格 MCP 工具运行时。系统已具备 evidence traceability、A 股上下文抗污染、replay baseline 与 `/api/stocks/mcp/*` 域内工具层。）
+- [x] GOAL-AGENT-001-R1 证据可追溯底座（URL-first evidence object、正文抓取/摘要/readMode/readStatus、evidence 归一化与 commander 采信闸门）
+- [x] GOAL-AGENT-001-R2 Agent 职责重切与推理收口（stock/sector/financial/trend 边界重划、marketReports 抗污染、代码先算特征、commander 覆盖率/冲突/降级惩罚）
+- [x] GOAL-AGENT-001-R3 回放校准闭环与验收基线（历史回放样本、1/3/5/10 日收益对齐、命中率/Brier score/分组胜率、开发者可观测验收指标）
+- [x] GOAL-AGENT-001-R4 Copilot 风格 MCP 工具运行时基础层（股票 K 线 MCP、分时图 MCP、策略 MCP、新闻 MCP、搜索 MCP/Tavily 受控兜底；统一 tool envelope、governor policy class、trace/cache/degradedFlags/evidence/features 输出，作为后续把多 Agent 改造成类似 Copilot 的直接能力层）
+- [ ] GOAL-AGENT-002 股票 Copilot 会话化编排与产品层（2026-03-22 已完成父级规划：下一阶段不再继续堆工具，而是把现有 evidence/replay/MCP 底座变成真正类似 GitHub Copilot 的股票协驾层。切片包括：P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。）
+- [ ] GOAL-AGENT-002-P0 运行态稳定性与输出安全闸门（优先修复直接阻塞 Copilot 的高优先级 bug：`情绪轮动` sectors API 500、图表未重新命中 `/api/stocks/chart`、raw reasoning 外泄、developer-mode 脏输出展示与疑似后端崩溃风险。）
+- [x] GOAL-AGENT-002-R1 会话 Contract 与 planner/governor 时间线（已于 2026-03-22 完成第一可执行切片：后端新增 `Session/Turn/PlanStep/ToolCall/ToolResult/FinalAnswer/FollowUpAction` contract、`IStockCopilotSessionService` / `StockCopilotSessionService`，并开放 `POST /api/stocks/copilot/turns/draft` 把用户问题组装成 planner/governor timeline 草案。`StockSearchMcp` 在草案阶段已应用 `external_gated` 审批，相关定向测试 3/3 通过。）
+- [ ] GOAL-AGENT-002-R2 股票 Copilot 面板 UX（问题输入、计划时间线、工具调用卡片、evidence/source 展示、follow-up action chips、最近一轮回放。）
+- [ ] GOAL-AGENT-002-R3 动作化工作流集成（把 Copilot 回答接到图表、市场上下文、新闻证据、交易计划草稿等实际工作流，形成“下一步做什么”的动作卡。）
+- [ ] GOAL-AGENT-002-R4 Copilot 验收与 replay 指标（建立工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、traceability 与 action-card 质量等产品指标。）
 - [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 已继续完成“基本面快照富事实 + 数据库缓存优先刷新”增强：`StockCompanyProfiles` 新增 `FundamentalFactsJson/FundamentalUpdatedAt`，详情页先读 `/api/stocks/detail/cache` 的数据库快照，再由 `/api/stocks/detail` 实时抓东财公司概况/股东研究并回写；本轮进一步补上股票信息卡片真实加载进度，将“缓存回显 / 腾讯行情 / 东方财富基本面”拆成可视化阶段，并新增 `/api/stocks/fundamental-snapshot` 轻量接口配合前端独立显示东财刷新状态。剩余主要是 Edge/UI 验收与更大范围联调。）
 - [ ] GOAL-016 单机可安装版与本地数据底座重构规划（本轮先完成规划，不急于编码；目标是把当前“桌面壳 + 本地后端 + 外部 SQL Server”的开发形态，收敛为可以发给不同 Windows 用户安装使用的单机应用。总体路线采用“桌面宿主 EXE + 后端内嵌启动 + 前端静态资源随包发布 + 主事务库 SQLite + 冷数据 Parquet + 本地分析 DuckDB”的分层架构，兼顾免安装数据库、长期大数据量增长和后续回测/统计能力。规划分 4 个切片：R1 数据库提供者抽象与 SQLite 落地；R2 高频行情/历史事实冷热分层与归档；R3 WinForms/WebView2 桌面宿主化与本地自启动；R4 安装器、升级、数据目录与发布流程收口。）
+- [ ] GOAL-016-R6 单宿主单进程 packaged runtime 收口（2026-03-22 已补充详细设计：接受“一个主 EXE + 应用自带附属文件”的交付形态，不再把“绝对单文件”作为硬目标；真正的硬目标改为“单 EXE 统一控制启动与关闭、用户无需预装 SDK/.NET runtime、后端不再作为独立后台进程存在”。实施路线为：把 ASP.NET Core 从独立 `Backend/` 进程改成由 WinForms 宿主进程内直接启动和停止；保留 localhost + WebView2 的现有前端访问契约；重做 `publish-windows-package` 与安装器链路，使桌面宿主成为唯一主入口，并为 WebView2 Fixed Version Runtime 制定随包发布与升级策略。）
+- [ ] GOAL-017 量化双引擎与 Agent/图表协同规划（本轮先完成规划，不急于编码；目标是在现有分时图、K线图、交易计划与多 Agent 分析之间补上一层统一的量化特征与策略能力。总体路线采用 `Skender primary + Lean shadow`：用轻量 .NET 指标库承担在线主引擎，用 Lean 承担 shadow/replay/calibration；图表、Agent、交易计划默认只消费 primary 结果，shadow 结果主要用于开发者模式、回放、校准与研究。规划分 4 个切片：R1 统一 normalized market-data 输入层与 feature/signal/comparison contract；R2 Skender 主运行时整合；R3 Lean shadow replay/calibration 整合；R4 图表、MCP、Agent、交易计划产品层整合。）
+- [ ] GOAL-017-R1 归一化行情输入层与量化 Contract 设计（先锁定双引擎共享底座，不急于真正接入 Skender 或 Lean。范围包括：统一 `NormalizedBar/NormalizedBarSeries`、定义 `QuantFeatureSnapshotDto/QuantStrategySignalDto/QuantEngineComparisonDto/AgentQuantContextDto`，补齐 `warmupState/degradedFlags/engine role/execution mode` 语义，并明确现有 `StockCopilot*Dto` 到新 contract 的兼容映射路径。）
 - [x] MANUAL-20260319-EXTENSION-INTERFACE `stock-and-fund-chrome-master` 接口吸收规划（已完成 R1-R5 全链路收口：后端新增 `/api/stocks/quotes/batch`、`/api/market/realtime/overview`、`/api/market/sectors/realtime`，接入东财批量行情、主力资金、北向资金、涨跌分布与实时板块榜；默认分时来源已切到东方财富优先；前端已同步落地到 `情绪轮动`、`股票推荐`、`股票信息` 与交易计划总览等高频决策入口，并通过定向单测与浏览器验收。整体策略仍是不做整包替换，而是只吸收扩展里仍有价值的公开端点；作者自建 `110.40.187.161` 云服务继续排除在正式依赖之外。）
 - [x] MANUAL-20260319-EXTENSION-INTERFACE-R1 实时行情后端切片（新增 Eastmoney realtime adapter 与聚合服务，提供批量行情和市场总览 API；验证覆盖批量行情、主力资金、北向资金、涨跌分布解析，以及本地运行时 smoke test。）
 - [x] MANUAL-20260319-CHART-PERF 股票图表刷新性能收口（已定位慢点不在第三方行情源本身，而在前端把图表刷新绑定到 `/api/stocks/detail` 重聚合链路；现已新增 `/api/stocks/chart` 轻量接口，并把 `StockInfoTab` 首屏图表和 `日K/月K/年K` 切换改为只请求图表数据。定向单测 43/43 通过，Browser MCP 已确认切换 `月K图/年K图` 时只出现 `/api/stocks/chart?...interval=month|year`，不再触发 `/api/stocks/detail/cache`、`/api/stocks/messages` 与 `/api/stocks/fundamental-snapshot`。）
@@ -255,7 +270,7 @@ opencode
 	- 低置信度自动降级：不满足阈值时仅给“观察”，避免过度交易。
 	- 图表联动增强：K线与分时图叠加 AI 突破线/支撑线（优先 commander 目标/止损，缺失时回退 trend 预测区间）。
 	- 阶段验收标准：多Agent结果在后端统一补齐结构字段；前端可展示操作计划/证据/触发失效/风险上限；自动化测试需验证点击交互、响应等待与日志无异常。
-- [ ] GOAL-AGENT-001 多 Agent 分析链路重构规划
+- [x] GOAL-AGENT-001 多 Agent 分析链路重构规划
 	- 总体评价：当前分析内容与最终返回内容“合理，但偏松”。它已经适合做信息整合、结构化展示和 UI 呈现，但还不足以直接充当高置信交易判断。当前最大的问题不是不会说，而是说得太像、太满、太统一。
 	- 核心问题 1，证据绑定太弱：虽然提示词要求 `source` 和 `publishedAt`，但没有强制模型只能引用上下文里真实存在的事实项，也没有要求返回可回溯证据对象。真实日志里频繁出现“华尔街日报”“路透社”“北向资金连续净流入”“社交媒体综合统计”这类像研报的话术，说明内容容易“像真的”，但不够可验证。
 	- 核心问题 2，子 Agent 分工不够专：个股资讯、板块资讯、基本面、走势 4 个 Agent 目前都在输出 `signals / triggers / invalidations / riskLimits`，导致大家都在做半个 commander，信息增量不高，反而容易制造“伪共识”。
@@ -275,6 +290,14 @@ opencode
 	- R1 证据可追溯底座：先落 evidence object、URL-first 展示字段、正文抓取与本地摘要、`readMode/readStatus`、evidence 归一化与 commander 证据采信闸门。没有可回溯证据对象的判断，默认不能进入高置信结论。
 	- R2 Agent 职责重切与推理收口：再收口 4 个子 Agent 的职责边界，减少重复结论输出；对 `marketReports` 做 A 股场景净化；先由后端计算 freshness/coverage/conflict/trend/valuation 等确定性特征，再让 LLM 解释；同时把 commander 的覆盖率惩罚、冲突惩罚、degraded path 降级做成系统逻辑。
 	- R3 回放校准闭环与验收基线：最后建立历史 replay、收益对齐、命中率/Brier score/分组胜率指标与可观测验收面板，把“格式化观点”推进成“可被持续校准的分析系统”。
+	- R4 Copilot 风格 MCP 工具层：把股票 Copilot 后续最常用的图表与证据能力单独收口成领域 MCP。首批范围包括 `StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp`（Tavily 兜底），并统一 `traceId/taskId/toolName/cache/degradedFlags/evidence/features` 输出，让未来 planner/governor/commander 能像 Copilot 一样按需调用工具，而不是继续依赖大 prompt 填充所有上下文。
+- [ ] GOAL-AGENT-002 股票 Copilot 会话化编排与产品层
+	- 目标：把已完成的 evidence traceability、commander guardrails、replay baseline 和 MCP 工具层收口成真正类似 GitHub Copilot 的股票协驾体验。
+	- P0 运行态稳定性与输出安全闸门：先修复直接阻塞 Copilot 的高优先级问题，包括 `情绪轮动` sectors API 500、图表轻链路失效、raw reasoning 外泄、developer-mode 审计展示未收口，以及首次查股后疑似后端崩溃风险。没有这一步，后面的 Copilot session 体验会建立在不稳定运行态上。
+	- R1 会话 Contract 与 planner/governor 时间线：已完成后端第一可执行切片，把一轮 Copilot turn 固定为 `Session -> Turn -> PlanStep -> ToolCall -> ToolResult -> FinalAnswer -> FollowUpAction`。当前后端已能通过 `/api/stocks/copilot/turns/draft` 返回 question routing + planner/governor 草案，前端后续可直接消费。
+	- R2 股票 Copilot 面板 UX：把股票页右侧从静态分析卡片升级为会话面板，补齐问题输入、可视 plan/timeline、工具调用卡片、evidence/source 展示、follow-up action chips 和最近一轮回放。
+	- R3 动作化工作流集成：让 Copilot 不只“回答”，还要能建议下一步，例如“看 60 日 K 线结构”“检查今日分时承接”“查看主线板块共振”“起草交易计划”，并把这些动作接到图表、市场上下文、新闻证据和交易计划工作流上。
+	- R4 Copilot 验收与 replay 指标：把产品层也纳入可量化验收，跟踪工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、final answer traceability 和 action-card 质量，形成后续迭代的硬基线。
 - [ ] GOAL-008 交易计划引擎（盘前计划、盘中触发、失效条件）
 	- Step 4.0 已完成：股票切换与加载性能深度优化，后端 `/api/stocks/detail` 并发化，前端先读 `/api/stocks/detail/cache` 做秒开渲染，并加入快速切股的旧响应抑制。
 	- Step 4.1 已完成：新增 `ActiveWatchlist` 高频白名单与 `HighFrequencyQuoteService`，仅在 A 股交易时段轮询白名单股票并持续回写 quote/minute/messages 到本地缓存表，为后续交易计划触发与纪律执行提供稳定底座；已通过后端全量单测、EF migration 应用与 SQLCMD 表/索引校验。
@@ -310,11 +333,24 @@ opencode
 	- 目标：把当前开发态系统重构为“安装一次即可运行”的 Windows 单机应用，不再要求用户自行安装 SQL Server，也不要求手工分别启动前后端。
 	- 数据底座：主业务库改为 SQLite，承载配置、交易计划、热数据缓存、最近窗口查询与应用事务；海量历史分时/K线/事实归档改为 Parquet 分区文件；需要本地大范围扫描、回测、聚合时由 DuckDB 直接读取 Parquet。这样既满足免安装，也避免将所有长期历史堆进一个持续膨胀的事务库。
 	- 架构形态：WinForms/WebView2 桌面程序升级为真正的宿主进程，由桌面 EXE 内嵌启动 ASP.NET Core 后端；前端产物随安装包发布；数据库与归档文件统一放入用户本地数据目录，而不是依赖开发机脚本或外部数据库实例。
+	- 交付边界：这里的“单 EXE”指“一个主 EXE 作为唯一用户入口并统一控制整个应用生命周期”，不再把“磁盘上绝对只有一个文件”作为硬约束；允许应用携带自身管理的附属文件、前端静态资源、原生依赖和 Fixed Version WebView2 Runtime。
+	- 运行时边界：对用户和测试者的硬要求是“不需要额外安装 SDK 或 .NET runtime，也不需要手工管理后台进程”；如果继续采用 WebView2，则必须把 WebView2 runtime 策略纳入安装与升级链路，而不是继续依赖系统预装状态。
 	- R1 数据库提供者抽象与 SQLite 落地：移除启动期对 `OBJECT_ID/COL_LENGTH/sys.indexes` 等 SQL Server 方言的硬依赖，统一为 provider-aware schema/migration 机制；先让现有表结构完整跑通 SQLite，并补齐数据目录、连接串与迁移策略。
 	- R2 冷热分层与归档：重新定义 `MinuteLinePoints`、`KLinePoints`、`StockQuoteSnapshots`、`LocalStockNews`、`StockAgentAnalysisHistories` 的保留策略，热路径只保最近窗口，冷路径按 `symbol/date` 分区落 Parquet；同时补充归档、回放、清理和索引元数据。
 	- R3 桌面宿主化：让 `SimplerJiangAiAgent.Desktop` 在应用内启动本地后端与静态前端，替代当前依赖 `start-all.bat` 和 `http://localhost:5119` 外部开发流程的方式；同时补齐端口管理、健康检查、首次初始化和异常日志。
 	- R4 安装与发布：建立 `dotnet publish`、前端 build、资源复制、数据库初始化、WebView2 runtime 策略和安装器产物；定义升级时的数据迁移、备份与回滚规则，最终输出可发给不同用户安装的 `Setup.exe + 主程序` 交付链路。
+	- R6 单宿主单进程 packaged runtime：把当前桌面 EXE 通过 `Process.Start` 拉起独立 `Backend/` 进程的形态，重构为桌面宿主进程内直接托管 ASP.NET Core Host。优先保留现有 localhost + WebView2 契约，避免大规模重写前端；桌面关闭时通过同进程 host lifecycle 统一停止所有后台服务。该切片的重点是宿主化、生命周期、打包结构与 WebView2 runtime 策略，不是强行做绝对单文件产物。
 	- 容量前提：按未来大数据量设计，假设监控股票数和保留年限持续增长，不再以当前本地几万行数据做选型；事务数据与海量历史必须物理分层，否则单库体积、备份、恢复和统计扫描都会成为长期瓶颈。
+
+- [ ] GOAL-017 量化双引擎与 Agent/图表协同规划
+	- 目标：在现有分时、日K、月K、年K、图表策略注册表、多 Agent 分析和交易计划流之间补上一层统一的量化特征与策略能力，让图表、Agent、计划三者共享同一套可追溯 signal contract。
+	- 引擎路线：采用 `Skender primary + Lean shadow`。前者负责在线主运行时的指标计算、盘中特征提取、策略信号生成；后者负责 shadow run、replay、回测、参数实验和 calibration，不默认直接参与线上主决策。
+	- R1 当前已补成详细设计：先锁定双引擎共享底座，不急于接包或写复杂逻辑；核心是 normalized input、统一 feature/signal/comparison/agent context DTO、以及和现有 `StockCopilot*Dto` 的兼容映射。
+	- 单一主口径：前端图表、Agent、交易计划默认只消费 primary 结果；shadow 结果仅进入开发者模式、差异分析、回放报告与校准基线，避免线上同时出现两套决策口径。
+	- R1 归一化输入层与 contract：统一 minute/day/month/year 行情 bar 模型，定义 `FeatureSnapshot`、`StrategySignal`、`EngineComparison`、`AgentQuantContext` 等 DTO，并显式保留 `engine/computedAt/warmupState/degradedFlags`。
+	- R2 Skender 主运行时整合：在后端新增 quant feature/signal service，先覆盖 MA/EMA/MACD/RSI/KDJ/ATR/BOLL/Donchian/VWAP 等指标，再扩展 A 股盘中特征如开盘区间、午后漂移、量价背离、假突破和缩量横盘。
+	- R3 Lean 影子 replay/calibration：使用统一 normalized market data adapter 把同一份输入喂给 Lean，首批只做 shadow 对比与 replay/backtest/calibration，用于 signal parity、命中率、收益分布和 Brier score 等历史校验。
+	- R4 产品整合：通过后续 `StockKlineMcp` / `StockMinuteMcp` / `StockStrategyMcp` 把量化上下文喂给 Agent；前端图表继续复用现有 strategy registry 渲染主引擎结果，并在开发者模式中暴露主/影子差异；交易计划则接入统一 signal contract 做草稿、触发、失效与复核。
 
 ## 核心差异化：LLM 联网投研决策中枢（GOAL-007）
 你提出的方向将作为下一阶段最优先事项：尽可能与 LLM 大模型结合，由模型联网获取信息后输出个股优劣判断与目标操作建议。

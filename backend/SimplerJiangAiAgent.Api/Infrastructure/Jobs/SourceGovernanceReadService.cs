@@ -584,7 +584,7 @@ public sealed class SourceGovernanceReadService : ISourceGovernanceReadService
                 _stages.Add(item.Stage!);
             }
 
-            var extracted = ExtractLlmLogField(item.Raw);
+            var extracted = ExtractLlmLogField(item.Raw, item.Stage);
             if (IsRequestStage(item.Stage))
             {
                 _requestRaw ??= item.Raw;
@@ -652,23 +652,107 @@ public sealed class SourceGovernanceReadService : ISourceGovernanceReadService
         }
     }
 
-    private static string ExtractLlmLogField(string raw)
+    private static string ExtractLlmLogField(string raw, string? stage)
     {
         var decoded = raw
             .Replace("\\r", string.Empty, StringComparison.Ordinal)
             .Replace("\\n", "\n", StringComparison.Ordinal)
             .Replace("\\t", "\t", StringComparison.Ordinal);
 
+        if (stage is not null && stage.StartsWith("request", StringComparison.OrdinalIgnoreCase))
+        {
+            return "请求内容已脱敏；界面仅保留必要元数据与结构化 JSON。";
+        }
+
         foreach (var marker in new[] { "prompt=", "userPrompt=", "content=", "payload=", "message=" })
         {
             var index = decoded.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
             if (index >= 0)
             {
-                return decoded[(index + marker.Length)..].Trim();
+                return SanitizeLlmDisplayText(decoded[(index + marker.Length)..].Trim());
             }
         }
 
-        return decoded;
+        return SanitizeLlmDisplayText(decoded);
+    }
+
+    private static string SanitizeLlmDisplayText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var sanitized = Regex.Replace(value, "<think>[\\s\\S]*?</think>", string.Empty, RegexOptions.IgnoreCase)
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Trim();
+
+        sanitized = Regex.Replace(
+            sanitized,
+            "(^|\\n)#{0,6}\\s*(思考过程|推理过程|reasoning|analysis|chain of thought|chain-of-thought)[^\\n]*(\\n[\\s\\S]*)?$",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+
+        if (ContainsReasoningScaffold(sanitized))
+        {
+            var jsonCandidate = TryExtractJsonCandidate(sanitized);
+            if (!string.IsNullOrWhiteSpace(jsonCandidate))
+            {
+                sanitized = jsonCandidate;
+            }
+            else
+            {
+                return "返回内容包含中间推理，已脱敏。";
+            }
+        }
+
+        if (sanitized.Length > 2000)
+        {
+            sanitized = sanitized[..2000] + "...";
+        }
+
+        return sanitized.Trim();
+    }
+
+    private static bool ContainsReasoningScaffold(string value)
+    {
+        return value.Contains("my thought process", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("thought process", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("defining the scope", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("let's break this down", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("i need to understand", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("i'm zeroing in on", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("思考过程", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("推理过程", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string TryExtractJsonCandidate(string value)
+    {
+        var firstBrace = value.IndexOf('{');
+        var firstBracket = value.IndexOf('[');
+        var candidates = new[] { firstBrace, firstBracket }.Where(index => index >= 0).ToArray();
+        if (candidates.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var start = candidates.Min();
+        var end = Math.Max(value.LastIndexOf('}'), value.LastIndexOf(']'));
+        if (end <= start)
+        {
+            return string.Empty;
+        }
+
+        var candidate = value[start..(end + 1)].Trim();
+        try
+        {
+            using var document = JsonDocument.Parse(candidate);
+            return candidate;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static string? MatchValue(Regex regex, string input)

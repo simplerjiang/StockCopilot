@@ -43,6 +43,7 @@ const isLoggedIn = computed(() => Boolean(token.value))
 const selectedLlmRequestJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.requestText || '')))
 const selectedLlmResponseJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.responseText || '')))
 const selectedLlmErrorJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.errorText || '')))
+const selectedLlmRawPreview = computed(() => summarizeLogText((selectedLlmLog.value?.lines || []).join('\n')))
 
 const authHeaders = () => ({
   Authorization: `Bearer ${token.value}`
@@ -396,7 +397,7 @@ onMounted(async () => {
 
         <section class="llm-log-panel">
           <h3>LLM 对话过程日志</h3>
-          <p class="muted">展示后端记录的 LLM request/prompt/response/error 全流程日志（最新优先）。</p>
+          <p class="muted">展示脱敏后的请求摘要、返回摘要和错误摘要；原始 prompt 与推理文本不在界面直接展示。</p>
           <div class="filters llm-filters">
             <input v-model="llmLogKeyword" placeholder="关键字过滤（traceId/provider/stage/prompt）" />
             <input v-model.number="llmLogTake" type="number" min="1" max="1000" placeholder="条数" />
@@ -437,7 +438,7 @@ onMounted(async () => {
             </div>
 
             <section v-if="selectedLlmLog.requestText" class="log-viewer-section">
-              <h4>请求内容</h4>
+              <h4>请求摘要</h4>
               <pre class="log-viewer-raw">{{ selectedLlmLog.requestText }}</pre>
             </section>
 
@@ -447,7 +448,7 @@ onMounted(async () => {
             </section>
 
             <section v-if="selectedLlmLog.responseText" class="log-viewer-section">
-              <h4>返回内容</h4>
+              <h4>返回摘要</h4>
               <pre class="log-viewer-raw">{{ selectedLlmLog.responseText }}</pre>
             </section>
 
@@ -467,8 +468,8 @@ onMounted(async () => {
             </section>
 
             <section class="log-viewer-section">
-              <h4>原始日志</h4>
-              <pre class="log-viewer-raw">{{ (selectedLlmLog.lines || []).join('\n') }}</pre>
+              <h4>原始日志摘要</h4>
+              <pre class="log-viewer-raw">{{ selectedLlmRawPreview }}</pre>
             </section>
           </article>
         </div>

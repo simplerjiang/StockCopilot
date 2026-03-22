@@ -8,11 +8,23 @@ public static class MarketSentimentSchemaInitializer
     public static async Task EnsureAsync(AppDbContext dbContext, CancellationToken cancellationToken = default)
     {
         var provider = dbContext.Database.ProviderName ?? string.Empty;
-        if (!provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
         {
+            await EnsureSqlServerAsync(dbContext, cancellationToken);
             return;
         }
 
+        if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            await EnsureSqliteAsync(dbContext, cancellationToken);
+            return;
+        }
+
+        return;
+    }
+
+    private static async Task EnsureSqlServerAsync(AppDbContext dbContext, CancellationToken cancellationToken)
+    {
         await dbContext.Database.ExecuteSqlRawAsync(
             "IF OBJECT_ID('dbo.MarketSentimentSnapshots', 'U') IS NULL " +
             "BEGIN " +
@@ -137,5 +149,65 @@ public static class MarketSentimentSchemaInitializer
             "END; " +
             "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SectorRotationLeaderSnapshots_SectorRotationSnapshotId_RankInSector' AND object_id = OBJECT_ID('dbo.SectorRotationLeaderSnapshots')) CREATE INDEX IX_SectorRotationLeaderSnapshots_SectorRotationSnapshotId_RankInSector ON dbo.SectorRotationLeaderSnapshots(SectorRotationSnapshotId, RankInSector);",
             cancellationToken);
+    }
+
+    private static async Task EnsureSqliteAsync(AppDbContext dbContext, CancellationToken cancellationToken)
+    {
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "DiffusionScore", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "ContinuationScore", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "StageLabelV2", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "StageConfidence", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "Top3SectorTurnoverShare5dAvg", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "Top10SectorTurnoverShare5dAvg", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "LimitUpCount5dAvg", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "MarketSentimentSnapshots", "BrokenBoardRate5dAvg", "REAL NOT NULL DEFAULT 0", cancellationToken);
+
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "RankChange5d", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "RankChange10d", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "RankChange20d", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "StrengthAvg5d", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "StrengthAvg10d", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "StrengthAvg20d", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "DiffusionRate", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "AdvancerCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "DeclinerCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "FlatMemberCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "LimitUpMemberCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "LeaderStabilityScore", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "MainlineScore", "REAL NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "IsMainline", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_MarketSentimentSnapshots_TradingDate_SnapshotTime ON MarketSentimentSnapshots(TradingDate, SnapshotTime);",
+            cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_SectorRotationSnapshots_BoardType_SnapshotTime_RankNo ON SectorRotationSnapshots(BoardType, SnapshotTime, RankNo);",
+            cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_SectorRotationSnapshots_SectorCode_BoardType_SnapshotTime ON SectorRotationSnapshots(SectorCode, BoardType, SnapshotTime);",
+            cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_SectorRotationLeaderSnapshots_SectorRotationSnapshotId_RankInSector ON SectorRotationLeaderSnapshots(SectorRotationSnapshotId, RankInSector);",
+            cancellationToken);
+    }
+
+    private static async Task AddSqliteColumnIfMissingAsync(
+        AppDbContext dbContext,
+        string tableName,
+        string columnName,
+        string columnDefinition,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var sql = "ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnDefinition + ";";
+            await dbContext.Database.ExecuteSqlRawAsync(
+                sql,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
     }
 }

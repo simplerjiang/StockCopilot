@@ -32,6 +32,7 @@ const chatError = ref('')
 const chatMessagesRef = ref(null)
 const chatExpanded = ref(props.expandable ? localStorage.getItem(props.expandedStorageKey) !== 'false' : true)
 const chatHistoryMap = ref({})
+let historySaveQueue = Promise.resolve()
 
 const isExpanded = computed(() => (props.expandable ? chatExpanded.value : true))
 const messageStyle = computed(() => ({
@@ -45,6 +46,31 @@ const renderMarkdown = content => {
   const source = content || ''
   return DOMPurify.sanitize(marked.parse(source))
 }
+
+const THINK_BLOCK_PATTERN = /<think>[\s\S]*?<\/think>/gi
+const REASONING_SECTION_PATTERN = /(^|\n)#{0,6}\s*(思考过程|推理过程|reasoning|analysis|chain of thought|chain-of-thought)[^\n]*(\n[\s\S]*)?$/i
+
+const sanitizeAssistantContent = content => {
+  const source = String(content || '')
+    .replace(THINK_BLOCK_PATTERN, '')
+    .replace(REASONING_SECTION_PATTERN, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return source
+}
+
+const sanitizeStreamingAssistantContent = content => {
+  const source = String(content || '').replace(THINK_BLOCK_PATTERN, '')
+  return source.trimStart()
+}
+
+const cloneMessages = messages =>
+  (Array.isArray(messages) ? messages : []).map(item => ({
+    role: item.role,
+    content: item.role === 'assistant' ? sanitizeAssistantContent(item.content) : String(item.content || ''),
+    timestamp: item.timestamp || new Date().toISOString()
+  }))
 
 const scrollChatToBottom = () => {
   const el = chatMessagesRef.value
@@ -87,11 +113,7 @@ const loadChatHistory = async key => {
 const saveChatHistory = async (key, messages) => {
   if (!key) return
   if (hasHistoryAdapter.value) {
-    try {
-      await props.historyAdapter.save(key, messages)
-    } catch {
-      // ignore save errors
-    }
+    await props.historyAdapter.save(key, messages)
     return
   }
   chatHistoryMap.value = {
@@ -101,11 +123,30 @@ const saveChatHistory = async (key, messages) => {
   persistChatHistoryMap()
 }
 
+const enqueueHistorySave = (key, messages, { silent = true } = {}) => {
+  if (!key) return Promise.resolve()
+
+  const snapshot = cloneMessages(messages)
+  historySaveQueue = historySaveQueue
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await saveChatHistory(key, snapshot)
+      } catch (error) {
+        if (!silent) {
+          chatError.value = error.message || '对话保存失败'
+        }
+      }
+    })
+
+  return historySaveQueue
+}
+
 const createNewChat = () => {
   const key = normalizedHistoryKey.value
   chatMessages.value = []
   if (props.enableHistory && key) {
-    saveChatHistory(key, [])
+    enqueueHistorySave(key, [], { silent: false })
   }
 }
 
@@ -121,6 +162,7 @@ const sendChat = async (presetPrompt = '') => {
   const content = (promptOverride || chatInput.value).trim()
   if (!content || chatLoading.value) return
   chatError.value = ''
+  chatLoading.value = true
 
   let prompt = content
   if (props.buildPrompt) {
@@ -138,11 +180,10 @@ const sendChat = async (presetPrompt = '') => {
   if (props.enableHistory) {
     const key = normalizedHistoryKey.value
     if (key) {
-      saveChatHistory(key, chatMessages.value)
+      enqueueHistorySave(key, chatMessages.value, { silent: false })
     }
   }
   chatInput.value = ''
-  chatLoading.value = true
 
   try {
     const response = await fetch(props.endpoint, {
@@ -158,20 +199,14 @@ const sendChat = async (presetPrompt = '') => {
 
     const assistantMessage = { role: 'assistant', content: '', timestamp: new Date().toISOString() }
     chatMessages.value.push(assistantMessage)
-    if (props.enableHistory) {
-      const key = normalizedHistoryKey.value
-      if (key) {
-        saveChatHistory(key, chatMessages.value)
-      }
-    }
 
     if (!response.body) {
       const data = await response.json()
-      assistantMessage.content = data.content || ''
+      assistantMessage.content = sanitizeAssistantContent(data.content || '')
       if (props.enableHistory) {
         const key = normalizedHistoryKey.value
         if (key) {
-          saveChatHistory(key, chatMessages.value)
+          await enqueueHistorySave(key, chatMessages.value, { silent: false })
         }
       }
       return
@@ -180,6 +215,7 @@ const sendChat = async (presetPrompt = '') => {
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
+    let rawAssistantContent = ''
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
@@ -191,13 +227,16 @@ const sendChat = async (presetPrompt = '') => {
         if (!line.startsWith('data:')) continue
         const payload = line.slice(5).trim()
         if (!payload || payload === '[DONE]') continue
-        assistantMessage.content += payload
-        if (props.enableHistory) {
-          const key = normalizedHistoryKey.value
-          if (key) {
-            saveChatHistory(key, chatMessages.value)
-          }
-        }
+        rawAssistantContent += payload
+        assistantMessage.content = sanitizeStreamingAssistantContent(rawAssistantContent)
+      }
+    }
+
+    assistantMessage.content = sanitizeAssistantContent(rawAssistantContent)
+    if (props.enableHistory) {
+      const key = normalizedHistoryKey.value
+      if (key) {
+        await enqueueHistorySave(key, chatMessages.value, { silent: false })
       }
     }
   } catch (err) {
@@ -210,10 +249,10 @@ const sendChat = async (presetPrompt = '') => {
 watch(
   chatMessages,
   async value => {
-    if (props.enableHistory) {
+    if (props.enableHistory && !chatLoading.value) {
       const key = normalizedHistoryKey.value
       if (key) {
-        saveChatHistory(key, value)
+        enqueueHistorySave(key, value)
       }
     }
     await nextTick()
@@ -227,7 +266,7 @@ watch(
   async (newKey, oldKey) => {
     if (!props.enableHistory) return
     if (oldKey) {
-      saveChatHistory(oldKey, chatMessages.value)
+      await enqueueHistorySave(oldKey, chatMessages.value)
     }
     chatMessages.value = newKey ? await loadChatHistory(newKey) : []
   }

@@ -40,8 +40,13 @@ public sealed class StocksModule : IModule
         services.AddScoped<IStockDataService, StockDataService>();
         services.AddScoped<IStockHistoryService, StockHistoryService>();
         services.AddTransient<IStockSearchService, StockSearchService>();
+        services.Configure<StockCopilotSearchOptions>(configuration.GetSection(StockCopilotSearchOptions.SectionName));
         services.AddScoped<IStockAgentOrchestrator, StockAgentOrchestrator>();
         services.AddScoped<IStockAgentHistoryService, StockAgentHistoryService>();
+        services.AddScoped<IStockAgentFeatureEngineeringService, StockAgentFeatureEngineeringService>();
+        services.AddScoped<IStockAgentReplayCalibrationService, StockAgentReplayCalibrationService>();
+        services.AddScoped<IStockCopilotMcpService, StockCopilotMcpService>();
+        services.AddScoped<IStockCopilotSessionService, StockCopilotSessionService>();
         services.AddScoped<ITradingPlanDraftService, TradingPlanDraftService>();
         services.AddScoped<ITradingPlanService, TradingPlanService>();
         services.AddScoped<IStockMarketContextService, StockMarketContextService>();
@@ -549,6 +554,87 @@ public sealed class StocksModule : IModule
         .WithName("RunStockAgentSingle")
         .WithOpenApi();
 
+        group.MapGet("/agents/replay/baseline", async (string? symbol, int? take, IStockAgentReplayCalibrationService replayService, HttpContext context) =>
+        {
+            var result = await replayService.BuildBaselineAsync(symbol, take ?? 80, context.RequestAborted);
+            return Results.Ok(result);
+        })
+        .WithName("GetStockAgentReplayBaseline")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/kline", async (string symbol, string? interval, int? count, string? source, string? taskId, IStockCopilotMcpService mcpService, HttpContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                token => mcpService.GetKlineAsync(symbol, interval ?? "day", count ?? 60, source, taskId, token),
+                context.RequestAborted);
+        })
+        .WithName("RunStockKlineMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/minute", async (string symbol, string? source, string? taskId, IStockCopilotMcpService mcpService, HttpContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                token => mcpService.GetMinuteAsync(symbol, source, taskId, token),
+                context.RequestAborted);
+        })
+        .WithName("RunStockMinuteMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/strategy", async (string symbol, string? interval, int? count, string? source, string? strategies, string? taskId, IStockCopilotMcpService mcpService, HttpContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var strategyList = string.IsNullOrWhiteSpace(strategies)
+                ? Array.Empty<string>()
+                : strategies.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                token => mcpService.GetStrategyAsync(symbol, interval ?? "day", count ?? 90, source, strategyList, taskId, token),
+                context.RequestAborted);
+        })
+        .WithName("RunStockStrategyMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/news", async (string symbol, string? level, string? taskId, IStockCopilotMcpService mcpService, HttpContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol) && !string.Equals(level, "market", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                token => mcpService.GetNewsAsync(string.IsNullOrWhiteSpace(symbol) ? "market" : symbol, level ?? "stock", taskId, token),
+                context.RequestAborted);
+        })
+        .WithName("RunStockNewsMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/search", async (string q, bool? trustedOnly, string? taskId, IStockCopilotMcpService mcpService, HttpContext context) =>
+        {
+            if (string.IsNullOrWhiteSpace(q))
+            {
+                return Results.BadRequest(new { message = "q 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                token => mcpService.SearchAsync(q.Trim(), trustedOnly ?? true, taskId, token),
+                context.RequestAborted);
+        })
+        .WithName("RunStockSearchMcp")
+        .WithOpenApi();
+
         group.MapGet("/agents/history", async (string symbol, IStockAgentHistoryService historyService) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
@@ -802,6 +888,31 @@ public sealed class StocksModule : IModule
             return Results.Ok(result);
         })
         .WithName("GetStockChatSessions")
+        .WithOpenApi();
+
+        group.MapPost("/copilot/turns/draft", async (StockCopilotTurnDraftRequestDto request, IStockCopilotSessionService copilotSessionService) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Question))
+            {
+                return Results.BadRequest(new { message = "question 不能为空" });
+            }
+
+            try
+            {
+                var result = await copilotSessionService.BuildDraftTurnAsync(request);
+                return Results.Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("BuildStockCopilotDraftTurn")
         .WithOpenApi();
 
         group.MapPost("/chat/sessions", async (StockChatSessionCreateDto request, IStockChatHistoryService chatHistoryService) =>

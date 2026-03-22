@@ -32,6 +32,40 @@ public sealed class EastmoneyRealtimeMarketClientTests
     }
 
     [Fact]
+    public async Task GetBatchQuotesAsync_ShouldMapSupportedGlobalIndices()
+    {
+      string? requestedUri = null;
+        var handler = new FakeHttpMessageHandler(request =>
+        {
+        requestedUri = Uri.UnescapeDataString(request.RequestUri?.ToString() ?? string.Empty);
+
+            return JsonResponse("""
+            {
+              "data": {
+                "diff": [
+                  { "f2": 25277.32, "f3": -0.88, "f4": -223.26, "f6": 0, "f8": 0, "f9": 0, "f10": 0, "f12": "HSI", "f13": 100, "f14": "恒生指数", "f15": 25388.16, "f16": 25174.15, "f124": 1773994150 },
+                  { "f2": 4872.38, "f3": -2.48, "f4": -123.9, "f6": 0, "f8": 0, "f9": 0, "f10": 0, "f12": "HSTECH", "f13": 124, "f14": "恒生科技指数", "f15": 4933.2, "f16": 4820.12, "f124": 1773994150 },
+                  { "f2": 6506.48, "f3": -1.51, "f4": -100.01, "f6": 0, "f8": 0, "f9": 0, "f10": 0, "f12": "SPX", "f13": 100, "f14": "标普500", "f15": 6528.9, "f16": 6482.1, "f124": 1774036786 }
+                ]
+              }
+            }
+            """);
+        });
+        var client = new EastmoneyRealtimeMarketClient(new HttpClient(handler));
+
+        var result = await client.GetBatchQuotesAsync(["hsi", "hstech", "spx"]);
+
+  Assert.Contains("100.HSI", requestedUri);
+  Assert.Contains("124.HSTECH", requestedUri);
+  Assert.Contains("100.SPX", requestedUri);
+        Assert.Equal(3, result.Count);
+        Assert.Equal("hsi", result[0].Symbol);
+        Assert.Equal("恒生指数", result[0].Name);
+        Assert.Equal("hstech", result[1].Symbol);
+        Assert.Equal("标普500", result[2].Name);
+    }
+
+    [Fact]
     public async Task GetMainCapitalFlowAsync_ShouldParseLatestPoint()
     {
         var handler = new FakeHttpMessageHandler(_ => JsonResponse("""

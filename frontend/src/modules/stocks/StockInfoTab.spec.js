@@ -47,6 +47,60 @@ const createRealtimeOverviewPayload = (symbol = 'sz000021', name = '深科技') 
       changePercent: -1.11,
       turnoverAmount: 545209000000,
       timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'hsi',
+      name: '恒生指数',
+      price: 25277.32,
+      change: -223.26,
+      changePercent: -0.88,
+      turnoverAmount: 0,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'hstech',
+      name: '恒生科技指数',
+      price: 4872.38,
+      change: -123.9,
+      changePercent: -2.48,
+      turnoverAmount: 0,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'n225',
+      name: '日经225',
+      price: 53372.53,
+      change: -1866.87,
+      changePercent: -3.38,
+      turnoverAmount: 0,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'ndx',
+      name: '纳斯达克',
+      price: 21647.61,
+      change: 122.01,
+      changePercent: 0.57,
+      turnoverAmount: 0,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'spx',
+      name: '标普500',
+      price: 6506.48,
+      change: -100.01,
+      changePercent: -1.51,
+      turnoverAmount: 0,
+      timestamp: '2026-03-19T07:00:00Z'
+    },
+    {
+      symbol: 'ftse',
+      name: '英国富时100',
+      price: 9918.33,
+      change: 58.42,
+      changePercent: 0.59,
+      turnoverAmount: 0,
+      timestamp: '2026-03-19T07:00:00Z'
     }
   ],
   mainCapitalFlow: {
@@ -312,6 +366,55 @@ describe('StockInfoTab', () => {
     expect(wrapper.find('.sticky-toolbar').exists()).toBe(true)
   })
 
+  it('renders merged top market overview belt above market news and workspace grid', () => {
+    const wrapper = mount(StockInfoTab)
+    const overviewBelt = wrapper.find('.page-top-market-overview-belt')
+    const marketNewsPanel = wrapper.find('.market-news-panel')
+    const workspaceGrid = wrapper.find('.workspace-grid')
+
+    expect(overviewBelt.exists()).toBe(true)
+    expect(marketNewsPanel.exists()).toBe(true)
+    expect(workspaceGrid.exists()).toBe(true)
+    expect(wrapper.find('.page-top-realtime-context').exists()).toBe(false)
+    expect(wrapper.find('.page-top-market-quick-strip').exists()).toBe(false)
+    expect(overviewBelt.element.compareDocumentPosition(marketNewsPanel.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(overviewBelt.element.compareDocumentPosition(workspaceGrid.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps the merged top market overview belt outside the copilot sidebar', () => {
+    const wrapper = mount(StockInfoTab)
+    const overviewBelt = wrapper.find('.page-top-market-overview-belt')
+    const marketNewsPanel = wrapper.find('.market-news-panel')
+    const workspaceGrid = wrapper.find('.workspace-grid')
+    const sidebarQuickStrip = wrapper.find('.trading-plan-board-card .plan-board-realtime-strip')
+
+    expect(overviewBelt.exists()).toBe(true)
+    expect(marketNewsPanel.exists()).toBe(true)
+    expect(workspaceGrid.exists()).toBe(true)
+    expect(sidebarQuickStrip.exists()).toBe(false)
+    expect(overviewBelt.element.compareDocumentPosition(marketNewsPanel.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(overviewBelt.element.compareDocumentPosition(workspaceGrid.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('renders global indices with rise and fall styling in the top market overview belt', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    const overviewBelt = wrapper.find('.page-top-market-overview-belt')
+    const globalCluster = wrapper.find('.market-overview-cluster-global')
+
+    expect(overviewBelt.text()).toContain('全球指数')
+    expect(globalCluster.text()).toContain('恒生指数')
+    expect(globalCluster.text()).toContain('标普500')
+    expect(globalCluster.text()).toContain('英国富时100')
+    expect(globalCluster.find('.text-rise').exists()).toBe(true)
+    expect(globalCluster.find('.text-fall').exists()).toBe(true)
+  })
+
   it('starts search when pressing Enter in symbol input', async () => {
     const { fetchMock } = createChatFetchMock({
       handle: async (url) => {
@@ -516,10 +619,10 @@ describe('StockInfoTab', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('市场实时上下文')
-    expect(wrapper.text()).toContain('市场快链路')
+    expect(wrapper.text()).toContain('顶部市场总览带')
     expect(wrapper.text()).toContain('当前标的')
     expect(wrapper.text()).toContain('上证指数')
+    expect(wrapper.text()).toContain('恒生科技指数')
     expect(wrapper.text()).toContain('主力 +12.34 亿')
     expect(fetchMock.mock.calls.some(args => String(args[0]).startsWith('/api/market/realtime/overview?'))).toBe(true)
   })
@@ -553,7 +656,7 @@ describe('StockInfoTab', () => {
     await toggleButton.trigger('click')
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('实时总览已隐藏，可随时重新展开。')
+    expect(wrapper.text()).toContain('顶部市场总览带已隐藏，可随时重新展开。')
     expect(wrapper.text()).toContain('资讯影响')
     expect(localStorage.getItem('stock_realtime_context_enabled')).toBe('false')
   })
@@ -861,6 +964,7 @@ describe('StockInfoTab', () => {
       messages: []
     }
     await wrapper.vm.$nextTick()
+    await flushPromises()
 
     const chatWindow = wrapper.findComponent({ name: 'ChatWindow' })
     chatWindow.vm.chatMessages = [{ role: 'assistant', content: '历史A', timestamp: '2026-01-29T00:00:00Z' }]
@@ -882,7 +986,9 @@ describe('StockInfoTab', () => {
     const options = selector.findAll('option')
     expect(options.length).toBeGreaterThan(1)
 
-    await selector.setValue(oldSessionKey)
+    wrapper.vm.selectedChatSession = oldSessionKey
+    await flushPromises()
+    await flushPromises()
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 

@@ -113,9 +113,11 @@ describe('StockRecommendTab', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = mount(StockRecommendTab)
-    await wrapper.find('.preset-button').trigger('click')
-
+  await flushPromises()
     const chatWindow = wrapper.findComponent({ name: 'ChatWindow' })
+    await chatWindow.vm.sendChat('请给我一份测试推荐')
+    await flushPromises()
+
     const assistant = chatWindow.vm.chatMessages.find(item => item.role === 'assistant')
     expect(assistant.content).toBe('你好世界')
   })
@@ -143,6 +145,7 @@ describe('StockRecommendTab', () => {
 
     const wrapper = mount(StockRecommendTab)
     await wrapper.vm.$nextTick()
+  await flushPromises()
 
     const chatWindow = wrapper.findComponent({ name: 'ChatWindow' })
     chatWindow.vm.chatMessages = [{ role: 'assistant', content: '历史A', timestamp: '2026-01-30T00:00:00Z' }]
@@ -157,6 +160,7 @@ describe('StockRecommendTab', () => {
     expect(options.length).toBeGreaterThan(1)
 
     await selector.setValue(options[options.length - 1].attributes('value'))
+    await flushPromises()
     await wrapper.vm.$nextTick()
 
     const restored = chatWindow.vm.chatMessages.find(item => item.role === 'assistant')

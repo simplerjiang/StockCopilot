@@ -39,5 +39,6 @@ public sealed record StockAgentResultDto(
     bool Success,
     string? Error,
     JsonElement? Data,
-    string? RawContent
+    string? RawContent,
+    string? TraceId = null
 );

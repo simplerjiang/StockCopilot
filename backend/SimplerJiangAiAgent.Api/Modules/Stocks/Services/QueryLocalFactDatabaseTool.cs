@@ -39,16 +39,24 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                 item.FundamentalFactsJson
             })
             .FirstOrDefaultAsync(cancellationToken);
+        var stockName = companyProfile?.Name;
 
         var stockNewsRows = await _dbContext.LocalStockNews
             .Where(item => item.Symbol == normalized)
             .OrderByDescending(item => item.PublishTime)
-            .Take(20)
+            .Take(40)
             .ToListAsync(cancellationToken);
 
         await _articleReadService.PrepareAsync(stockNewsRows, cancellationToken);
 
         var stockNews = stockNewsRows
+            .Where(item => LocalFactDisplayPolicy.IsStrongStockMatch(
+                normalized,
+                stockName ?? item.Name,
+                item.Title,
+                item.TranslatedTitle,
+                item.AiTarget))
+            .Take(20)
             .Select(item => new
             {
                 item.Name,
@@ -57,7 +65,7 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     item.Id,
                     $"stock_news:{item.Id}",
                     item.Title,
-                    item.TranslatedTitle,
+                    LocalFactDisplayPolicy.SanitizeTranslatedTitle(item.Title, item.TranslatedTitle),
                     item.Source,
                     item.SourceTag,
                     item.Category,
@@ -186,21 +194,24 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
         var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
         var bareSymbol = StripExchangePrefix(normalizedSymbol);
 
-        var snapshot = await _dbContext.SectorRotationSnapshots
+        var sectorCandidates = await _dbContext.SectorRotationSnapshots
             .AsNoTracking()
             .Where(item =>
                 item.SectorName == sectorName
                 || item.SectorName.Contains(sectorName)
                 || sectorName.Contains(item.SectorName))
+            .ToListAsync(cancellationToken);
+
+        var snapshot = sectorCandidates
             .OrderByDescending(item => item.SnapshotTime)
             .ThenByDescending(item => item.IsMainline)
             .ThenByDescending(item => item.MainlineScore)
             .ThenBy(item => item.RankNo)
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefault();
 
         if (snapshot is null)
         {
-            snapshot = await _dbContext.SectorRotationLeaderSnapshots
+            var leaderCandidates = await _dbContext.SectorRotationLeaderSnapshots
                 .AsNoTracking()
                 .Where(item => item.Symbol == bareSymbol || item.Symbol == normalizedSymbol)
                 .Join(
@@ -208,11 +219,14 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     leader => leader.SectorRotationSnapshotId,
                     sector => sector.Id,
                     (_, sector) => sector)
+                .ToListAsync(cancellationToken);
+
+            snapshot = leaderCandidates
                 .OrderByDescending(item => item.SnapshotTime)
                 .ThenByDescending(item => item.IsMainline)
                 .ThenByDescending(item => item.MainlineScore)
                 .ThenBy(item => item.RankNo)
-                .FirstOrDefaultAsync(cancellationToken);
+                .FirstOrDefault();
         }
 
         if (snapshot is null)
@@ -516,7 +530,7 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     item.Id,
                     $"stock_news:{item.Id}",
                     item.Title,
-                    item.TranslatedTitle,
+                    LocalFactDisplayPolicy.SanitizeTranslatedTitle(item.Title, item.TranslatedTitle),
                     item.Source,
                     item.SourceTag,
                     item.Category,
@@ -568,7 +582,7 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     item.Id,
                     $"sector_report:{item.Id}",
                     item.Title,
-                    item.TranslatedTitle,
+                    LocalFactDisplayPolicy.SanitizeTranslatedTitle(item.Title, item.TranslatedTitle),
                     item.Source,
                     item.SourceTag,
                     item.Level,

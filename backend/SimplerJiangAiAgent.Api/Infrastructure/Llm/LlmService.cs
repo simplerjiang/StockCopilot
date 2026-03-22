@@ -68,7 +68,7 @@ public sealed class LlmService : ILlmService
                 $"traceId={traceId} stage=response provider={resolvedProvider} providerType={providerType} elapsedMs={stopwatch.ElapsedMilliseconds} " +
                 $"content={EscapeForLog(result.Content)}");
 
-            return result;
+            return result with { TraceId = traceId };
         }
         catch (Exception ex)
         {
