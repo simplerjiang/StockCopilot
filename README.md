@@ -123,13 +123,13 @@
 
 推荐直接从 GitHub Releases 下载 v0.0.2 对应安装包：
 
-- SimplerJiangAiAgent-Setup-v0.0.2.exe
+- SimplerJiangAiAgent-Setup-0.0.2.exe
 
-发布页：<https://github.com/simplerjiang/AiAgent/releases>
+发布页：<https://github.com/simplerjiang/StockCopilot/releases>
 
 如果你不想安装，也可以下载便携包：
 
-- SimplerJiangAiAgent-portable-v0.0.2.zip
+- SimplerJiangAiAgent-portable-0.0.2.zip
 
 ## 第一次打开怎么用
 

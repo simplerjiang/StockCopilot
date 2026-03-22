@@ -125,8 +125,8 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }))
 app.MapGet("/api/app/version", () => Results.Ok(new
 {
     version = GetAppVersion(),
-    repositoryUrl = "https://github.com/simplerjiang/AiAgent",
-    releaseUrl = "https://github.com/simplerjiang/AiAgent/releases/latest"
+    repositoryUrl = "https://github.com/simplerjiang/StockCopilot",
+    releaseUrl = "https://github.com/simplerjiang/StockCopilot/releases/latest"
 }))
     .WithName("AppVersion")
     .WithOpenApi();

@@ -16,7 +16,7 @@ internal sealed record AppReleaseInfo(
 internal static partial class AppUpdateService
 {
     private const string RepositoryOwner = "simplerjiang";
-    private const string RepositoryName = "AiAgent";
+    private const string RepositoryName = "StockCopilot";
     public static Version CurrentVersion { get; } = ReadCurrentVersion();
 
     private static readonly HttpClient UpdateClient = CreateClient();
