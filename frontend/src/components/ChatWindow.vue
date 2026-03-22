@@ -49,11 +49,33 @@ const renderMarkdown = content => {
 
 const THINK_BLOCK_PATTERN = /<think>[\s\S]*?<\/think>/gi
 const REASONING_SECTION_PATTERN = /(^|\n)#{0,6}\s*(思考过程|推理过程|reasoning|analysis|chain of thought|chain-of-thought)[^\n]*(\n[\s\S]*)?$/i
+const REASONING_SCAFFOLD_LINE_PATTERN = /(\*{0,2}\s*)?(considering the request|analyzing the request|analyzing the scenario|refining the strategy|refining the approach|simulating the search|defining the scope|assessing risk elements|synthesizing risk insights|my thought process|thought process|let's break this down before answering|let's break this down|before answering|i need to understand|i'm zeroing in on)(\*{0,2}\s*)?[:：-]?\s*/gi
+const ENGLISH_TITLE_WORD_PATTERN = "(?:[A-Z][A-Za-z'&/-]*|the|and|of|to|for|in|on|with|from|a|an)"
+const LEADING_REASONING_TITLE_BLOCK_PATTERN = new RegExp(
+  `^(?:\\s|[*#>` + '"' + `'_\\-])*(?:(?:\\*{0,2}${ENGLISH_TITLE_WORD_PATTERN}(?:\\s+${ENGLISH_TITLE_WORD_PATTERN}){0,7}\\*{0,2})(?:[:：-]?\\s*)){2,}`,
+  'g'
+)
 
-const sanitizeAssistantContent = content => {
-  const source = String(content || '')
+const stripReasoningScaffolds = content => {
+  let sanitized = String(content || '')
     .replace(THINK_BLOCK_PATTERN, '')
     .replace(REASONING_SECTION_PATTERN, '')
+    .replace(REASONING_SCAFFOLD_LINE_PATTERN, '')
+
+  while (true) {
+    const nextValue = sanitized.replace(LEADING_REASONING_TITLE_BLOCK_PATTERN, '')
+    if (nextValue === sanitized) {
+      break
+    }
+
+    sanitized = nextValue.trimStart()
+  }
+
+  return sanitized
+}
+
+const sanitizeAssistantContent = content => {
+  const source = stripReasoningScaffolds(content)
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
@@ -61,7 +83,7 @@ const sanitizeAssistantContent = content => {
 }
 
 const sanitizeStreamingAssistantContent = content => {
-  const source = String(content || '').replace(THINK_BLOCK_PATTERN, '')
+  const source = stripReasoningScaffolds(content)
   return source.trimStart()
 }
 
@@ -101,13 +123,13 @@ const loadChatHistory = async key => {
   if (hasHistoryAdapter.value) {
     try {
       const saved = await props.historyAdapter.load(key)
-      return Array.isArray(saved) ? saved : []
+      return cloneMessages(Array.isArray(saved) ? saved : [])
     } catch {
       return []
     }
   }
   const saved = chatHistoryMap.value?.[key]
-  return Array.isArray(saved) ? saved : []
+  return cloneMessages(Array.isArray(saved) ? saved : [])
 }
 
 const saveChatHistory = async (key, messages) => {

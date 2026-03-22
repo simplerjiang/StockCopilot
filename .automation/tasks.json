@@ -64,7 +64,7 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "2026-03-19 已完成 R4：`frontend/src/modules/stocks/StockInfoTab.vue` 复用 `/api/market/realtime/overview`，在股票终端右侧新增 `市场实时上下文` 卡片，把当前标的与三大指数、主力净流入、北向净流入和涨跌分布一起压缩展示，并加入 localStorage 开关 `stock_realtime_context_enabled`、独立刷新和失败隔离。验证包括前端单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 42/42 通过，以及 Browser MCP 在 `http://localhost:5119/` 的 `股票信息` 页签查询 `sz000021` 后确认卡片渲染。"
+      "notes": "2026-03-19 已完成 R4：`frontend/src/modules/stocks/StockInfoTab.vue` 复用 `/api/market/realtime/overview`，在股票终端右侧新增 `市场实时上下文` 卡片，把当前标的与三大指数、主力净流入、北向净流入和涨跌分布一起压缩展示，并加入 localStorage 开关 `stock_realtime_context_enabled`、独立刷新和失败隔离。验证包括前端单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 42/42 通过，以及 Browser MCP 在 `http://localhost:5119/` 的 `股票信息` 页签查询 `sz000021` 后确认卡片渲染。2026-03-22 follow-up：该实时上下文与交易计划 `市场快链路` 已进一步上移并合并为页面顶部单一 `顶部市场总览带`，并扩展到全球指数 symbol 集；后端同时修复了 6 位非数字别名误归一化问题，为 `hstech` 等全局指数补上 secid 映射与 batch-empty 时的单标的回退逻辑。定向验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 49/49 通过，以及 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter \"FullyQualifiedName~EastmoneyRealtimeMarketClientTests\"` 6/6 通过；但 Browser MCP 在本机运行态仍看到 `/api/market/realtime/overview` 返回空 indices，因此顶部带的结构与位置已验，实时全球指数数据仍需继续跟进在线源站行为。2026-03-22 second follow-up：已进一步为运行态空指数补上服务端兜底，`RealtimeMarketOverviewService` 会对东财缺失 quotes 按 symbol 回退到腾讯行情，`TencentStockCrawler` 新增 `hsi`/`hstech`/`ndx`/`spx` alias 映射，`EastmoneyRealtimeMarketClient` 也为北向补上 `kamt/get` 快照回退。定向验证 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter \"FullyQualifiedName~RealtimeMarketOverviewServiceTests|FullyQualifiedName~EastmoneyRealtimeMarketClientTests|FullyQualifiedName~TencentStockCrawlerTests\"` 12/12 通过。"
     },
     {
       "id": "MANUAL-20260319-EXTENSION-INTERFACE-R5",
@@ -307,6 +307,17 @@
         "test": "done"
       },
       "notes": "2026-03-20 已完成版本号、GitHub Releases 更新检测、桌面端自动升级提示、发布工作流与用户文档收口：新增根级 `Directory.Build.props` 统一版本号；桌面端新增 `AppUpdateService` 与启动后 GitHub Release 检查/下载安装器逻辑；后端新增 `/api/app/version`；前端顶栏展示版本号；安装器输出改为 `SimplerJiangAiAgent-Setup-<version>.exe`；新增 `.github/workflows/release-windows.yml` 用于 tag 驱动发布安装版和 portable zip。文档侧已将原根 README 备份为 `README.llm.md`，并将新的根 `README.md` 改为面向普通用户的安装、升级、功能说明，附带 3 张 1920x1080 新截图。验证覆盖后端定向回归 9/9、前端定向单测 8/8、桌面/后端构建、隔离端口下 `/api/app/version` 烟测、截图脚本执行、安装包重建与 `artifacts\\installer\\SimplerJiangAiAgent-Setup-0.0.1.exe` 产出。真正对外发布仍需后续把提交推到 GitHub 并推送 `v0.0.1` tag 触发 Actions。"
+    },
+    {
+      "id": "GOAL-016-R6",
+      "title": "Single-host single-process packaged runtime",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "2026-03-22 已完成详细设计并确认边界：接受“一个主 EXE + 应用自带附属文件”的交付形态，不再把“绝对单文件”作为硬目标；真正的硬要求改为“主 EXE 统一控制启动与关闭、用户无需预装 SDK/.NET runtime、后端不再作为独立后台进程存在”。实施路线是：1) 把后端从独立顶层 `Program.cs` 重构为可被桌面宿主直接调用的 host builder/runtime service；2) 让 WinForms 宿主进程内直接启动/停止 ASP.NET Core host，删除 `Process.Start` 拉起 `Backend/` 的路径；3) 保留现有 localhost + WebView2 前端契约，避免大规模重写前端；4) 重做 `scripts/publish-windows-package.ps1` 与安装器，使桌面 EXE 成为唯一主入口，并把 Fixed Version WebView2 Runtime 作为明确的打包/升级策略；5) 验收要求包括干净机器无 SDK/.NET runtime 预装即可运行、关闭窗口无残留独立 Backend 进程、核心健康检查/首页/登录/LLM 首启引导保持可用。"
     },
     {
       "id": "GOAL-017",

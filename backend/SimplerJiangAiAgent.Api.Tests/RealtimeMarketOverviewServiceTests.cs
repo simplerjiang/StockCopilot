@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Caching.Memory;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 using System;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -50,7 +52,7 @@ public sealed class RealtimeMarketOverviewServiceTests
         {
             Quotes = [new BatchStockQuoteDto("sh600000", "浦发银行", 10m, 0m, 0m, 10m, 10m, 0m, 0m, 1m, 0m, new DateTime(2026, 3, 19, 15, 0, 0))]
         };
-        var service = new RealtimeMarketOverviewService(new MemoryCache(new MemoryCacheOptions()), fakeClient, timeProvider);
+        var service = new RealtimeMarketOverviewService(new MemoryCache(new MemoryCacheOptions()), fakeClient, timeProvider: timeProvider);
 
         var first = await service.GetBatchQuotesAsync(["sh600000"]);
         fakeClient.ThrowOnQuotes = true;
@@ -62,6 +64,28 @@ public sealed class RealtimeMarketOverviewServiceTests
         Assert.Single(second);
         Assert.Equal(first[0].Symbol, second[0].Symbol);
         Assert.Equal(2, fakeClient.BatchQuoteCallCount);
+    }
+
+    [Fact]
+    public async Task GetOverviewAsync_ShouldFillMissingQuotesFromFallbackSource()
+    {
+        var fakeClient = new FakeRealtimeClient();
+        var fakeStockDataService = new FakeStockDataService
+        {
+            Quotes =
+            {
+                ["sh000001"] = new StockQuoteDto("sh000001", "上证指数", 3957.05m, -49.50m, -1.24m, 1.39m, 17.01m, 4022.70m, 3955.71m, -0.30m, new DateTime(2026, 3, 20, 16, 14, 15), Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(), 0m, 0.95m),
+                ["hsi"] = new StockQuoteDto("hsi", "恒生指数", 25277.32m, -223.26m, -0.88m, 1.73m, 0m, 25563.88m, 25121.46m, -1.38m, new DateTime(2026, 3, 20, 18, 31, 47), Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(), 0m, 0m)
+            }
+        };
+        var service = new RealtimeMarketOverviewService(new MemoryCache(new MemoryCacheOptions()), fakeClient, fakeStockDataService);
+
+        var result = await service.GetOverviewAsync(["sh000001", "hsi"]);
+
+        Assert.Equal(2, result.Indices.Count);
+        Assert.Equal("sh000001", result.Indices[0].Symbol);
+        Assert.Equal("hsi", result.Indices[1].Symbol);
+        Assert.Equal(["sh000001", "hsi"], fakeStockDataService.RequestedSymbols);
     }
 
     private sealed class FakeRealtimeClient : IEastmoneyRealtimeMarketClient
@@ -125,6 +149,43 @@ public sealed class RealtimeMarketOverviewServiceTests
         public void Advance(TimeSpan duration)
         {
             _utcNow = _utcNow.Add(duration);
+        }
+    }
+
+    private sealed class FakeStockDataService : IStockDataService
+    {
+        public Dictionary<string, StockQuoteDto> Quotes { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> RequestedSymbols { get; } = new();
+
+        public Task<StockQuoteDto> GetQuoteAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+        {
+            RequestedSymbols.Add(symbol);
+            if (Quotes.TryGetValue(symbol, out var quote))
+            {
+                return Task.FromResult(quote);
+            }
+
+            throw new InvalidOperationException($"Missing fake quote for {symbol}");
+        }
+
+        public Task<MarketIndexDto> GetMarketIndexAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<KLinePointDto>> GetKLineAsync(string symbol, string interval, int count, string? source = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<MinuteLinePointDto>> GetMinuteLineAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<IntradayMessageDto>> GetIntradayMessagesAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
     }
 }

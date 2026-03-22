@@ -265,9 +265,9 @@ describe('SourceGovernanceDeveloperMode', () => {
     await flushPromises()
 
     const sections = wrapper.findAll('.log-viewer-section')
-    expect(sections[0].text()).toContain('请求内容')
+    expect(sections[0].text()).toContain('请求摘要')
     expect(sections[0].text()).toContain('"symbol":"600000"')
-    expect(sections[2].text()).toContain('返回内容')
+    expect(sections[2].text()).toContain('返回摘要')
     expect(sections[2].text()).toContain('"answer":"ok"')
 
     const jsonViews = wrapper.findAll('.log-viewer-json')

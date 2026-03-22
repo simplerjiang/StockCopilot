@@ -27,6 +27,10 @@ public sealed class SourceGovernanceReadService : ISourceGovernanceReadService
     private static readonly Regex StageRegex = new("stage=([^\\s]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex ProviderRegex = new("provider=([^\\s]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex ModelRegex = new("model=([^\\s]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private const string EnglishTitleWordPattern = "(?:[A-Z][A-Za-z'&/-]*|the|and|of|to|for|in|on|with|from|a|an)";
+    private static readonly Regex LeadingReasoningTitleBlockRegex = new(
+        $"^(?:\\s|[*#>`\"'_\\-])*(?:(?:\\*{{0,2}}{EnglishTitleWordPattern}(?:\\s+{EnglishTitleWordPattern}){{0,7}}\\*{{0,2}})(?:[:：-]?\\s*)){{2,}}",
+        RegexOptions.Compiled);
 
     public SourceGovernanceReadService(AppDbContext dbContext, AppRuntimePaths runtimePaths)
     {
@@ -687,11 +691,37 @@ public sealed class SourceGovernanceReadService : ISourceGovernanceReadService
             .Replace("\r", string.Empty, StringComparison.Ordinal)
             .Trim();
 
+        var hadReasoningScaffold = ContainsReasoningScaffold(sanitized);
+
         sanitized = Regex.Replace(
             sanitized,
             "(^|\\n)#{0,6}\\s*(思考过程|推理过程|reasoning|analysis|chain of thought|chain-of-thought)[^\\n]*(\\n[\\s\\S]*)?$",
             string.Empty,
             RegexOptions.IgnoreCase);
+
+        sanitized = Regex.Replace(
+            sanitized,
+            "(\\*{0,2}\\s*)?(considering the request|analyzing the request|analyzing the scenario|refining the strategy|refining the approach|simulating the search|defining the scope|assessing risk elements|synthesizing risk insights|my thought process|thought process|let's break this down before answering|let's break this down|before answering|i need to understand|i'm zeroing in on)(\\*{0,2}\\s*)?[:：-]?\\s*",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+
+        while (true)
+        {
+            var nextValue = LeadingReasoningTitleBlockRegex.Replace(sanitized, string.Empty);
+            if (ReferenceEquals(nextValue, sanitized) || nextValue == sanitized)
+            {
+                break;
+            }
+
+            sanitized = nextValue.TrimStart();
+        }
+
+        sanitized = sanitized.Trim();
+
+        if (hadReasoningScaffold && (string.IsNullOrWhiteSpace(sanitized) || Regex.IsMatch(sanitized, "^[\\p{P}\\p{S}\\s]+$")))
+        {
+            return "返回内容包含中间推理，已脱敏。";
+        }
 
         if (ContainsReasoningScaffold(sanitized))
         {
@@ -719,6 +749,15 @@ public sealed class SourceGovernanceReadService : ISourceGovernanceReadService
         return value.Contains("my thought process", StringComparison.OrdinalIgnoreCase)
             || value.Contains("thought process", StringComparison.OrdinalIgnoreCase)
             || value.Contains("defining the scope", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("considering the request", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("analyzing the request", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("analyzing the scenario", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("refining the strategy", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("refining the approach", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("simulating the search", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("assessing risk elements", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("synthesizing risk insights", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("before answering", StringComparison.OrdinalIgnoreCase)
             || value.Contains("let's break this down", StringComparison.OrdinalIgnoreCase)
             || value.Contains("i need to understand", StringComparison.OrdinalIgnoreCase)
             || value.Contains("i'm zeroing in on", StringComparison.OrdinalIgnoreCase)

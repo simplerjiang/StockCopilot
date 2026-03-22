@@ -66,11 +66,13 @@
 	- 纳入 `GOAL-AGENT-002-P0` 运行态稳定性收口。
 - 修复结果：
 	- 已在 `MarketSentimentSchemaInitializer` 增补 SQLite 幂等补列与索引补齐，开发/本地 SQLite 回退场景下不再因旧表缺列导致 `/api/market/sectors` 500。
+	- 2026-03-22 二次修复：定位到 `SectorRotationQueryService` 在 SQLite 上对 `decimal` 字段执行 `ORDER BY / THEN BY` 会触发 `System.NotSupportedException`；现已改为“先取最新快照，再在内存排序后分页/截断”，并新增 SQLite 回归测试锁定 `/api/market/sectors` 与 `/api/market/mainline`。
 - 复测结果：
 	- 2026-03-22 重新打开后仍可稳定复现，当前未通过。
 	- Browser MCP：页面仍显示 `情绪轮动数据加载失败`，顶部快照回落为 `0 / 暂无快照`，实时总览区域停在 `加载中...`。
 	- 命令行/API：`/api/market/sentiment/latest`、`/api/market/sentiment/history?days=10`、`/api/market/realtime/overview` 为 200，但 `/api/market/sectors?boardType=concept&page=1&pageSize=3&sort=strength` 仍为 500；`/api/market/mainline?boardType=concept&window=10d&take=6` 也返回 500；`/api/market/sectors/realtime?...` 为 200 但 `items=[]`。
 	- 当前判断：Bug 1 持续存在，而且已扩大为“板块分页/主线接口异常 + 页面整屏失败态”。
+	- 2026-03-22 本轮二次修复后已通过：命令行复测 `GET /api/market/sectors?boardType=concept&page=1&pageSize=3&sort=strength` 与 `GET /api/market/mainline?boardType=concept&window=10d&take=3` 均返回 200 且正文包含板块数据；Browser MCP 刷新进入 `情绪轮动` 后已看到板块榜、详情侧栏和顶部快照，不再出现 `情绪轮动数据加载失败`。
 
 ## Bug 2: 股票图表终端空白，切换周期也没有真正走轻量图表接口
 
@@ -96,7 +98,9 @@
 	- Browser MCP：`sh600000` 的 `专业图表终端` 仍显示 `暂无 K 线数据`；切到 `月K图` 后仍为空白。
 	- Browser network：本轮已经真实请求 `/api/stocks/chart?symbol=sh600000&interval=day&includeQuote=true&includeMinute=true` 和 `/api/stocks/chart?symbol=sh600000&interval=month&includeQuote=false&includeMinute=false`，说明“没走轻量链路”的旧问题已不成立。
 	- 命令行/API：`/api/stocks/chart?symbol=sh600000&interval=day&includeQuote=true&includeMinute=true` 返回 200，且 payload 含 `kLines=60`、`minuteLines=256`；前端仍显示无数据，当前更像是图表渲染/字段消费不一致，而不是接口未请求。
-	- 当前判断：Bug 2 需要按“轻量图表接口已调用，但终端仍空白”的新形态继续跟进。
+	- 2026-03-22 本轮追加修复后，`StockInfoTab.vue` 已对股票页关键 GET 请求补上短时重试，避免瞬时 `Failed to fetch / ERR_CONNECTION_REFUSED` 直接把图表区打成永久失败态；新增前端回归测试覆盖“首轮图表请求短暂失败后自动重试成功”。
+	- 2026-03-22 打包复测：重新执行 `start-all.bat` 后，Browser MCP 进入 `股票信息 -> 浦发银行 sh600000`，页面已显示 `浦发银行（sh600000）` 与 `专业图表终端`，且页面内不再出现 `暂无 K 线数据` / `暂无分时数据`。
+	- 当前判断：Bug 2 以“运行态短时连接波动导致图表空白”的形态已被本轮前端重试修复并通过打包复测。
 
 ## Bug 3: 顶部导航暴露了两个纯占位模块，没有任何实际功能
 
@@ -136,10 +140,12 @@
 	- 纳入 `GOAL-AGENT-002-P0` 用户面向结果脱敏收口。
 - 修复结果：
 	- 已在前端聊天渲染与保存链路增加 `<think>` / reasoning scaffold 清洗，并补齐 `StockRecommendTab` 定向测试，阻断原始推理式标题直接落到最终界面。
+	- 2026-03-22 本轮继续扩展 reasoning scaffold 识别，新增 `Considering the Request`、`Analyzing the Scenario`、`Refining the Strategy`、`before answering` 等标题式脚手架清洗，前端流式推荐单测已覆盖该类标题前缀。
 - 复测结果：
 	- 2026-03-22 Browser MCP 仍可直接复现，当前未通过。
 	- 返回文本首段继续出现 `Considering the Request`、`Analyzing the Scenario`、`Refining the Strategy` 等推理式标题。
 	- 输出仍以全球市场/AI 算力/生物医药等泛化叙述为主，并明确写出“2026年3月22日（星期日），全球主要证券交易所均处于休市状态”，不符合本项目 A 股、本地事实优先的受控推荐预期。
+	- 2026-03-22 本轮代码与单测已更新，但尚未在稳定浏览器会话中完成同路径复测；后续应在 bug 8 运行态掉线问题稳定后再次走 `股票推荐 -> 当日股票推荐` 路径确认真实 UI 输出。
 
 ## Bug 5: Developer Mode 直接展示原始 LLM 推理/脏输出，审计日志未做安全收口
 
@@ -160,11 +166,13 @@
 	- 纳入 `GOAL-AGENT-002-P0` 开发者模式安全收口。
 - 修复结果：
 	- 已在 `SourceGovernanceReadService` 做请求脱敏与 reasoning 输出收口；开发者模式界面改为展示请求摘要、返回摘要和原始日志摘要，不再直接外露原始推理文本。
+	- 2026-03-22 本轮继续补强：后端新增标题式 reasoning 脚手架识别与标点残留兜底，前端 `SourceGovernanceDeveloperMode.vue` 的日志摘要也同步二次清洗 `Considering the Request` 等标题，避免摘要列表直接透传原始推理开场白。
 - 复测结果：
 	- 2026-03-22 本轮部分改善，但仍未通过。
 	- 界面文案已经改成“原始 prompt 与推理文本不在界面直接展示”，多数条目也会显示“返回内容包含中间推理，已脱敏。”。
 	- 但日志列表首条仍直接显示：`返回：**Considering the Request** Okay, I'm now zeroing in on the core of this request...`，说明审计列表摘要仍在泄露原始模型输出。
 	- 前端单测同步出现回归：`SourceGovernanceDeveloperMode.spec.js` 期望 `请求内容/返回内容`，实际仍为 `请求摘要...`。
+	- 2026-03-22 本轮代码级复测通过：`dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter "FullyQualifiedName~SourceGovernanceReadServiceTests"` 12/12 通过，新增覆盖 `**Considering the Request** 最终建议...` 这类标题式泄露；前端 `npm --prefix .\frontend run test:unit -- src/modules/admin/SourceGovernanceDeveloperMode.spec.js` 7/7 通过。Browser MCP 尚未在稳定运行态下重走 Developer Mode 页面，因此本 bug 暂不直接关闭。
 
 ## Bug 6: 股票页“盘中消息带”混入大量与个股无关的泛新闻
 
@@ -229,7 +237,9 @@
 	- 现象一：命令行连续探测图表接口期间，随后对 `http://localhost:5119/api/stocks/chart?...` 的请求开始报“无法连接到远程服务器”，紧接着 `http://localhost:5119/api/health` 返回 `__HEALTH_DOWN__`，5119 端口也一度不再监听。
 	- 现象二：重新执行 `start-all.bat` 后脚本报 `Packaged desktop backend did not become healthy in time.`，启动链路恢复异常。
 	- 现象三：稍后 5119 又被 `SimplerJiangAiAgent.Api.exe` 占用并恢复健康，表现出不稳定的掉线/恢复过程。
-	- 当前判断：Bug 8 仍是高优先级运行态稳定性问题。
+	- 2026-03-22 本轮追加缓冲：`frontend/src/modules/stocks/StockInfoTab.vue` 已对股票页内部 GET 请求加入有界重试，仅在可重放的连接类错误下自动补试，避免短暂监听空窗直接放大成整页图表/计划板失败态；新增前端回归测试覆盖图表与交易计划总览两类短时失败恢复。
+	- 2026-03-22 打包复测：重新执行 `start-all.bat` 后，Browser MCP 走 `股票信息 -> 浦发银行 sh600000`，期间命令行两次探测 `http://localhost:5119/api/health` 均返回 `{"status":"ok"}`，本轮未再复现“首次查股后后端立刻掉线”。
+	- 当前判断：Bug 8 的“前端被短时掉线放大为持续失败态”已先做缓冲修复，但后端是否仍存在更深层的偶发监听中断，暂无法在本轮打包复测中稳定复现；保留为高优先级稳定性观察项更稳妥。
 
 ## Bug 9: LLM 设置可写但不可清空，空值保存没有实际生效
 
@@ -335,6 +345,6 @@
 - 用户指导意见（来自人）：
 	- 待补充
 - 修复结果：
-	- 待修复
+	- 已将 `SourceGovernanceDeveloperMode.spec.js` 中该用例的期望文案从 `请求内容 / 返回内容` 同步为页面真实展示的 `请求摘要 / 返回摘要`。
 - 复测结果：
-	- 2026-03-22 首次发现，当前稳定可复现。
+	- 2026-03-22 已通过 `npm --prefix .\frontend run test:unit -- src/modules/admin/SourceGovernanceDeveloperMode.spec.js` 复测，7/7 通过；该回归项已消失。

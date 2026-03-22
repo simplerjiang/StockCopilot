@@ -41,22 +41,77 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
 
         var secIds = string.Join(',', normalizedSymbols.Select(ToEastmoneySecId));
         var url = $"https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&fields=f12,f13,f14,f2,f3,f4,f5,f6,f8,f9,f10,f15,f16,f124,f152&secids={secIds}";
-        using var document = await GetDocumentAsync(url, cancellationToken);
-        if (!TryGetDiffRows(document, out var rows))
+        try
         {
-            return Array.Empty<BatchStockQuoteDto>();
+            using var document = await GetDocumentAsync(url, cancellationToken);
+            if (TryGetDiffRows(document, out var rows))
+            {
+                var parsed = rows
+                    .Select(ParseBatchQuote)
+                    .Where(item => item is not null)
+                    .Cast<BatchStockQuoteDto>()
+                    .ToDictionary(item => item.Symbol, item => item, StringComparer.OrdinalIgnoreCase);
+
+                if (parsed.Count > 0)
+                {
+                    return normalizedSymbols
+                        .Where(parsed.ContainsKey)
+                        .Select(symbol => parsed[symbol])
+                        .ToArray();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
         }
 
-        var parsed = rows
-            .Select(ParseBatchQuote)
+        return await GetBatchQuotesBySingleRequestsAsync(normalizedSymbols, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<BatchStockQuoteDto>> GetBatchQuotesBySingleRequestsAsync(
+        IReadOnlyList<string> normalizedSymbols,
+        CancellationToken cancellationToken)
+    {
+        var tasks = normalizedSymbols.Select(async symbol =>
+        {
+            try
+            {
+                return await GetSingleQuoteAsync(symbol, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                return null;
+            }
+        });
+
+        var quotes = await Task.WhenAll(tasks);
+
+        return quotes
             .Where(item => item is not null)
             .Cast<BatchStockQuoteDto>()
-            .ToDictionary(item => item.Symbol, item => item, StringComparer.OrdinalIgnoreCase);
-
-        return normalizedSymbols
-            .Where(parsed.ContainsKey)
-            .Select(symbol => parsed[symbol])
             .ToArray();
+    }
+
+    private async Task<BatchStockQuoteDto?> GetSingleQuoteAsync(string symbol, CancellationToken cancellationToken)
+    {
+        var secId = ToEastmoneySecId(symbol);
+        var url = $"https://push2.eastmoney.com/api/qt/stock/get?secid={secId}&fields=f12,f13,f14,f2,f3,f4,f5,f6,f8,f9,f10,f15,f16,f124,f152";
+        using var document = await GetDocumentAsync(url, cancellationToken);
+        if (!document.RootElement.TryGetProperty("data", out var dataNode)
+            || dataNode.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return ParseBatchQuote(dataNode);
     }
 
     public async Task<MarketCapitalFlowSnapshotDto?> GetMainCapitalFlowAsync(CancellationToken cancellationToken = default)
@@ -109,13 +164,13 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
         using var document = await GetDocumentAsync(url, cancellationToken);
         if (!document.RootElement.TryGetProperty("data", out var dataNode))
         {
-            return null;
+            return await GetNorthboundSnapshotAsync(cancellationToken);
         }
 
         var label = dataNode.TryGetProperty("s2nDate", out var dateNode) ? dateNode.GetString() ?? string.Empty : string.Empty;
         if (!dataNode.TryGetProperty("s2n", out var s2nNode) || s2nNode.ValueKind != JsonValueKind.Array)
         {
-            return null;
+            return await GetNorthboundSnapshotAsync(cancellationToken);
         }
 
         var points = new List<NorthboundFlowPointDto>();
@@ -135,7 +190,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
 
         if (points.Count == 0)
         {
-            return null;
+            return await GetNorthboundSnapshotAsync(cancellationToken);
         }
 
         var latest = points[^1];
@@ -150,6 +205,47 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             latest.ShenzhenBalance,
             latest.TotalNetInflow,
             points);
+    }
+
+    private async Task<NorthboundFlowSnapshotDto?> GetNorthboundSnapshotAsync(CancellationToken cancellationToken)
+    {
+        const string url = "https://push2.eastmoney.com/api/qt/kamt/get?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55,f56";
+        using var document = await GetDocumentAsync(url, cancellationToken);
+        if (!document.RootElement.TryGetProperty("data", out var dataNode)
+            || dataNode.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var shanghai = ParseNorthboundSnapshotChannel(dataNode, "hk2sh");
+        var shenzhen = ParseNorthboundSnapshotChannel(dataNode, "hk2sz");
+        if (shanghai is null && shenzhen is null)
+        {
+            return null;
+        }
+
+        var snapshotDate = shanghai?.Date
+            ?? shenzhen?.Date
+            ?? DateOnly.FromDateTime(DateTime.Today);
+        var snapshotTime = snapshotDate.ToDateTime(new TimeOnly(15, 0));
+        var label = shanghai?.Label
+            ?? shenzhen?.Label
+            ?? snapshotDate.ToString("MM-dd", CultureInfo.InvariantCulture);
+        var shanghaiNetInflow = shanghai?.NetInflow ?? 0m;
+        var shanghaiBalance = shanghai?.Balance ?? 0m;
+        var shenzhenNetInflow = shenzhen?.NetInflow ?? 0m;
+        var shenzhenBalance = shenzhen?.Balance ?? 0m;
+
+        return new NorthboundFlowSnapshotDto(
+            snapshotTime,
+            label,
+            "亿元",
+            shanghaiNetInflow,
+            shanghaiBalance,
+            shenzhenNetInflow,
+            shenzhenBalance,
+            shanghaiNetInflow + shenzhenNetInflow,
+            Array.Empty<NorthboundFlowPointDto>());
     }
 
     public async Task<MarketBreadthDistributionDto?> GetBreadthDistributionAsync(CancellationToken cancellationToken = default)
@@ -335,6 +431,27 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             ToHundredMillion(parts[5], TenThousandPerHundredMillion));
     }
 
+    private static NorthboundSnapshotChannelDto? ParseNorthboundSnapshotChannel(JsonElement dataNode, string propertyName)
+    {
+        if (!dataNode.TryGetProperty(propertyName, out var channelNode)
+            || channelNode.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var label = GetString(channelNode, "date");
+        var dateRaw = GetString(channelNode, "date2");
+        var date = DateOnly.TryParseExact(dateRaw, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate)
+            ? parsedDate
+            : DateOnly.FromDateTime(DateTime.Today);
+
+        return new NorthboundSnapshotChannelDto(
+            label,
+            date,
+            ToHundredMillion(GetString(channelNode, "dayNetAmtIn"), TenThousandPerHundredMillion),
+            ToHundredMillion(GetString(channelNode, "dayAmtRemain"), TenThousandPerHundredMillion));
+    }
+
     private static decimal ToHundredMillion(string? raw, decimal divisor)
     {
         return decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)
@@ -419,9 +536,19 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
 
     private static string GetString(JsonElement item, string propertyName)
     {
-        return item.TryGetProperty(propertyName, out var node)
-            ? node.GetString() ?? string.Empty
-            : string.Empty;
+        if (!item.TryGetProperty(propertyName, out var node))
+        {
+            return string.Empty;
+        }
+
+        return node.ValueKind switch
+        {
+            JsonValueKind.String => node.GetString() ?? string.Empty,
+            JsonValueKind.Number => node.GetRawText(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => string.Empty
+        };
     }
 
     private static decimal GetDecimal(JsonElement item, string propertyName)
@@ -468,4 +595,6 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             _ => 0
         };
     }
+
+    private sealed record NorthboundSnapshotChannelDto(string Label, DateOnly Date, decimal NetInflow, decimal Balance);
 }

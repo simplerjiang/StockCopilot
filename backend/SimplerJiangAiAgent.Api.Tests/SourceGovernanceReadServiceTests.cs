@@ -192,6 +192,27 @@ public sealed class SourceGovernanceReadServiceTests
         Assert.Equal("返回内容包含中间推理，已脱敏。", item.ResponseText);
     }
 
+    [Fact]
+    public async Task GetLlmConversationLogsAsync_ShouldStripReasoningTitleScaffold()
+    {
+        await using var db = CreateDb();
+        var env = new FakeHostEnvironment();
+        var logDir = Path.Combine(env.ContentRootPath, "App_Data", "logs");
+        Directory.CreateDirectory(logDir);
+        var logPath = Path.Combine(logDir, "llm-requests.txt");
+        await File.WriteAllLinesAsync(logPath, new[]
+        {
+            "2026-03-12 10:00:00.000 [LLM-AUDIT] traceId=t5 stage=request provider=openai model=gpt prompt=hello",
+            "2026-03-12 10:00:03.000 [LLM-AUDIT] traceId=t5 stage=response provider=openai model=gpt content=**Considering the Request** 最终建议：关注银行板块估值修复。"
+        });
+
+        var service = new SourceGovernanceReadService(db, env);
+        var logs = await service.GetLlmConversationLogsAsync(10, "t5");
+
+        var item = Assert.Single(logs);
+        Assert.Equal("最终建议：关注银行板块估值修复。", item.ResponseText);
+    }
+
     private static AppDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

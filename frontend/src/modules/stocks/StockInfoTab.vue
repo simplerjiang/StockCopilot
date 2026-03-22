@@ -318,6 +318,66 @@ const sidebarNewsSections = [
 ]
 
 const isAbortError = err => err?.name === 'AbortError'
+const createAbortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' })
+
+const isRetryableFetchError = err => {
+  if (isAbortError(err)) {
+    return false
+  }
+
+  const message = String(err?.message || '')
+  return err instanceof TypeError
+    || /failed to fetch|networkerror|load failed|connection refused|fetch failed/i.test(message)
+}
+
+const waitForRetryDelay = (delayMs, signal) => new Promise((resolve, reject) => {
+  if (!delayMs || delayMs <= 0) {
+    resolve()
+    return
+  }
+
+  if (signal?.aborted) {
+    reject(createAbortError())
+    return
+  }
+
+  const abortHandler = () => {
+    clearTimeout(timer)
+    reject(createAbortError())
+  }
+
+  const timer = setTimeout(() => {
+    signal?.removeEventListener?.('abort', abortHandler)
+    resolve()
+  }, delayMs)
+
+  signal?.addEventListener('abort', abortHandler, { once: true })
+})
+
+const fetchWithRetry = async (url, options = {}, retryOptions = {}) => {
+  const retries = Math.max(0, retryOptions.retries ?? 0)
+  const retryDelayMs = retryOptions.retryDelayMs ?? 300
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetch(url, options)
+    } catch (err) {
+      if (attempt >= retries || !isRetryableFetchError(err)) {
+        throw err
+      }
+
+      const delayMs = typeof retryDelayMs === 'function'
+        ? retryDelayMs(attempt + 1)
+        : retryDelayMs * (attempt + 1)
+      await waitForRetryDelay(delayMs, options.signal)
+    }
+  }
+}
+
+const fetchBackendGet = (url, options = {}) => fetchWithRetry(url, options, {
+  retries: 2,
+  retryDelayMs: attempt => attempt * 300
+})
 
 const replaceAbortController = currentController => {
   currentController?.abort()
@@ -856,7 +916,7 @@ const fetchChatSessions = async (symbolKey = chatSymbolKey.value, options = {}) 
   workspace.chatSessionsError = ''
   try {
     const params = new URLSearchParams({ symbol: symbolKey })
-    const response = await fetch(`/api/stocks/chat/sessions?${params.toString()}`, { signal: controller.signal })
+    const response = await fetchBackendGet(`/api/stocks/chat/sessions?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('聊天历史加载失败')
     }
@@ -969,7 +1029,7 @@ const fetchAgentHistory = async (symbolKey = chatSymbolKey.value, options = {}) 
   workspace.agentHistoryError = ''
   try {
     const params = new URLSearchParams({ symbol: symbolKey })
-    const response = await fetch(`/api/stocks/agents/history?${params.toString()}`, { signal: controller.signal })
+    const response = await fetchBackendGet(`/api/stocks/agents/history?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('多Agent历史加载失败')
     }
@@ -1085,7 +1145,7 @@ const fetchTradingPlans = async (symbolKey = currentStockKey.value, options = {}
     if (options.take) {
       params.set('take', String(options.take))
     }
-    const response = await fetch(`/api/stocks/plans?${params.toString()}`, { signal: controller.signal })
+    const response = await fetchBackendGet(`/api/stocks/plans?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error(await parseResponseMessage(response, '交易计划加载失败'))
     }
@@ -1140,7 +1200,7 @@ const fetchTradingPlanAlerts = async (symbolKey = currentStockKey.value, options
     if (options.take) {
       params.set('take', String(options.take))
     }
-    const response = await fetch(`/api/stocks/plans/alerts?${params.toString()}`, { signal: controller.signal })
+    const response = await fetchBackendGet(`/api/stocks/plans/alerts?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error(await parseResponseMessage(response, '交易计划告警加载失败'))
     }
@@ -1621,7 +1681,7 @@ const fetchQuote = async () => {
   const tencentQuoteProgressPromise = (async () => {
     try {
       const params = new URLSearchParams({ symbol: targetSymbol, source: '腾讯' })
-      const response = await fetch(`/api/stocks/quote?${params.toString()}`, { signal: controller.signal })
+      const response = await fetchBackendGet(`/api/stocks/quote?${params.toString()}`, { signal: controller.signal })
       if (!response.ok) {
         throw new Error('腾讯接口请求失败')
       }
@@ -1638,7 +1698,7 @@ const fetchQuote = async () => {
   const fundamentalSnapshotPromise = (async () => {
     try {
       const params = new URLSearchParams({ symbol: targetSymbol })
-      const response = await fetch(`/api/stocks/fundamental-snapshot?${params.toString()}`, { signal: controller.signal })
+      const response = await fetchBackendGet(`/api/stocks/fundamental-snapshot?${params.toString()}`, { signal: controller.signal })
       if (response.status === 404) {
         applyFundamentalSnapshot(workspace, requestToken, null)
         setStockLoadStage(workspace, requestToken, 'eastmoney', 'success', '东财暂未返回可用基本面')
@@ -1674,7 +1734,7 @@ const fetchQuote = async () => {
 
     const cachePromise = (async () => {
       try {
-        const cacheResponse = await fetch(`/api/stocks/detail/cache?${params.toString()}`, { signal: controller.signal })
+        const cacheResponse = await fetchBackendGet(`/api/stocks/detail/cache?${params.toString()}`, { signal: controller.signal })
         if (!cacheResponse.ok) {
           setStockLoadStage(workspace, requestToken, 'cache', 'success', '未命中缓存，继续实时加载')
           return
@@ -1697,7 +1757,7 @@ const fetchQuote = async () => {
     })()
 
     const liveChartPromise = (async () => {
-      const response = await fetch(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
+      const response = await fetchBackendGet(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
       if (!response.ok) {
         throw new Error('接口请求失败')
       }
@@ -1711,7 +1771,7 @@ const fetchQuote = async () => {
         if (selectedSource.value) {
           messageParams.set('source', selectedSource.value)
         }
-        const response = await fetch(`/api/stocks/messages?${messageParams.toString()}`, { signal: controller.signal })
+        const response = await fetchBackendGet(`/api/stocks/messages?${messageParams.toString()}`, { signal: controller.signal })
         if (!response.ok) {
           throw new Error('盘中消息加载失败')
         }
@@ -1783,7 +1843,7 @@ const refreshChartData = async (symbolKey = currentStockKey.value) => {
   })
 
   try {
-    const chartResponse = await fetch(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
+    const chartResponse = await fetchBackendGet(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
     if (!chartResponse.ok) {
       throw new Error('图表数据请求失败')
     }
@@ -1839,7 +1899,7 @@ const fetchNewsImpact = async (symbolKey = currentStockKey.value, options = {}) 
     if (selectedSource.value) {
       params.set('source', selectedSource.value)
     }
-    const response = await fetch(`/api/stocks/news/impact?${params.toString()}`, { signal: controller.signal })
+    const response = await fetchBackendGet(`/api/stocks/news/impact?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('资讯影响加载失败')
     }
@@ -1878,7 +1938,7 @@ const fetchMarketNews = async (options = {}) => {
   rootWorkspace.localNewsError = ''
 
   try {
-    const response = await fetch('/api/news?level=market', { signal: controller.signal })
+    const response = await fetchBackendGet('/api/news?level=market', { signal: controller.signal })
     if (!response.ok) {
       throw new Error('大盘资讯加载失败')
     }
@@ -1935,7 +1995,7 @@ const fetchStockRealtimeOverview = async (symbolKey = currentStockKey.value, opt
 
   try {
     const params = new URLSearchParams({ symbols: buildRealtimeContextSymbols(effectiveSymbol).join(',') })
-    const response = await fetch(`/api/market/realtime/overview?${params.toString()}`, { signal: controller.signal })
+    const response = await fetchBackendGet(`/api/market/realtime/overview?${params.toString()}`, { signal: controller.signal })
     if (!response.ok) {
       throw new Error('市场实时总览加载失败')
     }
@@ -1978,7 +2038,7 @@ const fetchLocalNews = async (symbolKey = currentStockKey.value, options = {}) =
       sidebarNewsSections.map(async section => {
         const params = new URLSearchParams({ level: section.key })
         params.set('symbol', symbolValue)
-        const response = await fetch(`/api/news?${params.toString()}`, { signal: controller.signal })
+        const response = await fetchBackendGet(`/api/news?${params.toString()}`, { signal: controller.signal })
         if (!response.ok) {
           throw new Error('本地新闻加载失败')
         }
@@ -2107,7 +2167,7 @@ const searchStocks = async query => {
   searchError.value = ''
   try {
     const params = new URLSearchParams({ q: query })
-    const response = await fetch(`/api/stocks/search?${params.toString()}`)
+    const response = await fetchBackendGet(`/api/stocks/search?${params.toString()}`)
     if (!response.ok) {
       throw new Error('搜索失败')
     }
@@ -2166,7 +2226,7 @@ const closeSearch = () => {
 
 const fetchSources = async () => {
   try {
-    const response = await fetch('/api/stocks/sources')
+    const response = await fetchBackendGet('/api/stocks/sources')
     if (response.ok) {
       sources.value = await response.json()
     }
@@ -2179,7 +2239,7 @@ const fetchHistory = async () => {
   historyLoading.value = true
   historyError.value = ''
   try {
-    const response = await fetch('/api/stocks/history')
+    const response = await fetchBackendGet('/api/stocks/history')
     if (!response.ok) {
       throw new Error('历史记录请求失败')
     }

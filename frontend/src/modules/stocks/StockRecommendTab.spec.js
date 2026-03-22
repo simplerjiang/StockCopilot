@@ -90,7 +90,7 @@ describe('StockRecommendTab', () => {
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode('data: 你好\n\n'))
+        controller.enqueue(encoder.encode('data: **Considering the Request** 你好\n\n'))
         controller.enqueue(encoder.encode('data: 世界\n\n'))
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
         controller.close()

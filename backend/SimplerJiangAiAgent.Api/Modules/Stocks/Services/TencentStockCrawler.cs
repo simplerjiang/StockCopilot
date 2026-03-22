@@ -6,6 +6,13 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 public sealed class TencentStockCrawler : IStockCrawlerSource
 {
+    private static readonly IReadOnlyDictionary<string, string> QuoteSymbolAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["hsi"] = "r_hkHSI",
+        ["hstech"] = "r_hkHSTECH",
+        ["ndx"] = "usNDX",
+        ["spx"] = "usINX"
+    };
     private readonly HttpClient _httpClient;
 
     public TencentStockCrawler(HttpClient httpClient)
@@ -18,7 +25,8 @@ public sealed class TencentStockCrawler : IStockCrawlerSource
     public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var normalized = StockSymbolNormalizer.Normalize(symbol);
-        var url = $"https://qt.gtimg.cn/q={normalized}";
+        var quoteSymbol = ResolveQuoteSymbol(normalized);
+        var url = $"https://qt.gtimg.cn/q={quoteSymbol}";
         var raw = await _httpClient.GetStringAsync(url, cancellationToken);
         var payload = TencentStockParser.ExtractPayload(raw);
         return TencentStockParser.ParseQuote(normalized, payload);
@@ -192,6 +200,11 @@ public sealed class TencentStockCrawler : IStockCrawlerSource
         // TODO: 接入盘中消息来源
         IReadOnlyList<IntradayMessageDto> result = Array.Empty<IntradayMessageDto>();
         return Task.FromResult(result);
+    }
+
+    private static string ResolveQuoteSymbol(string symbol)
+    {
+        return QuoteSymbolAliases.TryGetValue(symbol, out var mapped) ? mapped : symbol;
     }
 
     private static string NormalizeInterval(string interval)

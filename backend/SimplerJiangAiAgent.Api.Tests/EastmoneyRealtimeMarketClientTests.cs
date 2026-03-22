@@ -66,6 +66,51 @@ public sealed class EastmoneyRealtimeMarketClientTests
     }
 
     [Fact]
+    public async Task GetBatchQuotesAsync_ShouldFallbackToSingleQuoteEndpointWhenBatchRowsMissing()
+    {
+        var singleQuoteRequests = new List<string>();
+        var handler = new FakeHttpMessageHandler(request =>
+        {
+            var uri = request.RequestUri?.ToString() ?? string.Empty;
+            if (uri.Contains("/api/qt/ulist.np/get", StringComparison.OrdinalIgnoreCase))
+            {
+                return JsonResponse("""
+                {
+                  "data": {
+                    "diff": []
+                  }
+                }
+                """);
+            }
+
+            singleQuoteRequests.Add(Uri.UnescapeDataString(uri));
+            return request.RequestUri?.Query switch
+            {
+                var query when query is not null && query.Contains("secid=1.000001", StringComparison.OrdinalIgnoreCase) => JsonResponse("""
+                {
+                  "data": { "f2": 3368.70, "f3": -0.94, "f4": -31.63, "f6": 523828874283.0, "f8": 0, "f9": 0, "f10": 0, "f12": "000001", "f13": 1, "f14": "上证指数", "f15": 3381.54, "f16": 3342.72, "f124": 1773994150 }
+                }
+                """),
+                var query when query is not null && query.Contains("secid=124.HSTECH", StringComparison.OrdinalIgnoreCase) => JsonResponse("""
+                {
+                  "data": { "f2": 4872.38, "f3": -2.48, "f4": -123.9, "f6": 0, "f8": 0, "f9": 0, "f10": 0, "f12": "HSTECH", "f13": 124, "f14": "恒生科技指数", "f15": 4933.2, "f16": 4820.12, "f124": 1773994150 }
+                }
+                """),
+                _ => throw new InvalidOperationException($"Unexpected request URI: {uri}")
+            };
+        });
+        var client = new EastmoneyRealtimeMarketClient(new HttpClient(handler));
+
+        var result = await client.GetBatchQuotesAsync(["sh000001", "hstech"]);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("sh000001", result[0].Symbol);
+        Assert.Equal("hstech", result[1].Symbol);
+        Assert.Contains(singleQuoteRequests, item => item.Contains("secid=1.000001", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(singleQuoteRequests, item => item.Contains("secid=124.HSTECH", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task GetMainCapitalFlowAsync_ShouldParseLatestPoint()
     {
         var handler = new FakeHttpMessageHandler(_ => JsonResponse("""
@@ -114,6 +159,42 @@ public sealed class EastmoneyRealtimeMarketClientTests
         Assert.Equal(12.34m, result.ShanghaiNetInflow);
         Assert.Equal(420m, result.ShenzhenBalance);
         Assert.Equal(69.12m, result.TotalNetInflow);
+    }
+
+    [Fact]
+    public async Task GetNorthboundFlowAsync_ShouldFallbackToSnapshotEndpointWhenMinuteSeriesMissing()
+    {
+        var callCount = 0;
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            callCount += 1;
+            return callCount == 1
+                ? JsonResponse("""
+                {
+                  "data": {
+                    "s2nDate": "03-20"
+                  }
+                }
+                """)
+                : JsonResponse("""
+                {
+                  "data": {
+                    "hk2sh": { "dayNetAmtIn": 123400.00, "dayAmtRemain": 5200000.00, "date": "03-20", "date2": "2026-03-20" },
+                    "hk2sz": { "dayNetAmtIn": 567800.00, "dayAmtRemain": 4200000.00, "date": "03-20", "date2": "2026-03-20" }
+                  }
+                }
+                """);
+        });
+        var client = new EastmoneyRealtimeMarketClient(new HttpClient(handler));
+
+        var result = await client.GetNorthboundFlowAsync();
+
+        Assert.NotNull(result);
+        Assert.Equal("03-20", result!.TradingDateLabel);
+        Assert.Equal(12.34m, result.ShanghaiNetInflow);
+        Assert.Equal(56.78m, result.ShenzhenNetInflow);
+        Assert.Equal(69.12m, result.TotalNetInflow);
+        Assert.Empty(result.Points);
     }
 
     [Fact]

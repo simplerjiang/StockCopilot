@@ -1557,6 +1557,41 @@ describe('StockInfoTab', () => {
     expect(requestedUrls.some(url => url.startsWith('/api/stocks/fundamental-snapshot?'))).toBe(false)
   })
 
+  it('retries transient chart fetch failures during the first stock load', async () => {
+    let chartCalls = 0
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        if (String(url).startsWith('/api/stocks/chart?')) {
+          chartCalls += 1
+          if (chartCalls === 1) {
+            throw new TypeError('Failed to fetch')
+          }
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+
+    const input = wrapper.find('.search-field input')
+    const button = wrapper.find('.search-field button')
+
+    await input.setValue('600000')
+    await button.trigger('click')
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 950))
+    await flushPromises()
+
+    expect(chartCalls).toBe(2)
+    expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600000')
+    expect(wrapper.vm.error).toBe('')
+  })
+
   it('keeps background chart refresh lightweight after the stock is already loaded', async () => {
     const { fetchMock } = createChatFetchMock()
     vi.stubGlobal('fetch', fetchMock)
@@ -2923,5 +2958,56 @@ describe('StockInfoTab', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('retries transient trading plan board fetch failures on initial load', async () => {
+    let boardPlanCalls = 0
+
+    const planList = [{
+      id: 7,
+      symbol: 'sz000021',
+      name: '深科技',
+      direction: 'Long',
+      status: 'Pending',
+      triggerPrice: 12.6,
+      invalidPrice: 11.9,
+      stopLossPrice: 11.5,
+      takeProfitPrice: 13.4,
+      targetPrice: 14.2,
+      analysisHistoryId: 42,
+      sourceAgent: 'commander',
+      updatedAt: '2026-03-14T09:00:00Z',
+      createdAt: '2026-03-14T08:30:00Z'
+    }]
+
+    const { fetchMock } = createChatFetchMock({
+      handle: async url => {
+        if (url.startsWith('/api/stocks/plans?take=20')) {
+          boardPlanCalls += 1
+          if (boardPlanCalls === 1) {
+            throw new TypeError('Failed to fetch')
+          }
+
+          return makeResponse({ ok: true, status: 200, json: async () => planList })
+        }
+
+        if (url.startsWith('/api/stocks/plans/alerts?take=20')) {
+          return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 950))
+    await flushPromises()
+
+    expect(boardPlanCalls).toBe(2)
+    expect(wrapper.find('.trading-plan-board-card').text()).toContain('深科技')
+    expect(wrapper.find('.trading-plan-board-card').text()).not.toContain('暂无交易计划，可从 commander 分析一键起草。')
   })
 })

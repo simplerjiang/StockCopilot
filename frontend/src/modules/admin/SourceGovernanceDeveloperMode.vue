@@ -44,6 +44,7 @@ const selectedLlmRequestJson = computed(() => formatPrettyJson(extractJsonCandid
 const selectedLlmResponseJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.responseText || '')))
 const selectedLlmErrorJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.errorText || '')))
 const selectedLlmRawPreview = computed(() => summarizeLogText((selectedLlmLog.value?.lines || []).join('\n')))
+const REASONING_SCAFFOLD_LINE_PATTERN = /(\*{0,2}\s*)?(considering the request|analyzing the request|analyzing the scenario|refining the strategy|refining the approach|simulating the search|defining the scope|assessing risk elements|synthesizing risk insights|my thought process|thought process|let's break this down before answering|let's break this down|before answering|i need to understand|i'm zeroing in on)(\*{0,2}\s*)?[:：-]?\s*/gi
 
 const authHeaders = () => ({
   Authorization: `Bearer ${token.value}`
@@ -244,9 +245,12 @@ const closeLlmLogViewer = () => {
 }
 
 const summarizeLogText = value => {
-  const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+  const normalized = String(value || '')
+    .replace(REASONING_SCAFFOLD_LINE_PATTERN, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!normalized) {
-    return '无内容'
+    return '返回内容包含中间推理，已脱敏。'
   }
 
   return normalized.length > 180 ? `${normalized.slice(0, 180)}...` : normalized

@@ -64,18 +64,19 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             return new SectorRotationPageDto(normalizedBoardType, 1, pageSize, 0, NormalizeSort(sort), null, Array.Empty<SectorRotationListItemDto>());
         }
 
-        var query = _dbContext.SectorRotationSnapshots
+        var latestRows = await _dbContext.SectorRotationSnapshots
             .AsNoTracking()
-            .Where(x => x.BoardType == normalizedBoardType && x.SnapshotTime == latestSnapshotTime.Value);
+            .Where(x => x.BoardType == normalizedBoardType && x.SnapshotTime == latestSnapshotTime.Value)
+            .ToListAsync(cancellationToken);
 
-        query = ApplySort(query, sort);
-        var total = await query.CountAsync(cancellationToken);
+        var orderedRows = ApplySort(latestRows, sort).ToArray();
+        var total = orderedRows.Length;
         var safePageSize = Math.Clamp(pageSize, 1, 50);
         var safePage = Math.Max(1, page);
-        var items = await query
+        var items = orderedRows
             .Skip((safePage - 1) * safePageSize)
             .Take(safePageSize)
-            .ToListAsync(cancellationToken);
+            .ToArray();
 
         return new SectorRotationPageDto(
             normalizedBoardType,
@@ -187,21 +188,27 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
         }
 
         var trendWindow = NormalizeWindow(window);
-        var query = _dbContext.SectorRotationSnapshots
+        var latestRows = await _dbContext.SectorRotationSnapshots
             .AsNoTracking()
-            .Where(x => x.BoardType == normalizedBoardType && x.SnapshotTime == latestSnapshotTime.Value);
-
-        query = trendWindow switch
-        {
-            "5d" => query.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.StrengthAvg5d).ThenByDescending(x => x.MainlineScore),
-            "20d" => query.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.StrengthAvg20d).ThenByDescending(x => x.MainlineScore),
-            _ => query.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.StrengthAvg10d).ThenByDescending(x => x.MainlineScore)
-        };
-
-        return await query
-            .Take(Math.Clamp(take, 1, 20))
-            .Select(x => MapSectorItem(x))
+            .Where(x => x.BoardType == normalizedBoardType && x.SnapshotTime == latestSnapshotTime.Value)
             .ToListAsync(cancellationToken);
+
+        return ApplyMainlineSort(latestRows, trendWindow)
+            .Take(Math.Clamp(take, 1, 20))
+            .Select(MapSectorItem)
+            .ToArray();
+    }
+
+    private static IEnumerable<Data.Entities.SectorRotationSnapshot> ApplyMainlineSort(
+        IEnumerable<Data.Entities.SectorRotationSnapshot> rows,
+        string trendWindow)
+    {
+        return trendWindow switch
+        {
+            "5d" => rows.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.StrengthAvg5d).ThenByDescending(x => x.MainlineScore),
+            "20d" => rows.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.StrengthAvg20d).ThenByDescending(x => x.MainlineScore),
+            _ => rows.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.StrengthAvg10d).ThenByDescending(x => x.MainlineScore)
+        };
     }
 
     private static MarketSentimentSummaryDto MapSummary(Data.Entities.MarketSentimentSnapshot item)
@@ -299,16 +306,16 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             .ToArray();
     }
 
-    private static IQueryable<Data.Entities.SectorRotationSnapshot> ApplySort(IQueryable<Data.Entities.SectorRotationSnapshot> query, string sort)
+    private static IEnumerable<Data.Entities.SectorRotationSnapshot> ApplySort(IEnumerable<Data.Entities.SectorRotationSnapshot> rows, string sort)
     {
         return NormalizeSort(sort) switch
         {
-            "change" => query.OrderByDescending(x => x.ChangePercent).ThenBy(x => x.RankNo),
-            "flow" => query.OrderByDescending(x => x.MainNetInflow).ThenBy(x => x.RankNo),
-            "breadth" => query.OrderByDescending(x => x.BreadthScore).ThenBy(x => x.RankNo),
-            "continuity" => query.OrderByDescending(x => x.ContinuityScore).ThenBy(x => x.RankNo),
-            "mainline" => query.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.MainlineScore).ThenBy(x => x.RankNo),
-            _ => query.OrderByDescending(x => x.StrengthScore).ThenBy(x => x.RankNo)
+            "change" => rows.OrderByDescending(x => x.ChangePercent).ThenBy(x => x.RankNo),
+            "flow" => rows.OrderByDescending(x => x.MainNetInflow).ThenBy(x => x.RankNo),
+            "breadth" => rows.OrderByDescending(x => x.BreadthScore).ThenBy(x => x.RankNo),
+            "continuity" => rows.OrderByDescending(x => x.ContinuityScore).ThenBy(x => x.RankNo),
+            "mainline" => rows.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.MainlineScore).ThenBy(x => x.RankNo),
+            _ => rows.OrderByDescending(x => x.StrengthScore).ThenBy(x => x.RankNo)
         };
     }
 

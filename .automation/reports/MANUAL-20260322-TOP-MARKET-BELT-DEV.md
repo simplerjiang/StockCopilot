@@ -1,0 +1,55 @@
+# MANUAL-20260322-TOP-MARKET-BELT-DEV
+
+## English
+- Scope: merge the stock terminal's two promoted top blocks into one compact top market overview belt, expand it with global indices, and keep rise/fall color semantics visible.
+- Frontend changes:
+  - Replaced the separate `市场实时上下文` and `市场快链路` sections in `frontend/src/modules/stocks/StockInfoTab.vue` with a single `顶部市场总览带` block above market news and the workspace grid.
+  - Added grouped domestic/global index sections, pulse cards for main flow, northbound flow, breadth, board temperature, and stock-versus-index relative strength, plus explicit `涨红跌绿` copy in the meta strip.
+  - Expanded the requested realtime symbol set to include `hsi`, `hstech`, `n225`, `ndx`, `spx`, `ftse`, and `ks11`.
+- Backend changes:
+  - Added explicit global-index secid mapping in `backend/SimplerJiangAiAgent.Api/Modules/Market/Services/EastmoneyRealtimeMarketClient.cs`.
+  - Fixed symbol normalization so only six-digit numeric values receive `sh` / `sz` exchange prefixes; aliases like `hstech` are no longer corrupted.
+  - Added a single-quote fallback path when Eastmoney batch rows are empty, and parallelized that fallback to reduce timeout pressure.
+  - Increased realtime quote timeout in `RealtimeMarketOverviewService` from 4s to 15s for the broader top-belt symbol set.
+  - 2026-03-22 follow-up fix: when Eastmoney realtime quotes still come back empty or incomplete at runtime, `RealtimeMarketOverviewService` now fills missing symbols through Tencent quote fallback instead of returning an empty `indices` array.
+  - 2026-03-22 follow-up fix: `TencentStockCrawler` now maps global aliases `hsi`, `hstech`, `ndx`, and `spx` to verified Tencent codes so the fallback can return live global index quotes rather than zero placeholders.
+  - 2026-03-22 follow-up fix: `EastmoneyRealtimeMarketClient` now falls back from `kamt.rtmin/get` to `kamt/get` when the minute series is missing, so northbound flow no longer drops to `null` on snapshot-only responses.
+- Tests:
+  - `npm --prefix .\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js`
+    - Result: passed, 49/49.
+  - `dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter "FullyQualifiedName~EastmoneyRealtimeMarketClientTests"`
+    - Result: passed, 6/6.
+  - `dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter "FullyQualifiedName~RealtimeMarketOverviewServiceTests|FullyQualifiedName~EastmoneyRealtimeMarketClientTests|FullyQualifiedName~TencentStockCrawlerTests"`
+    - Result: passed, 12/12.
+- Browser MCP validation:
+  - Structural validation passed on `http://localhost:5119/?tab=stock-info`: the page now renders one `顶部市场总览带` above market news and the workspace area, and no sidebar copy of the old blocks remains.
+  - Runtime data validation did not fully pass in this environment: `/api/market/realtime/overview` continued to return `indices=[]`, so the browser showed `暂无 A 股指数数据。` and `暂无全球指数数据。` even after the backend fallback changes.
+- Current risk:
+  - The Eastmoney runtime path is still unreliable for index quotes on this machine, but the service now has Tencent fallback coverage for domestic indices plus verified global aliases `hsi`, `hstech`, `ndx`, and `spx`. Remaining uncovered global aliases are `n225`, `ftse`, and `ks11` when Eastmoney does not return them.
+
+## 中文
+- 范围：把股票终端顶部已上移的两个区块合并成更紧凑的 `顶部市场总览带`，并扩展全球指数，同时保留明显的涨红跌绿语义。
+- 前端改动：
+  - 在 `frontend/src/modules/stocks/StockInfoTab.vue` 中移除分开的 `市场实时上下文` 与 `市场快链路` 顶部区块，改为一个位于大盘资讯和工作区网格之前的 `顶部市场总览带`。
+  - 新增 A 股主场 / 全球指数分组，以及主力净流、北向净流、市场广度、封板温度、个股对照五类脉冲卡片，并在 meta 区直接写明 `涨红跌绿`。
+  - 实时请求 symbol 集扩展到 `hsi`、`hstech`、`n225`、`ndx`、`spx`、`ftse`、`ks11`。
+- 后端改动：
+  - 在 `backend/SimplerJiangAiAgent.Api/Modules/Market/Services/EastmoneyRealtimeMarketClient.cs` 新增全球指数 secid 显式映射。
+  - 修复 symbol 归一化逻辑，只有 6 位纯数字才自动补 `sh` / `sz` 前缀，`hstech` 这类别名不再被污染。
+  - 当东财批量行情返回空行时，新增单标的回退抓取，并改成并发回退以降低超时风险。
+  - 在 `RealtimeMarketOverviewService` 中把 realtime quote 超时从 4 秒放宽到 15 秒，以适应更大的顶部总览 symbol 集。
+  - 2026-03-22 补充修复：当东财实时指数在运行态继续返回空或不完整结果时，`RealtimeMarketOverviewService` 现在会按缺失 symbol 回退到腾讯行情，不再把 `indices` 整段留空。
+  - 2026-03-22 补充修复：`TencentStockCrawler` 现已把 `hsi`、`hstech`、`ndx`、`spx` 映射到已验证可用的腾讯代码，让全球指数回退不再落到 0 值占位。
+  - 2026-03-22 补充修复：`EastmoneyRealtimeMarketClient` 现在会在 `kamt.rtmin/get` 缺分钟线时回退到 `kamt/get` 快照，避免北向净流直接掉成 `null`。
+- 测试：
+  - `npm --prefix .\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js`
+    - 结果：通过，49/49。
+  - `dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter "FullyQualifiedName~EastmoneyRealtimeMarketClientTests"`
+    - 结果：通过，6/6。
+  - `dotnet test .\backend\SimplerJiangAiAgent.Api.Tests\SimplerJiangAiAgent.Api.Tests.csproj --no-restore --filter "FullyQualifiedName~RealtimeMarketOverviewServiceTests|FullyQualifiedName~EastmoneyRealtimeMarketClientTests|FullyQualifiedName~TencentStockCrawlerTests"`
+    - 结果：通过，12/12。
+- Browser MCP 验证：
+  - `http://localhost:5119/?tab=stock-info` 页面结构验证通过：现在页面顶部只有一个 `顶部市场总览带`，位置在大盘资讯和主工作区之前，旧的侧栏副本不再存在。
+  - 但实时数据验证在这台机器上未完全通过：`/api/market/realtime/overview` 仍返回 `indices=[]`，浏览器中继续显示 `暂无 A 股指数数据。` 与 `暂无全球指数数据。`，说明在线实时指数载荷还没有闭环。
+- 当前风险：
+  - 这台机器上的东财运行态指数链路依旧不稳定，但服务端现在已对国内指数和已验证别名 `hsi`、`hstech`、`ndx`、`spx` 提供腾讯回退。当前剩余未完全覆盖的全球 alias 仍是 `n225`、`ftse`、`ks11` 在东财失效时的兜底来源。

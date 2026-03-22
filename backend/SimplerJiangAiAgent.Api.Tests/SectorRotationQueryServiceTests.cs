@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
@@ -74,6 +75,64 @@ public sealed class SectorRotationQueryServiceTests
         Assert.Equal(2, result.Total);
         Assert.Equal("BK002", result.Items[0].SectorCode);
         Assert.DoesNotContain(result.Items, item => item.SectorCode == "BKOLD");
+    }
+
+    [Fact]
+    public async Task GetSectorPageAndMainlineAsync_WorkWithSqliteDecimalOrdering()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var dbContext = CreateSqliteDbContext(connection);
+        dbContext.SectorRotationSnapshots.AddRange(
+            new SectorRotationSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 15),
+                SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+                BoardType = SectorBoardTypes.Concept,
+                SectorCode = "BK001",
+                SectorName = "机器人",
+                ChangePercent = 4.2m,
+                MainNetInflow = 120m,
+                BreadthScore = 80m,
+                ContinuityScore = 72m,
+                StrengthScore = 85m,
+                RankNo = 2,
+                StrengthAvg10d = 71m,
+                MainlineScore = 79m,
+                IsMainline = true,
+                NewsSentiment = "利好",
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            },
+            new SectorRotationSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 15),
+                SnapshotTime = new DateTime(2026, 3, 15, 7, 0, 0, DateTimeKind.Utc),
+                BoardType = SectorBoardTypes.Concept,
+                SectorCode = "BK002",
+                SectorName = "算力",
+                ChangePercent = 6.8m,
+                MainNetInflow = 80m,
+                BreadthScore = 76m,
+                ContinuityScore = 66m,
+                StrengthScore = 73m,
+                RankNo = 1,
+                StrengthAvg10d = 62m,
+                MainlineScore = 61m,
+                IsMainline = false,
+                NewsSentiment = "中性",
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new SectorRotationQueryService(dbContext, Options.Create(new SectorRotationOptions()));
+
+        var page = await service.GetSectorPageAsync(SectorBoardTypes.Concept, 1, 20, "change");
+        var mainline = await service.GetMainlineAsync(SectorBoardTypes.Concept, "10d", 5);
+
+        Assert.Equal(new[] { "BK002", "BK001" }, page.Items.Select(item => item.SectorCode).ToArray());
+        Assert.Equal(new[] { "BK001", "BK002" }, mainline.Select(item => item.SectorCode).ToArray());
     }
 
     [Fact]
@@ -275,5 +334,16 @@ public sealed class SectorRotationQueryServiceTests
             .Options;
 
         return new AppDbContext(options);
+    }
+
+    private static AppDbContext CreateSqliteDbContext(SqliteConnection connection)
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        var dbContext = new AppDbContext(options);
+        dbContext.Database.EnsureCreated();
+        return dbContext;
     }
 }
