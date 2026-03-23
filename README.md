@@ -94,6 +94,7 @@
 - 交易计划支持草稿、总览、提醒和市场上下文展示
 - Stock Copilot MCP 运行时基础层已落地
 - Stock Copilot draft 会话 contract 已落地
+- Stock Copilot 右侧会话面板与动作化工作流已落地，支持 K 线、新闻、多 Agent 和交易计划起草联动
 - 首次启动会引导配置 LLM Key
 - 新版本会从 GitHub Releases 检查更新，并支持安装器升级
 
@@ -101,15 +102,13 @@
 
 ### 近期规划
 
-- 把 Stock Copilot 从开发模式和 draft contract 推进到正式右侧面板体验，做到“提问 -> 看计划 -> 看工具 -> 看受控回答”
-- 把 Copilot 的回答进一步接到动作化工作流，包括图表联动、新闻证据联动和交易计划起草联动
 - 做完整的 Copilot 验收与 replay 指标，把工具效率、证据覆盖率、local-first 命中率、answer traceability 量化下来
 - 继续补强交易计划提醒、复核、执行前检查和复盘链路
 - 把当前“桌面 EXE + 独立后端进程”继续收敛成“一个主 EXE 统一控制、单宿主单进程、无需用户预装 .NET runtime 的本地应用”；这里接受应用自带附属文件，不把“绝对单文件”作为硬目标
 
 ### 中期规划
 
-- 补齐真正的 LLM -> 工具执行 -> grounded final answer 闭环，而不只是 draft timeline
+- 补齐真正的 LLM -> 工具执行 -> grounded final answer 闭环，而不只是 panel + action workflow
 - 继续收口多 Agent、图表信号、市场上下文和 Copilot 之间的统一能力层
 - 补更完整的桌面更新体验，包括更稳的升级回滚与异常恢复
 - 增加更可靠的历史回放、校准和效果评估能力，减少产品迭代后的“主观感觉变好”

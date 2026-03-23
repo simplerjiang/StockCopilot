@@ -5,6 +5,7 @@ import StockAgentPanels from './StockAgentPanels.vue'
 import StockSourceLoadProgress from './StockSourceLoadProgress.vue'
 import TerminalView from './TerminalView.vue'
 import CopilotPanel from './CopilotPanel.vue'
+import StockCopilotSessionPanel from './StockCopilotSessionPanel.vue'
 import ChatWindow from '../../components/ChatWindow.vue'
 import {
   formatTradingPlanStatus,
@@ -159,7 +160,20 @@ const createWorkspace = symbolKey => reactive({
   planListRequestToken: 0,
   planAlertsRequestToken: 0,
   planListAbortController: null,
-  planAlertsAbortController: null
+  planAlertsAbortController: null,
+  copilotQuestion: '',
+  copilotAllowExternalSearch: false,
+  copilotLoading: false,
+  copilotError: '',
+  copilotSessionKey: '',
+  copilotSessionTitle: '',
+  copilotCurrentTurnId: '',
+  copilotReplayTurns: [],
+  copilotDraftAbortController: null,
+  copilotToolAbortController: null,
+  copilotToolBusyCallId: '',
+  copilotFocusSection: '',
+  copilotChartFocusView: 'day'
 })
 
 const stockWorkspaces = reactive({})
@@ -180,6 +194,10 @@ const getWorkspace = symbolKey => {
 const currentWorkspace = computed(() => getWorkspace(currentStockKey.value) ?? rootWorkspace)
 const sidebarWorkspaces = computed(() =>
   Object.values(stockWorkspaces).filter(workspace => Boolean(workspace?.detail?.quote?.symbol))
+)
+const activePlanModalWorkspace = computed(() =>
+  sidebarWorkspaces.value.find(workspace => workspace?.planModalOpen && workspace?.planForm)
+  ?? (rootWorkspace.planModalOpen && rootWorkspace.planForm ? rootWorkspace : null)
 )
 
 const bindWorkspaceField = (key, fallbackValue) => computed({
@@ -232,6 +250,12 @@ const newsImpactError = bindWorkspaceField('newsImpactError', '')
 const localNewsBuckets = bindWorkspaceField('localNewsBuckets', { stock: null, sector: null, market: null })
 const localNewsLoading = bindWorkspaceField('localNewsLoading', false)
 const localNewsError = bindWorkspaceField('localNewsError', '')
+const copilotQuestion = bindWorkspaceField('copilotQuestion', '')
+const copilotAllowExternalSearch = bindWorkspaceField('copilotAllowExternalSearch', false)
+const copilotLoading = bindWorkspaceField('copilotLoading', false)
+const copilotError = bindWorkspaceField('copilotError', '')
+const copilotReplayTurns = bindWorkspaceField('copilotReplayTurns', [])
+const copilotToolBusyCallId = bindWorkspaceField('copilotToolBusyCallId', '')
 const marketNewsBucket = computed(() => rootWorkspace.localNewsBuckets.market ?? null)
 const marketNewsLoading = computed(() => rootWorkspace.localNewsLoading)
 const marketNewsError = computed(() => rootWorkspace.localNewsError)
@@ -876,7 +900,7 @@ const buildStockContext = currentDetail => {
   const shareholderCount = quote.shareholderCount ?? ''
   const sectorName = quote.sectorName ?? ''
   const timestamp = quote.timestamp ?? ''
-  return `股票：${name}（${symbol})\n价格：${price}\n涨跌：${change}（${changePercent}%）\n高：${high} 低：${low}\n市盈率：${peRatio}\n流通市值：${floatMarketCap}\n量比：${volumeRatio}\n股东户数：${shareholderCount}\n所属板块：${sectorName}\n时间：${formatDate(timestamp)}`
+  return `股票：${name}（${symbol}）\n价格：${price}\n涨跌：${change}（${changePercent}%）\n高：${high} 低：${low}\n市盈率：${peRatio}\n流通市值：${floatMarketCap}\n量比：${volumeRatio}\n股东户数：${shareholderCount}\n所属板块：${sectorName}\n时间：${formatDate(timestamp)}`
 }
 
 const chatSymbolKey = computed(() => {
@@ -887,6 +911,478 @@ const chatSymbolKey = computed(() => {
 
 const getChatSessionOptions = workspace => (Array.isArray(workspace?.chatSessions) ? workspace.chatSessions : [])
 const getChatHistoryKey = workspace => workspace?.selectedChatSession || ''
+
+const getCurrentCopilotTurn = workspace => {
+  if (!workspace) {
+    return null
+  }
+
+  const turns = Array.isArray(workspace.copilotReplayTurns) ? workspace.copilotReplayTurns : []
+  if (!turns.length) {
+    return null
+  }
+
+  return turns.find(item => item.turnId === workspace.copilotCurrentTurnId) ?? turns[0] ?? null
+}
+
+const getCopilotToolCalls = turn => (Array.isArray(turn?.toolCalls ?? turn?.ToolCalls) ? (turn.toolCalls ?? turn.ToolCalls) : [])
+
+const getCopilotToolResults = turn => (Array.isArray(turn?.toolResults ?? turn?.ToolResults) ? (turn.toolResults ?? turn.ToolResults) : [])
+
+const getCopilotApprovedToolCalls = turn => getCopilotToolCalls(turn)
+  .filter(item => (item?.approvalStatus ?? item?.ApprovalStatus) === 'approved')
+
+const getCopilotExecutedToolCallIds = turn => new Set(
+  getCopilotToolResults(turn)
+    .map(item => item?.callId ?? item?.CallId ?? '')
+    .filter(Boolean)
+)
+
+const getCopilotDraftPlanAvailability = (workspace, turn) => {
+  const approvedToolCalls = getCopilotApprovedToolCalls(turn)
+  const executedCallIds = getCopilotExecutedToolCallIds(turn)
+  const executedApprovedCount = approvedToolCalls.filter(item => executedCallIds.has(item.callId ?? item.CallId ?? '')).length
+  const pendingApprovedCount = approvedToolCalls.length - executedApprovedCount
+
+  if (!approvedToolCalls.length) {
+    return {
+      enabled: false,
+      blockedReason: '当前草案没有可承接到交易计划的工具结果。'
+    }
+  }
+
+  if (executedApprovedCount <= 0) {
+    return {
+      enabled: false,
+      blockedReason: '至少先执行一张已批准的 Copilot 工具卡。'
+    }
+  }
+
+  if (pendingApprovedCount > 0) {
+    return {
+      enabled: false,
+      blockedReason: `还有 ${pendingApprovedCount} 张已批准工具卡未执行，先补齐再起草交易计划。`
+    }
+  }
+
+  if (!workspace?.detail?.quote?.symbol) {
+    return {
+      enabled: false,
+      blockedReason: '当前没有绑定股票上下文。'
+    }
+  }
+
+  return {
+    enabled: true,
+    blockedReason: workspace?.selectedAgentHistoryId || workspace?.agentResults?.length
+      ? ''
+      : '已具备 Copilot 证据，可继续联动多Agent后生成交易计划草稿。'
+  }
+}
+
+const buildEffectiveCopilotAction = (workspace, turn, action) => {
+  const actionType = action?.actionType ?? action?.ActionType ?? ''
+  if (actionType !== 'draft_trading_plan') {
+    return action
+  }
+
+  const availability = getCopilotDraftPlanAvailability(workspace, turn)
+  return {
+    ...action,
+    enabled: availability.enabled,
+    blockedReason: availability.blockedReason
+  }
+}
+
+const buildEffectiveCopilotTurn = workspace => {
+  const turn = getCurrentCopilotTurn(workspace)
+  if (!turn) {
+    return null
+  }
+
+  const followUpActions = Array.isArray(turn.followUpActions ?? turn.FollowUpActions)
+    ? (turn.followUpActions ?? turn.FollowUpActions)
+    : []
+
+  return {
+    ...turn,
+    followUpActions: followUpActions.map(action => buildEffectiveCopilotAction(workspace, turn, action))
+  }
+}
+
+const currentCopilotTurn = computed(() => buildEffectiveCopilotTurn(currentWorkspace.value))
+
+const parseCopilotInputSummary = summary => {
+  return String(summary || '')
+    .split(';')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .reduce((result, item) => {
+      const index = item.indexOf('=')
+      if (index < 0) {
+        return result
+      }
+
+      const key = item.slice(0, index).trim()
+      const value = item.slice(index + 1).trim()
+      if (key) {
+        result[key] = value
+      }
+      return result
+    }, {})
+}
+
+const summarizeCopilotToolPayload = (toolName, payload) => {
+  if (!payload) {
+    return '工具未返回结果。'
+  }
+
+  const data = payload.data ?? payload.Data ?? {}
+  if (toolName === 'StockKlineMcp') {
+    const bars = Array.isArray(data.bars ?? data.Bars) ? (data.bars ?? data.Bars) : []
+    const levels = data.keyLevels ?? data.KeyLevels ?? {}
+    const resistance = Array.isArray(levels.resistanceLevels ?? levels.ResistanceLevels) ? (levels.resistanceLevels ?? levels.ResistanceLevels) : []
+    const support = Array.isArray(levels.supportLevels ?? levels.SupportLevels) ? (levels.supportLevels ?? levels.SupportLevels) : []
+    return `K 线 ${bars.length} 根，压力位 ${resistance.length} 个，支撑位 ${support.length} 个。`
+  }
+
+  if (toolName === 'StockMinuteMcp') {
+    const points = Array.isArray(data.points ?? data.Points) ? (data.points ?? data.Points) : []
+    const sessionPhase = data.sessionPhase ?? data.SessionPhase ?? 'unknown'
+    return `分时 ${points.length} 个点位，当前 session=${sessionPhase}。`
+  }
+
+  if (toolName === 'StockStrategyMcp') {
+    const signals = Array.isArray(data.signals ?? data.Signals) ? (data.signals ?? data.Signals) : []
+    const topSignals = signals.slice(0, 3).map(item => item.strategy ?? item.Strategy ?? '').filter(Boolean)
+    return `策略信号 ${signals.length} 条${topSignals.length ? `，首批=${topSignals.join('/')}` : ''}。`
+  }
+
+  if (toolName === 'StockNewsMcp') {
+    const itemCount = Number(data.itemCount ?? data.ItemCount ?? 0)
+    const latestPublishedAt = data.latestPublishedAt ?? data.LatestPublishedAt ?? ''
+    return `本地新闻 ${itemCount} 条${latestPublishedAt ? `，最近时间 ${formatDate(latestPublishedAt)}` : ''}。`
+  }
+
+  if (toolName === 'StockSearchMcp') {
+    const resultCount = Number(data.resultCount ?? data.ResultCount ?? 0)
+    const provider = data.provider ?? data.Provider ?? 'unknown'
+    return `外部搜索 provider=${provider}，结果 ${resultCount} 条。`
+  }
+
+  return '工具已执行。'
+}
+
+const buildCopilotToolResult = (callId, toolName, payload) => ({
+  callId,
+  toolName,
+  status: 'completed',
+  traceId: payload?.traceId ?? payload?.TraceId ?? '',
+  evidenceCount: Array.isArray(payload?.evidence ?? payload?.Evidence) ? (payload.evidence ?? payload.Evidence).length : 0,
+  featureCount: Array.isArray(payload?.features ?? payload?.Features) ? (payload.features ?? payload.Features).length : 0,
+  warnings: Array.isArray(payload?.warnings ?? payload?.Warnings) ? (payload.warnings ?? payload.Warnings) : [],
+  degradedFlags: Array.isArray(payload?.degradedFlags ?? payload?.DegradedFlags) ? (payload.degradedFlags ?? payload.DegradedFlags) : [],
+  summary: summarizeCopilotToolPayload(toolName, payload)
+})
+
+const buildCopilotToolUrl = (turn, toolCall) => {
+  const toolName = toolCall?.toolName ?? toolCall?.ToolName ?? ''
+  const inputSummary = parseCopilotInputSummary(toolCall?.inputSummary ?? toolCall?.InputSummary ?? '')
+  const symbolKey = normalizeStockSymbol(inputSummary.symbol || turn?.symbol || turn?.Symbol || currentStockKey.value)
+  const taskId = toolCall?.callId ?? toolCall?.CallId ?? `stock-copilot-${Date.now()}`
+
+  if (toolName === 'StockKlineMcp') {
+    const params = new URLSearchParams({
+      symbol: symbolKey,
+      interval: inputSummary.interval || 'day',
+      count: inputSummary.count || '60',
+      taskId
+    })
+    return `/api/stocks/mcp/kline?${params.toString()}`
+  }
+
+  if (toolName === 'StockMinuteMcp') {
+    const params = new URLSearchParams({
+      symbol: symbolKey,
+      taskId
+    })
+    return `/api/stocks/mcp/minute?${params.toString()}`
+  }
+
+  if (toolName === 'StockStrategyMcp') {
+    const params = new URLSearchParams({
+      symbol: symbolKey,
+      interval: inputSummary.interval || 'day',
+      count: inputSummary.count || '60',
+      strategies: inputSummary.strategies || 'ma,macd,rsi,kdj,vwap,td,breakout,gap',
+      taskId
+    })
+    return `/api/stocks/mcp/strategy?${params.toString()}`
+  }
+
+  if (toolName === 'StockNewsMcp') {
+    const params = new URLSearchParams({
+      symbol: symbolKey,
+      level: inputSummary.level || 'stock',
+      taskId
+    })
+    return `/api/stocks/mcp/news?${params.toString()}`
+  }
+
+  if (toolName === 'StockSearchMcp') {
+    const params = new URLSearchParams({
+      q: inputSummary.query || turn?.userQuestion || turn?.UserQuestion || '',
+      trustedOnly: 'true',
+      taskId
+    })
+    return `/api/stocks/mcp/search?${params.toString()}`
+  }
+
+  return ''
+}
+
+const upsertCopilotTurn = (workspace, session, turn) => {
+  if (!workspace || !session || !turn) {
+    return
+  }
+
+  const normalizedTurn = {
+    ...turn,
+    toolPayloads: turn.toolPayloads ?? {},
+    toolResults: Array.isArray(turn.toolResults ?? turn.ToolResults) ? [...(turn.toolResults ?? turn.ToolResults)] : []
+  }
+
+  const replayTurns = Array.isArray(workspace.copilotReplayTurns) ? workspace.copilotReplayTurns : []
+  workspace.copilotSessionKey = session.sessionKey ?? session.SessionKey ?? workspace.copilotSessionKey
+  workspace.copilotSessionTitle = session.title ?? session.Title ?? workspace.copilotSessionTitle
+  workspace.copilotCurrentTurnId = normalizedTurn.turnId ?? normalizedTurn.TurnId ?? ''
+  workspace.copilotReplayTurns = [
+    normalizedTurn,
+    ...replayTurns.filter(item => (item.turnId ?? item.TurnId) !== (normalizedTurn.turnId ?? normalizedTurn.TurnId))
+  ].slice(0, 6)
+}
+
+const submitCopilotDraft = async (symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace?.detail?.quote?.symbol) {
+    if (workspace) {
+      workspace.copilotError = '请先选择股票'
+    }
+    return
+  }
+
+  const question = String(workspace.copilotQuestion || '').trim()
+  if (!question) {
+    workspace.copilotError = '请输入问题'
+    return
+  }
+
+  const controller = replaceAbortController(workspace.copilotDraftAbortController)
+  workspace.copilotDraftAbortController = controller
+  workspace.copilotLoading = true
+  workspace.copilotError = ''
+  try {
+    const response = await fetch('/api/stocks/copilot/turns/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        symbol: workspace.detail.quote.symbol,
+        question,
+        sessionKey: workspace.copilotSessionKey || null,
+        sessionTitle: workspace.copilotSessionTitle || `${workspace.detail.quote.name} Copilot`,
+        taskId: `stock-copilot-draft-${workspace.symbolKey}`,
+        allowExternalSearch: Boolean(workspace.copilotAllowExternalSearch)
+      })
+    })
+    if (!response.ok) {
+      throw new Error(await parseResponseMessage(response, 'Copilot 草案生成失败'))
+    }
+
+    const session = await response.json()
+    const turn = Array.isArray(session?.turns ?? session?.Turns) ? (session.turns ?? session.Turns)[0] : null
+    if (!turn) {
+      throw new Error('Copilot 草案为空')
+    }
+
+    upsertCopilotTurn(workspace, session, turn)
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    workspace.copilotError = err.message || 'Copilot 草案生成失败'
+  } finally {
+    workspace.copilotLoading = false
+    if (workspace.copilotDraftAbortController === controller) {
+      workspace.copilotDraftAbortController = null
+    }
+  }
+}
+
+const selectCopilotReplayTurn = (turnId, symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace) {
+    return
+  }
+
+  workspace.copilotCurrentTurnId = turnId
+}
+
+const executeCopilotToolCall = async (callId, symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey)
+  const turn = getCurrentCopilotTurn(workspace)
+  if (!workspace || !turn) {
+    return
+  }
+
+  const toolCall = (turn.toolCalls ?? turn.ToolCalls ?? []).find(item => (item.callId ?? item.CallId) === callId)
+  if (!toolCall) {
+    return
+  }
+
+  if ((toolCall.approvalStatus ?? toolCall.ApprovalStatus) !== 'approved') {
+    workspace.copilotError = toolCall.blockedReason ?? toolCall.BlockedReason ?? '该工具当前未获批执行。'
+    return
+  }
+
+  const url = buildCopilotToolUrl(turn, toolCall)
+  if (!url) {
+    workspace.copilotError = '暂不支持该工具的前端执行。'
+    return
+  }
+
+  const controller = replaceAbortController(workspace.copilotToolAbortController)
+  workspace.copilotToolAbortController = controller
+  workspace.copilotToolBusyCallId = callId
+  workspace.copilotError = ''
+  try {
+    const response = await fetchBackendGet(url, { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(await parseResponseMessage(response, '工具执行失败'))
+    }
+
+    const payload = await response.json()
+    turn.toolPayloads = {
+      ...(turn.toolPayloads || {}),
+      [callId]: payload
+    }
+    const nextResult = buildCopilotToolResult(callId, toolCall.toolName ?? toolCall.ToolName ?? '', payload)
+    const existing = Array.isArray(turn.toolResults ?? turn.ToolResults) ? (turn.toolResults ?? turn.ToolResults) : []
+    turn.toolResults = [
+      nextResult,
+      ...existing.filter(item => (item.callId ?? item.CallId) !== callId)
+    ]
+
+    const toolName = toolCall.toolName ?? toolCall.ToolName ?? ''
+    if (toolName === 'StockNewsMcp') {
+      fetchNewsImpact(symbolKey, { force: true })
+      fetchLocalNews(symbolKey, { force: true })
+    }
+  } catch (err) {
+    if (isAbortError(err)) {
+      return
+    }
+    workspace.copilotError = err.message || '工具执行失败'
+  } finally {
+    workspace.copilotToolBusyCallId = ''
+    if (workspace.copilotToolAbortController === controller) {
+      workspace.copilotToolAbortController = null
+    }
+  }
+}
+
+const focusCopilotWorkspaceSection = async (symbolKey, section, options = {}) => {
+  const workspace = getWorkspace(symbolKey)
+  if (!workspace) {
+    return
+  }
+
+  workspace.copilotFocusSection = section || ''
+  if (options.chartView) {
+    workspace.copilotChartFocusView = options.chartView
+  }
+
+  await nextTick()
+  const selectorMap = {
+    chart: '.stock-chart-section',
+    news: '.stock-news-impact-section',
+    strategy: '.stock-agent-section',
+    plan: '.stock-plan-section'
+  }
+  const selector = selectorMap[section]
+  if (!selector) {
+    return
+  }
+
+  const element = document.querySelector(selector)
+  element?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
+}
+
+const activateCopilotAction = async (actionId, symbolKey = currentStockKey.value) => {
+  const workspace = getWorkspace(symbolKey)
+  const turn = buildEffectiveCopilotTurn(workspace)
+  if (!workspace || !turn) {
+    return
+  }
+
+  const action = (turn.followUpActions ?? turn.FollowUpActions ?? []).find(item => (item.actionId ?? item.ActionId) === actionId)
+  if (!action) {
+    return
+  }
+
+  if (!(action.enabled ?? action.Enabled)) {
+    workspace.copilotError = action.blockedReason ?? action.BlockedReason ?? '该动作当前不可执行。'
+    return
+  }
+
+  const actionType = action.actionType ?? action.ActionType ?? ''
+  const toolName = action.toolName ?? action.ToolName ?? ''
+  const shouldExecuteApprovedTool = Boolean(toolName)
+
+  if (actionType === 'draft_trading_plan') {
+    await focusCopilotWorkspaceSection(symbolKey, 'plan')
+    if (!workspace.selectedAgentHistoryId && !workspace.agentResults.length) {
+      await runAgents(symbolKey)
+    }
+    await openTradingPlanDraft(symbolKey)
+    return
+  }
+
+  const toolCall = getCopilotApprovedToolCalls(turn).find(item => (item.toolName ?? item.ToolName) === toolName)
+  if (toolCall && shouldExecuteApprovedTool) {
+    await executeCopilotToolCall(toolCall.callId ?? toolCall.CallId ?? '', symbolKey)
+  }
+
+  if (actionType === 'inspect_chart') {
+    interval.value = parseCopilotInputSummary(toolCall?.inputSummary ?? toolCall?.InputSummary ?? '').interval || 'day'
+    await focusCopilotWorkspaceSection(symbolKey, 'chart', { chartView: interval.value })
+    await refreshChartData(symbolKey)
+    return
+  }
+
+  if (actionType === 'inspect_intraday') {
+    interval.value = 'day'
+    await focusCopilotWorkspaceSection(symbolKey, 'chart', { chartView: 'minute' })
+    await refreshChartData(symbolKey)
+    return
+  }
+
+  if (actionType === 'inspect_strategy') {
+    await focusCopilotWorkspaceSection(symbolKey, 'strategy')
+    if (!workspace.agentResults.length && !workspace.agentLoading) {
+      await runAgents(symbolKey)
+    } else if (!workspace.agentHistoryLoaded && !workspace.agentHistoryLoading) {
+      await fetchAgentHistory(symbolKey, { force: true })
+    }
+    return
+  }
+
+  if (actionType === 'inspect_news') {
+    await focusCopilotWorkspaceSection(symbolKey, 'news')
+    fetchNewsImpact(symbolKey, { force: true })
+    fetchLocalNews(symbolKey, { force: true })
+  }
+}
 
 const setChatRef = symbolKey => instance => {
   if (!symbolKey) {
@@ -2405,6 +2901,8 @@ onUnmounted(() => {
     workspace.agentHistoryAbortController?.abort()
     workspace.planListAbortController?.abort()
     workspace.planAlertsAbortController?.abort()
+    workspace.copilotDraftAbortController?.abort()
+    workspace.copilotToolAbortController?.abort()
   })
   rootWorkspace.detailAbortController?.abort()
   rootWorkspace.newsImpactAbortController?.abort()
@@ -2868,22 +3366,44 @@ watch(currentStockKey, () => {
         </template>
 
         <template #chart>
-          <StockCharts
-            v-if="detail"
-            :k-lines="detail.kLines"
-            :minute-lines="detail.minuteLines"
-            :base-price="Number(detail.quote.price) - Number(detail.quote.change)"
-            :ai-levels="aiLevels"
-            :interval="interval"
-            @update:interval="interval = $event"
-          />
-          <div v-else class="chart-placeholder">
-            <p>查询股票后，这里会以终端视图显示 K 线、分时、成交量和均线。</p>
+          <div class="stock-chart-section" :class="{ 'copilot-section-active': currentWorkspace.copilotFocusSection === 'chart' }">
+            <StockCharts
+              v-if="detail"
+              :k-lines="detail.kLines"
+              :minute-lines="detail.minuteLines"
+              :base-price="Number(detail.quote.price) - Number(detail.quote.change)"
+              :ai-levels="aiLevels"
+              :interval="interval"
+              :focused-view="currentWorkspace.copilotChartFocusView"
+              @update:interval="interval = $event"
+            />
+            <div v-else class="chart-placeholder">
+              <p>查询股票后，这里会以终端视图显示 K 线、分时、成交量和均线。</p>
+            </div>
           </div>
         </template>
       </TerminalView>
 
       <CopilotPanel :open="copilotPanelOpen" :current-stock-label="currentStockLabel" @toggle="copilotPanelOpen = !copilotPanelOpen">
+        <StockCopilotSessionPanel
+          v-if="currentStockKey"
+          :current-stock-label="currentStockLabel"
+          :question="copilotQuestion"
+          :loading="copilotLoading"
+          :error="copilotError"
+          :allow-external-search="copilotAllowExternalSearch"
+          :turn="currentCopilotTurn"
+          :session-title="currentWorkspace.copilotSessionTitle"
+          :replay-turns="copilotReplayTurns"
+          :busy-call-id="copilotToolBusyCallId"
+          @update:question="copilotQuestion = $event"
+          @toggle-external-search="copilotAllowExternalSearch = $event"
+          @submit="submitCopilotDraft(currentStockKey)"
+          @select-replay="selectCopilotReplayTurn($event, currentStockKey)"
+          @execute-tool="executeCopilotToolCall($event, currentStockKey)"
+          @activate-action="activateCopilotAction($event, currentStockKey)"
+        />
+
         <section class="copilot-card trading-plan-card trading-plan-board-card">
           <div class="trading-plan-header">
             <div>
@@ -2945,7 +3465,7 @@ watch(currentStockKey, () => {
             v-show="workspace.symbolKey === currentStockKey"
             class="sidebar-workspace"
           >
-            <section class="copilot-card news-impact">
+            <section class="copilot-card news-impact stock-news-impact-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'news' }">
               <div class="news-impact-header">
                 <div>
                   <h3>资讯影响</h3>
@@ -3014,21 +3534,23 @@ watch(currentStockKey, () => {
               <p v-else class="muted">选择股票后在此查看事件影响。</p>
             </section>
 
-            <StockAgentPanels
-              :agents="workspace.agentResults"
-              :loading="workspace.agentLoading"
-              :error="workspace.agentError"
-              :last-updated="workspace.agentUpdatedAt"
-              :history-options="workspace.agentHistoryList.map(item => ({ value: item.id ?? item.Id, label: `${item.symbol ?? item.Symbol} - ${formatDate(item.createdAt ?? item.CreatedAt)}` }))"
-              :selected-history-id="workspace.selectedAgentHistoryId"
-              :history-loading="workspace.agentHistoryLoading"
-              :history-error="workspace.agentHistoryError"
-              @select-history="selectAgentHistory(workspace.symbolKey, $event)"
-              @run="runAgents(workspace.symbolKey, $event)"
-              @draft-plan="openTradingPlanDraft(workspace.symbolKey)"
-            />
+            <div class="stock-agent-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'strategy' }">
+              <StockAgentPanels
+                :agents="workspace.agentResults"
+                :loading="workspace.agentLoading"
+                :error="workspace.agentError"
+                :last-updated="workspace.agentUpdatedAt"
+                :history-options="workspace.agentHistoryList.map(item => ({ value: item.id ?? item.Id, label: `${item.symbol ?? item.Symbol} - ${formatDate(item.createdAt ?? item.CreatedAt)}` }))"
+                :selected-history-id="workspace.selectedAgentHistoryId"
+                :history-loading="workspace.agentHistoryLoading"
+                :history-error="workspace.agentHistoryError"
+                @select-history="selectAgentHistory(workspace.symbolKey, $event)"
+                @run="runAgents(workspace.symbolKey, $event)"
+                @draft-plan="openTradingPlanDraft(workspace.symbolKey)"
+              />
+            </div>
 
-            <section class="copilot-card trading-plan-card">
+            <section class="copilot-card trading-plan-card stock-plan-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'plan' || workspace.planModalOpen }">
               <div class="trading-plan-header">
                 <div>
                   <h3>当前交易计划</h3>
@@ -3129,102 +3651,6 @@ watch(currentStockKey, () => {
               </ChatWindow>
             </div>
 
-            <div v-if="workspace.planModalOpen && workspace.planForm" class="plan-modal-backdrop" @click.self="closeTradingPlanModal(workspace.symbolKey)">
-              <section class="plan-modal" role="dialog" aria-modal="true" aria-label="交易计划草稿">
-                <div class="search-modal-header">
-                  <div>
-                    <strong>交易计划草稿</strong>
-                    <p class="muted">后端基于 commander 历史生成，用户确认后才会入库。</p>
-                  </div>
-                  <button class="market-news-button" @click="closeTradingPlanModal(workspace.symbolKey)">关闭</button>
-                </div>
-
-                <p v-if="workspace.planError" class="muted error">{{ workspace.planError }}</p>
-
-                <section v-if="workspace.planForm.marketContext" class="plan-market-box">
-                  <strong>市场上下文</strong>
-                  <div class="plan-pill-row">
-                    <span class="plan-pill">阶段 {{ workspace.planForm.marketContext.stageLabel }}</span>
-                    <span class="plan-pill">置信 {{ Number(workspace.planForm.marketContext.stageConfidence || 0).toFixed(0) }}</span>
-                    <span class="plan-pill">主线 {{ workspace.planForm.marketContext.mainlineSectorName || '暂无' }}</span>
-                    <span class="plan-pill">建议仓位 {{ formatPlanScale(workspace.planForm.marketContext.suggestedPositionScale) }}</span>
-                    <span class="plan-pill">节奏 {{ workspace.planForm.marketContext.executionFrequencyLabel || '中性' }}</span>
-                  </div>
-                  <p class="muted">
-                    {{ workspace.planForm.marketContext.isMainlineAligned ? '当前股票与主线方向一致。' : '当前股票未明显对齐主线。' }}
-                    <span v-if="workspace.planForm.marketContext.counterTrendWarning"> 存在逆势提示，建议降低执行频率。</span>
-                  </p>
-                </section>
-
-                <div class="plan-form-grid">
-                  <label class="plan-field">
-                    <span>股票</span>
-                    <input v-model="workspace.planForm.symbol" disabled>
-                  </label>
-                  <label class="plan-field">
-                    <span>名称</span>
-                    <input v-model="workspace.planForm.name">
-                  </label>
-                  <label class="plan-field">
-                    <span>方向</span>
-                    <select v-model="workspace.planForm.direction">
-                      <option value="Long">Long</option>
-                      <option value="Short">Short</option>
-                    </select>
-                  </label>
-                  <label class="plan-field">
-                    <span>触发价</span>
-                    <input v-model="workspace.planForm.triggerPrice" type="number" step="0.01" placeholder="可为空，后补录">
-                  </label>
-                  <label class="plan-field">
-                    <span>失效价</span>
-                    <input v-model="workspace.planForm.invalidPrice" type="number" step="0.01" placeholder="可为空，后补录">
-                  </label>
-                  <label class="plan-field">
-                    <span>止损价</span>
-                    <input v-model="workspace.planForm.stopLossPrice" type="number" step="0.01" placeholder="可为空">
-                  </label>
-                  <label class="plan-field">
-                    <span>止盈价</span>
-                    <input v-model="workspace.planForm.takeProfitPrice" type="number" step="0.01" placeholder="优先取指挥/机构目标">
-                  </label>
-                  <label class="plan-field">
-                    <span>目标价</span>
-                    <input v-model="workspace.planForm.targetPrice" type="number" step="0.01" placeholder="优先取指挥/趋势目标">
-                  </label>
-                  <label class="plan-field plan-field-wide">
-                    <span>预期催化</span>
-                    <textarea v-model="workspace.planForm.expectedCatalyst" rows="2"></textarea>
-                  </label>
-                  <label class="plan-field plan-field-wide">
-                    <span>失效条件</span>
-                    <textarea v-model="workspace.planForm.invalidConditions" rows="2"></textarea>
-                  </label>
-                  <label class="plan-field plan-field-wide">
-                    <span>风险上限</span>
-                    <textarea v-model="workspace.planForm.riskLimits" rows="2"></textarea>
-                  </label>
-                  <label class="plan-field plan-field-wide">
-                    <span>分析摘要</span>
-                    <textarea v-model="workspace.planForm.analysisSummary" rows="3"></textarea>
-                  </label>
-                  <label class="plan-field plan-field-wide">
-                    <span>用户备注</span>
-                    <textarea v-model="workspace.planForm.userNote" rows="2" placeholder="可补充执行纪律、仓位、观察点"></textarea>
-                  </label>
-                </div>
-
-                <div class="plan-modal-actions">
-                  <span class="muted">{{ workspace.planForm.id ? `编辑计划 #${workspace.planForm.id}` : `AnalysisHistory #${workspace.planForm.analysisHistoryId}` }}</span>
-                  <div class="plan-modal-buttons">
-                    <button class="market-news-button" @click="closeTradingPlanModal(workspace.symbolKey)">取消</button>
-                    <button class="plan-save-button" @click="saveTradingPlan(workspace.symbolKey)" :disabled="workspace.planSaving || workspace.planDraftLoading">
-                      {{ workspace.planSaving ? '保存中...' : (workspace.planForm.id ? '保存修改' : '保存为 Pending 计划') }}
-                    </button>
-                  </div>
-                </div>
-              </section>
-            </div>
           </div>
         </template>
 
@@ -3233,6 +3659,103 @@ watch(currentStockKey, () => {
             <h4>AI Copilot 已待命</h4>
             <p>先在左侧加载股票，再在这里查看事件信号或发起对话。</p>
           </div>
+        </div>
+
+        <div v-if="activePlanModalWorkspace?.planModalOpen && activePlanModalWorkspace?.planForm" class="plan-modal-backdrop" @click.self="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)">
+          <section class="plan-modal" role="dialog" aria-modal="true" aria-label="交易计划草稿">
+            <div class="search-modal-header">
+              <div>
+                <strong>交易计划草稿</strong>
+                <p class="muted">后端基于 commander 历史生成，用户确认后才会入库。</p>
+              </div>
+              <button class="market-news-button" @click="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)">关闭</button>
+            </div>
+
+            <p v-if="activePlanModalWorkspace.planError" class="muted error">{{ activePlanModalWorkspace.planError }}</p>
+
+            <section v-if="activePlanModalWorkspace.planForm.marketContext" class="plan-market-box">
+              <strong>市场上下文</strong>
+              <div class="plan-pill-row">
+                <span class="plan-pill">阶段 {{ activePlanModalWorkspace.planForm.marketContext.stageLabel }}</span>
+                <span class="plan-pill">置信 {{ Number(activePlanModalWorkspace.planForm.marketContext.stageConfidence || 0).toFixed(0) }}</span>
+                <span class="plan-pill">主线 {{ activePlanModalWorkspace.planForm.marketContext.mainlineSectorName || '暂无' }}</span>
+                <span class="plan-pill">建议仓位 {{ formatPlanScale(activePlanModalWorkspace.planForm.marketContext.suggestedPositionScale) }}</span>
+                <span class="plan-pill">节奏 {{ activePlanModalWorkspace.planForm.marketContext.executionFrequencyLabel || '中性' }}</span>
+              </div>
+              <p class="muted">
+                {{ activePlanModalWorkspace.planForm.marketContext.isMainlineAligned ? '当前股票与主线方向一致。' : '当前股票未明显对齐主线。' }}
+                <span v-if="activePlanModalWorkspace.planForm.marketContext.counterTrendWarning"> 存在逆势提示，建议降低执行频率。</span>
+              </p>
+            </section>
+
+            <div class="plan-form-grid">
+              <label class="plan-field">
+                <span>股票</span>
+                <input v-model="activePlanModalWorkspace.planForm.symbol" disabled>
+              </label>
+              <label class="plan-field">
+                <span>名称</span>
+                <input v-model="activePlanModalWorkspace.planForm.name">
+              </label>
+              <label class="plan-field">
+                <span>方向</span>
+                <select v-model="activePlanModalWorkspace.planForm.direction">
+                  <option value="Long">Long</option>
+                  <option value="Short">Short</option>
+                </select>
+              </label>
+              <label class="plan-field">
+                <span>触发价</span>
+                <input v-model="activePlanModalWorkspace.planForm.triggerPrice" type="number" step="0.01" placeholder="可为空，后补录">
+              </label>
+              <label class="plan-field">
+                <span>失效价</span>
+                <input v-model="activePlanModalWorkspace.planForm.invalidPrice" type="number" step="0.01" placeholder="可为空，后补录">
+              </label>
+              <label class="plan-field">
+                <span>止损价</span>
+                <input v-model="activePlanModalWorkspace.planForm.stopLossPrice" type="number" step="0.01" placeholder="可为空">
+              </label>
+              <label class="plan-field">
+                <span>止盈价</span>
+                <input v-model="activePlanModalWorkspace.planForm.takeProfitPrice" type="number" step="0.01" placeholder="优先取指挥/机构目标">
+              </label>
+              <label class="plan-field">
+                <span>目标价</span>
+                <input v-model="activePlanModalWorkspace.planForm.targetPrice" type="number" step="0.01" placeholder="优先取指挥/趋势目标">
+              </label>
+              <label class="plan-field plan-field-wide">
+                <span>预期催化</span>
+                <textarea v-model="activePlanModalWorkspace.planForm.expectedCatalyst" rows="2"></textarea>
+              </label>
+              <label class="plan-field plan-field-wide">
+                <span>失效条件</span>
+                <textarea v-model="activePlanModalWorkspace.planForm.invalidConditions" rows="2"></textarea>
+              </label>
+              <label class="plan-field plan-field-wide">
+                <span>风险上限</span>
+                <textarea v-model="activePlanModalWorkspace.planForm.riskLimits" rows="2"></textarea>
+              </label>
+              <label class="plan-field plan-field-wide">
+                <span>分析摘要</span>
+                <textarea v-model="activePlanModalWorkspace.planForm.analysisSummary" rows="3"></textarea>
+              </label>
+              <label class="plan-field plan-field-wide">
+                <span>用户备注</span>
+                <textarea v-model="activePlanModalWorkspace.planForm.userNote" rows="2" placeholder="可补充执行纪律、仓位、观察点"></textarea>
+              </label>
+            </div>
+
+            <div class="plan-modal-actions">
+              <span class="muted">{{ activePlanModalWorkspace.planForm.id ? `编辑计划 #${activePlanModalWorkspace.planForm.id}` : `AnalysisHistory #${activePlanModalWorkspace.planForm.analysisHistoryId}` }}</span>
+              <div class="plan-modal-buttons">
+                <button class="market-news-button" @click="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)">取消</button>
+                <button class="plan-save-button" @click="saveTradingPlan(activePlanModalWorkspace.symbolKey)" :disabled="activePlanModalWorkspace.planSaving || activePlanModalWorkspace.planDraftLoading">
+                  {{ activePlanModalWorkspace.planSaving ? '保存中...' : (activePlanModalWorkspace.planForm.id ? '保存修改' : '保存为 Pending 计划') }}
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
       </CopilotPanel>
     </div>
@@ -3249,6 +3772,16 @@ watch(currentStockKey, () => {
   padding: 1.5rem;
   display: grid;
   gap: 1rem;
+}
+
+.stock-chart-section,
+.stock-agent-section {
+  border-radius: 18px;
+}
+
+.copilot-section-active {
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.28);
+  transition: box-shadow 0.18s ease;
 }
 
 .panel-header {

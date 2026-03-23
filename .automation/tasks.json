@@ -174,7 +174,7 @@
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "2026-03-22 已完成父级规划：R4 之后的下一阶段不再继续补裸工具，而是把现有 evidence/replay/MCP 底座提升为真正类似 GitHub Copilot 的股票协驾产品层。范围拆为 P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。优先级：先收口 buglist 中直接阻塞 Copilot 的高优先级运行问题，再做会话 runtime 与面板化交互，量化双引擎 GOAL-017 作为并行但次优先的底座线。"
+      "notes": "2026-03-22 已完成父级规划：R4 之后的下一阶段不再继续补裸工具，而是把现有 evidence/replay/MCP 底座提升为真正类似 GitHub Copilot 的股票协驾产品层。范围拆为 P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。优先级：先收口 buglist 中直接阻塞 Copilot 的高优先级运行问题，再做会话 runtime 与面板化交互，量化双引擎 GOAL-017 作为并行但次优先的底座线。2026-03-23 follow-up：P0、R1、R2、R3 已完成；当前父级剩余主线只剩 R4 Copilot 产品验收与 replay 指标。"
     },
     {
       "id": "GOAL-AGENT-002-P0",
@@ -185,7 +185,7 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "P0 已于 2026-03-22 收口。范围覆盖 `.automation/buglist.md` 中直接阻塞 Copilot 的运行稳定性与输出安全问题：1) 为 `MarketSentimentSchemaInitializer` 增补 SQLite 幂等补列，修复开发/本地 SQLite 回退场景下 `情绪轮动` sectors API 因旧表缺列导致的 500；2) 清理根导航中的 `社媒优化/社媒爬虫` 占位入口；3) 修复 `JsonFileLlmSettingsStore` 对空字符串更新无效的问题，使 LLM `Project`/`Organization`/`BaseUrl`/`Model`/`SystemPrompt` 能被显式清空；4) 将 `ChatWindow.vue` 的历史保存改为串行落库，避免流式返回期间重复 PUT 造成会话保存假成功和 500；5) 在用户聊天展示与开发者模式日志视图中收口 raw reasoning/中间推理外泄；6) 为本地事实资讯新增标题失真抑制与个股强相关过滤，避免无关资讯和失真翻译直接出现在股票页。2026-03-22 复核补修中又发现 `/api/stocks/mcp/*` 在客户端主动取消或浏览器超时中断时会把 `RequestAborted` 冒泡成 500，因此新增 `StockMcpEndpointExecutor` 统一把取消请求映射为 499，避免开发模式和 Browser MCP 把超时取消误报成服务端错误。验证包括后端定向单测 20/20 通过、追加 SourceGovernance 定向单测 7/7 通过、前端定向单测 `StockInfoTab.spec.js + StockRecommendTab.spec.js` 51/51 通过、新增 `StockMcpEndpointExecutorTests` 3/3 通过，以及 Browser MCP / 终端复核确认：新会话 `sh600000-1774155740107` 聊天保存与回读 200 成功，正常 `StockKlineMcp`/`StockStrategyMcp` 在 `http://localhost:5000` 分别返回 200 / 200，超时探针则在后端日志中落为 `GET /api/stocks/mcp/strategy -> 499 (1015ms)`。"
+      "notes": "P0 已于 2026-03-22 收口。范围覆盖 `.automation/buglist.md` 中直接阻塞 Copilot 的运行稳定性与输出安全问题：1) 为 `MarketSentimentSchemaInitializer` 增补 SQLite 幂等补列，修复开发/本地 SQLite 回退场景下 `情绪轮动` sectors API 因旧表缺列导致的 500；2) 清理根导航中的 `社媒优化/社媒爬虫` 占位入口；3) 修复 `JsonFileLlmSettingsStore` 对空字符串更新无效的问题，使 LLM `Project`/`Organization`/`BaseUrl`/`Model`/`SystemPrompt` 能被显式清空；4) 将 `ChatWindow.vue` 的历史保存改为串行落库，避免流式返回期间重复 PUT 造成会话保存假成功和 500；5) 在用户聊天展示与开发者模式日志视图中收口 raw reasoning/中间推理外泄；6) 为本地事实资讯新增标题失真抑制与个股强相关过滤，避免无关资讯和失真翻译直接出现在股票页。2026-03-22 复核补修中又发现 `/api/stocks/mcp/*` 在客户端主动取消或浏览器超时中断时会把 `RequestAborted` 冒泡成 500，因此新增 `StockMcpEndpointExecutor` 统一把取消请求映射为 499，避免开发模式和 Browser MCP 把超时取消误报成服务端错误。验证包括后端定向单测 20/20 通过、追加 SourceGovernance 定向单测 7/7 通过、前端定向单测 `StockInfoTab.spec.js + StockRecommendTab.spec.js` 51/51 通过、新增 `StockMcpEndpointExecutorTests` 3/3 通过，以及 Browser MCP / 终端复核确认：新会话 `sh600000-1774155740107` 聊天保存与回读 200 成功，正常 `StockKlineMcp`/`StockStrategyMcp` 在 `http://localhost:5000` 分别返回 200 / 200，超时探针则在后端日志中落为 `GET /api/stocks/mcp/strategy -> 499 (1015ms)`。2026-03-23 Bug 8 follow-up：已补 `StockCrawler.HttpTimeoutSeconds`、股票相关 HTTP client 超时收口、`StocksModuleHttpClientTests`、桌面托管后端日志与自动恢复；定向后端测试、桌面构建和 `start-all.bat` 均通过，但 fresh 打包会话 network 里仍抓到新的 `/api/stocks/plans*` 瞬时 `ERR_CONNECTION_REFUSED`，因此 Bug 8 继续保留在 buglist 中作为高优先级稳定性跟踪项。"
     },
     {
       "id": "GOAL-AGENT-002-R1",
@@ -201,24 +201,24 @@
     {
       "id": "GOAL-AGENT-002-R2",
       "title": "Stock Copilot panel UX",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "R2 把股票页右侧从静态分析卡片升级为会话化 Copilot 面板。范围包括：问题输入框、可视 plan/timeline、工具调用卡片、evidence/source 区、follow-up action chips 与最近一轮会话回放。验收重点：首个用户体验应是“提问 -> 看计划 -> 看工具 -> 看受控回答”，而不是点击后读长篇报告。"
+      "notes": "2026-03-23 已完成 R2：`frontend/src/modules/stocks/StockCopilotSessionPanel.vue` 新增会话化 Copilot 面板，并在 `StockInfoTab.vue` 中接入问题输入、plan/timeline、工具调用卡片、evidence/source、follow-up action chips 与最近一轮回放。前端同时补齐 per-symbol Copilot workspace 状态、已批准工具执行、tool result 摘要回填与 action 激活逻辑。开发过程中额外修复了 `buildStockContext` 模板字符串语法错误，以及右侧 Copilot 提交按钮被左侧 sticky terminal 覆盖导致无法点击的层级问题（`CopilotPanel.vue` 新增 `position: relative; z-index: 20;`）。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 54/54 通过、`npm --prefix .\\frontend run build` 成功、`start-all.bat` 重新打包并拉起 packaged desktop 成功，以及 Browser MCP 在真实股票页查询 `sh600000` 后完成“提问 -> 看计划 -> 执行 StockNewsMcp -> evidence/source 落屏”链路。运行时 console 仍有若干既有 401/500/connection-refused 噪音，主要来自 admin/source-governance、plans、sources/history 等旧链路，本次新增 Copilot 面板未引入新的前端运行时报错。"
     },
     {
       "id": "GOAL-AGENT-002-R3",
       "title": "Action-oriented workflow integration",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "R3 把 Copilot 回答接到实际工作流。范围包括：统一 judgment/trigger/invalidation/risk/next-step answer contract，动作卡如“看 60 日 K 线结构 / 检查今日分时承接 / 查看主线板块共振 / 起草交易计划”，以及与图表叠加、新闻证据、市场上下文、交易计划草稿的联动。目标是把 Copilot 从‘解释器’推进成‘建议下一步动作的协驾层’。"
+      "notes": "2026-03-23 已完成 R3：`StockInfoTab.vue` 已把 Copilot follow-up actions 真正接到工作流，覆盖 K 线结构、新闻证据、多 Agent 结果与交易计划草稿联动，并把 judgment/trigger/invalidation/risk/next-step 信息收口到可执行动作层。收尾阶段修复了一个真实运行时阻塞问题：`交易计划草稿` modal 虽已置为打开状态，但由于 DOM 渲染在按 workspace `v-show` 隐藏的容器内，切换当前股票后 modal 会被父容器一起隐藏。现已新增 `activePlanModalWorkspace`，把计划弹窗提升为组件级单实例渲染，并新增回归测试锁定“切换 active workspace 后 modal 仍可见”。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 56/56 通过，以及 Browser MCP 在真实运行页 `http://localhost:5119/?tab=stock-info` 完成 `sh600000` 链路验收：提问 -> 执行 K 线/新闻动作 -> 运行多 Agent -> 点击 `起草交易计划` -> `交易计划草稿` modal 可见，且符号字段为 `sh600000`。共享浏览器历史中仍能看到更早会话留下的 401 与旧的 connection-refused 噪音，但本轮直达动作链路的关键请求 `/api/stocks/copilot/turns/draft`、`/api/stocks/mcp/news`、`/api/stocks/agents/single`、`/api/stocks/agents/history`、`/api/stocks/plans/draft` 均返回 200。"
     },
     {
       "id": "GOAL-AGENT-002-R4",

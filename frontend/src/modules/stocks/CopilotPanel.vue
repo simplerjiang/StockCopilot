@@ -43,6 +43,8 @@ const emit = defineEmits(['toggle'])
   gap: 1rem;
   height: 100%;
   min-width: 0;
+  position: relative;
+  z-index: 20;
   padding: 1.25rem;
   border-radius: 22px;
   border: 1px solid rgba(148, 163, 184, 0.22);

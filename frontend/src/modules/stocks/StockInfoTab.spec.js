@@ -316,6 +316,159 @@ const createChatFetchMock = (handlers = {}) => {
       })
     }
 
+    if (url === '/api/stocks/copilot/turns/draft' && options.method === 'POST') {
+      const body = JSON.parse(options.body)
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sessionKey: body.sessionKey || `copilot-${body.symbol}`,
+          symbol: body.symbol,
+          title: body.sessionTitle || `${body.symbol} Copilot`,
+          createdAt: '2026-03-23T02:00:00Z',
+          updatedAt: '2026-03-23T02:00:00Z',
+          turns: [
+            {
+              turnId: `turn-${Date.now()}`,
+              sessionKey: body.sessionKey || `copilot-${body.symbol}`,
+              symbol: body.symbol,
+              userQuestion: body.question,
+              createdAt: '2026-03-23T02:00:00Z',
+              status: 'draft',
+              plannerSummary: 'planner 已把问题拆成 2 个受控工具步骤。',
+              governorSummary: body.allowExternalSearch
+                ? 'governor 已放行当前 draft 中的本地工具调用。'
+                : 'governor 已放行本地工具，外部搜索仍需显式授权。',
+              marketContext: { stageLabel: '主升', mainlineSectorName: 'AI 算力' },
+              planSteps: [
+                {
+                  stepId: 'planner-1',
+                  owner: 'planner',
+                  title: '确认问题与市场环境',
+                  description: '先确认问题意图，再决定工具顺序。',
+                  status: 'planned',
+                  dependsOn: [],
+                  toolName: null
+                },
+                {
+                  stepId: 'tool-1',
+                  owner: 'planner',
+                  title: '读取 K 线结构',
+                  description: '检查 60 日结构、支撑与压力。',
+                  status: 'approved',
+                  dependsOn: ['planner-1'],
+                  toolName: 'StockKlineMcp'
+                },
+                {
+                  stepId: 'tool-2',
+                  owner: 'planner',
+                  title: '读取本地新闻证据',
+                  description: '核对本地公告和消息。',
+                  status: 'approved',
+                  dependsOn: ['planner-1'],
+                  toolName: 'StockNewsMcp'
+                }
+              ],
+              toolCalls: [
+                {
+                  callId: 'call-kline',
+                  stepId: 'tool-1',
+                  toolName: 'StockKlineMcp',
+                  policyClass: 'local_required',
+                  purpose: '检查价格结构与关键位',
+                  inputSummary: `symbol=${body.symbol}; interval=day; count=60`,
+                  approvalStatus: 'approved',
+                  blockedReason: null
+                },
+                {
+                  callId: 'call-news',
+                  stepId: 'tool-2',
+                  toolName: 'StockNewsMcp',
+                  policyClass: 'local_required',
+                  purpose: '读取 Local-First 证据链',
+                  inputSummary: `symbol=${body.symbol}; level=stock`,
+                  approvalStatus: 'approved',
+                  blockedReason: null
+                }
+              ],
+              toolResults: [],
+              finalAnswer: {
+                status: 'needs_tool_execution',
+                summary: '当前只是会话编排草案；需要先执行已批准工具步骤。',
+                groundingMode: 'tool_results_required',
+                confidenceScore: null,
+                needsToolExecution: true,
+                constraints: [
+                  '最终回答只能引用 tool result 或已保存 evidence 中出现的事实。',
+                  'degradedFlags 会系统性压低 confidence 与动作强度。'
+                ]
+              },
+              followUpActions: [
+                {
+                  actionId: 'action-news',
+                  label: '查看本地新闻证据',
+                  actionType: 'inspect_news',
+                  toolName: 'StockNewsMcp',
+                  description: '核对本地公告、消息与 readStatus。',
+                  enabled: true,
+                  blockedReason: null
+                }
+              ]
+            }
+          ]
+        })
+      })
+    }
+
+    if (url.startsWith('/api/stocks/mcp/kline?')) {
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          traceId: 'trace-kline',
+          data: {
+            bars: Array.from({ length: 60 }, (_, index) => ({ index })),
+            keyLevels: {
+              resistanceLevels: [32.1, 33.5],
+              supportLevels: [29.8]
+            }
+          },
+          evidence: [],
+          features: [{ key: 'trendState', value: 'uptrend' }],
+          warnings: [],
+          degradedFlags: []
+        })
+      })
+    }
+
+    if (url.startsWith('/api/stocks/mcp/news?')) {
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          traceId: 'trace-news',
+          data: {
+            itemCount: 2,
+            latestPublishedAt: '2026-03-23T01:00:00Z'
+          },
+          evidence: [
+            {
+              source: '上交所公告',
+              title: '浦发银行关于董事会决议的公告',
+              url: 'https://example.com/notice',
+              publishedAt: '2026-03-23T01:00:00Z',
+              excerpt: '公告摘要',
+              readMode: 'full_text',
+              readStatus: 'read'
+            }
+          ],
+          features: [{ key: 'itemCount', value: '2' }],
+          warnings: [],
+          degradedFlags: []
+        })
+      })
+    }
+
     if (url.startsWith('/api/stocks/plans/alerts?')) {
       return makeResponse({ ok: true, status: 200, json: async () => ([]) })
     }
@@ -749,8 +902,10 @@ describe('StockInfoTab', () => {
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode('data: 你好\n\n'))
-        controller.enqueue(encoder.encode('data: 世界\n\n'))
+        controller.enqueue(encoder.encode('data: **Defining the Scope****Interpreting the Data**\n\n'))
+        controller.enqueue(encoder.encode('data: **Assessing Risk Elements**\n\n'))
+        controller.enqueue(encoder.encode('data: 风险提示\n\n'))
+        controller.enqueue(encoder.encode('data: **Synthesizing Risk Insights** 保持仓位纪律\n\n'))
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
         controller.close()
       }
@@ -789,10 +944,10 @@ describe('StockInfoTab', () => {
     await flushPromises()
 
     const assistant = chatWindow.vm.chatMessages.find(item => item.role === 'assistant')
-    expect(assistant.content).toBe('你好世界')
+    expect(assistant.content).toBe('风险提示保持仓位纪律')
 
     const sessionKey = wrapper.vm.selectedChatSession
-    expect(messagesBySession[sessionKey]?.some(item => item.content === '你好世界')).toBe(true)
+    expect(messagesBySession[sessionKey]?.some(item => item.content === '风险提示保持仓位纪律')).toBe(true)
 
     wrapper.vm.detail = {
       quote: { name: '平安银行', symbol: 'sz000001', price: 12, change: 0, changePercent: 0 },
@@ -813,7 +968,7 @@ describe('StockInfoTab', () => {
     await wrapper.vm.$nextTick()
     await flushPromises()
     const restored = chatWindow.vm.chatMessages.find(item => item.role === 'assistant')
-    expect(restored?.content).toBe('你好世界')
+    expect(restored?.content).toBe('风险提示保持仓位纪律')
   })
 
   it('keeps chat history per stock and switches on symbol change', async () => {
@@ -994,6 +1149,339 @@ describe('StockInfoTab', () => {
 
     const restored = chatWindow.vm.chatMessages.find(item => item.role === 'assistant')
     expect(restored?.content).toBe('历史A')
+  })
+
+  it('builds a stock copilot draft turn and renders timeline, tool cards, and actions', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    const textarea = wrapper.find('.copilot-session-card textarea')
+    await textarea.setValue('先看这只股票 60 日结构，再核对本地公告有没有新的风险点。')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const draftCall = fetchMock.mock.calls.find(args => args[0] === '/api/stocks/copilot/turns/draft')
+    expect(draftCall).toBeTruthy()
+    expect(JSON.parse(draftCall[1].body).symbol).toBe('sh600000')
+    expect(wrapper.text()).toContain('planner 已把问题拆成 2 个受控工具步骤。')
+    expect(wrapper.text()).toContain('读取 K 线结构')
+    expect(wrapper.text()).toContain('StockNewsMcp')
+    expect(wrapper.text()).toContain('查看本地新闻证据')
+  })
+
+  it('executes approved stock copilot tools and shows evidence summaries', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.copilot-session-card textarea').setValue('核对这只股票的本地公告。')
+  await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const actionChip = wrapper.find('.copilot-action-chip')
+    await actionChip.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.some(args => String(args[0]).startsWith('/api/stocks/mcp/news?'))).toBe(true)
+    expect(wrapper.text()).toContain('本地新闻 2 条')
+    expect(wrapper.text()).toContain('浦发银行关于董事会决议的公告')
+    expect(wrapper.text()).toContain('上交所公告')
+  })
+
+  it('drives chart, news, and plan workflows from copilot follow-up actions', async () => {
+    const agentCalls = []
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/copilot/turns/draft') {
+          const body = JSON.parse(options.body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sessionKey: 'copilot-r3',
+              title: '浦发银行 Copilot',
+              turns: [
+                {
+                  turnId: 'turn-r3',
+                  sessionKey: 'copilot-r3',
+                  symbol: body.symbol,
+                  userQuestion: body.question,
+                  status: 'drafted',
+                  plannerSummary: '先核对 K 线，再核对本地新闻，最后决定是否进入计划流。',
+                  governorSummary: '仅允许本地工具，计划动作需要在工具结果齐备后解锁。',
+                  planSteps: [],
+                  toolCalls: [
+                    {
+                      callId: 'call-kline-r3',
+                      toolName: 'StockKlineMcp',
+                      policyClass: 'local_required',
+                      purpose: '检查日 K 结构',
+                      inputSummary: `symbol=${body.symbol}; interval=day; count=60`,
+                      approvalStatus: 'approved',
+                      blockedReason: null
+                    },
+                    {
+                      callId: 'call-news-r3',
+                      toolName: 'StockNewsMcp',
+                      policyClass: 'local_required',
+                      purpose: '检查本地新闻证据',
+                      inputSummary: `symbol=${body.symbol}; level=stock`,
+                      approvalStatus: 'approved',
+                      blockedReason: null
+                    }
+                  ],
+                  toolResults: [],
+                  finalAnswer: {
+                    status: 'needs_tool_execution',
+                    summary: '需要先执行工具。',
+                    constraints: []
+                  },
+                  followUpActions: [
+                    {
+                      actionId: 'action-kline',
+                      label: '查看 K 线结构',
+                      actionType: 'inspect_chart',
+                      toolName: 'StockKlineMcp',
+                      description: '切到日 K，并刷新结构位。',
+                      enabled: true,
+                      blockedReason: null
+                    },
+                    {
+                      actionId: 'action-news',
+                      label: '查看新闻证据',
+                      actionType: 'inspect_news',
+                      toolName: 'StockNewsMcp',
+                      description: '刷新本地新闻证据。',
+                      enabled: true,
+                      blockedReason: null
+                    },
+                    {
+                      actionId: 'action-plan',
+                      label: '起草交易计划',
+                      actionType: 'draft_trading_plan',
+                      toolName: '',
+                      description: '把 Copilot 证据承接到交易计划。',
+                      enabled: false,
+                      blockedReason: '需要先完成工具执行并得到最终判断。'
+                    }
+                  ]
+                }
+              ]
+            })
+          })
+        }
+
+        if (String(url).startsWith('/api/stocks/mcp/kline?')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              traceId: 'trace-kline-r3',
+              data: {
+                bars: Array.from({ length: 60 }, (_, index) => ({ index })),
+                keyLevels: {
+                  resistanceLevels: [10.8],
+                  supportLevels: [9.7]
+                }
+              },
+              evidence: [],
+              features: [{ key: 'trendState', value: 'uptrend' }],
+              warnings: [],
+              degradedFlags: []
+            })
+          })
+        }
+
+        if (String(url).startsWith('/api/stocks/mcp/news?')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              traceId: 'trace-news-r3',
+              data: {
+                itemCount: 1,
+                latestPublishedAt: '2026-03-23T01:00:00Z'
+              },
+              evidence: [
+                {
+                  source: '上交所公告',
+                  title: '浦发银行最新公告',
+                  url: 'https://example.com/pfbank-notice',
+                  publishedAt: '2026-03-23T01:00:00Z',
+                  excerpt: '公告摘要',
+                  readMode: 'full_text',
+                  readStatus: 'read'
+                }
+              ],
+              features: [{ key: 'itemCount', value: '1' }],
+              warnings: [],
+              degradedFlags: []
+            })
+          })
+        }
+
+        if (url === '/api/stocks/agents/single') {
+          const body = JSON.parse(options.body)
+          agentCalls.push(body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              agentId: body.agentId,
+              agentName: body.agentId,
+              success: true,
+              data: { summary: body.agentId }
+            })
+          })
+        }
+
+        if (url === '/api/stocks/agents/history' && options.method === 'POST') {
+          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 88 }) })
+        }
+
+        if (String(url).startsWith('/api/stocks/agents/history?')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ([{ id: 88, symbol: 'sh600000', createdAt: '2026-03-23T02:00:00Z' }])
+          })
+        }
+
+        if (url === '/api/stocks/plans/draft' && options.method === 'POST') {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              symbol: 'sh600000',
+              name: '浦发银行',
+              direction: 'Long',
+              status: 'Pending',
+              triggerPrice: 10.6,
+              invalidPrice: 9.8,
+              stopLossPrice: 9.7,
+              takeProfitPrice: 11.4,
+              targetPrice: 11.8,
+              expectedCatalyst: '站上压力位',
+              invalidConditions: '跌破关键支撑',
+              riskLimits: '单笔风险 2%',
+              analysisSummary: '等待量价共振确认',
+              analysisHistoryId: 88,
+              sourceAgent: 'commander',
+              userNote: null
+            })
+          })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.copilot-session-card textarea').setValue('先看结构，再看新闻，最后起草交易计划。')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('.copilot-action-chip[data-action-id="action-plan"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.copilot-action-chip[data-action-id="action-plan"]').attributes('title')).toContain('至少先执行一张已批准的 Copilot 工具卡')
+
+    await wrapper.find('.copilot-action-chip[data-action-id="action-kline"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.some(args => String(args[0]).startsWith('/api/stocks/mcp/kline?'))).toBe(true)
+    expect(wrapper.find('.stock-chart-section').classes()).toContain('copilot-section-active')
+    expect(wrapper.findComponent({ name: 'StockCharts' }).props('focusedView')).toBe('day')
+    expect(wrapper.find('.copilot-action-chip[data-action-id="action-plan"]').attributes('title')).toContain('还有 1 张已批准工具卡未执行')
+
+    await wrapper.find('.copilot-action-chip[data-action-id="action-news"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.some(args => String(args[0]).startsWith('/api/stocks/mcp/news?'))).toBe(true)
+    expect(wrapper.find('.stock-news-impact-section').classes()).toContain('copilot-section-active')
+    expect(wrapper.text()).toContain('浦发银行最新公告')
+
+    const planAction = wrapper.find('.copilot-action-chip[data-action-id="action-plan"]')
+    expect(planAction.attributes('disabled')).toBeUndefined()
+
+    await planAction.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(agentCalls).toHaveLength(5)
+    expect(fetchMock.mock.calls.some(args => args[0] === '/api/stocks/plans/draft')).toBe(true)
+    expect(wrapper.find('.plan-modal').exists()).toBe(true)
+    expect(wrapper.find('.stock-plan-section').classes()).toContain('copilot-section-active')
+  })
+
+  it('keeps recent stock copilot turns as replay chips', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    const textarea = wrapper.find('.copilot-session-card textarea')
+    await textarea.setValue('第一轮问题')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    await textarea.setValue('第二轮问题')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const replayChips = wrapper.findAll('.copilot-replay-chip')
+    expect(replayChips).toHaveLength(2)
+    expect(wrapper.text()).toContain('第一轮问题')
+    expect(wrapper.text()).toContain('第二轮问题')
   })
 
   it('renders news impact summary when data is available', async () => {
@@ -2641,6 +3129,98 @@ describe('StockInfoTab', () => {
     expect(request.userNote).toBe('控制仓位')
     expect(request.takeProfitPrice).toBe(13.4)
     expect(request.targetPrice).toBe(14.2)
+  })
+
+  it('keeps the trading plan modal visible after switching the active workspace', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/agents/history' && options.method === 'POST') {
+          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 88 }) })
+        }
+
+        if (String(url).startsWith('/api/stocks/agents/history?')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ([{ id: 88, symbol: 'sh600000', createdAt: '2026-03-23T02:00:00Z' }])
+          })
+        }
+
+        if (url === '/api/stocks/plans/draft' && options.method === 'POST') {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              symbol: 'sh600000',
+              name: '浦发银行',
+              direction: 'Long',
+              status: 'Pending',
+              triggerPrice: 10.6,
+              invalidPrice: 9.8,
+              stopLossPrice: 9.7,
+              takeProfitPrice: 11.4,
+              targetPrice: 11.8,
+              expectedCatalyst: '站上压力位',
+              invalidConditions: '跌破关键支撑',
+              riskLimits: '单笔风险 2%',
+              analysisSummary: '等待量价共振确认',
+              analysisHistoryId: 88,
+              sourceAgent: 'commander',
+              userNote: null
+            })
+          })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    wrapper.vm.agentResults = [
+      {
+        agentId: 'commander',
+        agentName: '指挥Agent',
+        success: true,
+        data: {
+          summary: '偏多',
+          analysis_opinion: '等待量价共振确认',
+          triggers: [],
+          invalidations: [],
+          riskLimits: []
+        }
+      }
+    ]
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.draft-plan-button').trigger('click')
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('.plan-modal').exists()).toBe(true)
+    expect(wrapper.find('.plan-field input[disabled]').element.value).toBe('sh600000')
+
+    wrapper.vm.detail = {
+      quote: { name: '深科技', symbol: 'sz000021', price: 31.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    expect(wrapper.find('.plan-modal').exists()).toBe(true)
+    expect(wrapper.find('.plan-field input[disabled]').element.value).toBe('sh600000')
   })
 
   it('supports editing and deleting pending trading plans', async () => {
