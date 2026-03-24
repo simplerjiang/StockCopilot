@@ -18,11 +18,13 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
 
     public async Task<MarketSentimentSummaryDto?> GetLatestSummaryAsync(CancellationToken cancellationToken = default)
     {
-        var latest = await _dbContext.MarketSentimentSnapshots
+        var recentRows = await _dbContext.MarketSentimentSnapshots
             .AsNoTracking()
             .OrderByDescending(x => x.SnapshotTime)
-            .FirstOrDefaultAsync(cancellationToken);
+            .Take(24)
+            .ToListAsync(cancellationToken);
 
+        var latest = SelectBestLatestSummarySnapshot(recentRows);
         return latest is null ? null : MapSummary(latest);
     }
 
@@ -36,7 +38,7 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
 
         return rows
             .GroupBy(x => x.TradingDate.Date)
-            .Select(group => group.OrderByDescending(x => x.SnapshotTime).First())
+            .Select(group => SelectBestSummarySnapshot(group) ?? group.OrderByDescending(x => x.SnapshotTime).First())
             .OrderByDescending(x => x.TradingDate)
             .Take(Math.Clamp(days, 1, 60))
             .OrderBy(x => x.TradingDate)
@@ -237,6 +239,71 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             item.Top10SectorTurnoverShare5dAvg,
             item.LimitUpCount5dAvg,
             item.BrokenBoardRate5dAvg);
+    }
+
+    private static Data.Entities.MarketSentimentSnapshot? SelectBestLatestSummarySnapshot(
+        IReadOnlyList<Data.Entities.MarketSentimentSnapshot> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        var latestTradingDate = rows.Max(item => item.TradingDate.Date);
+        var latestTradingDateRows = rows
+            .Where(item => item.TradingDate.Date == latestTradingDate)
+            .ToArray();
+
+        var latestBest = SelectBestSummarySnapshot(latestTradingDateRows);
+        if (latestBest is not null && GetSummaryIntegrityScore(latestBest) >= 4)
+        {
+            return latestBest;
+        }
+
+        return rows
+            .Where(item => GetSummaryIntegrityScore(item) >= 4)
+            .OrderByDescending(item => item.TradingDate)
+            .ThenByDescending(GetSummaryIntegrityScore)
+            .ThenByDescending(item => item.SnapshotTime)
+            .FirstOrDefault()
+            ?? latestBest
+            ?? rows.OrderByDescending(item => item.SnapshotTime).First();
+    }
+
+    private static Data.Entities.MarketSentimentSnapshot? SelectBestSummarySnapshot(
+        IEnumerable<Data.Entities.MarketSentimentSnapshot> rows)
+    {
+        return rows
+            .OrderByDescending(GetSummaryIntegrityScore)
+            .ThenByDescending(item => item.SnapshotTime)
+            .FirstOrDefault();
+    }
+
+    private static int GetSummaryIntegrityScore(Data.Entities.MarketSentimentSnapshot item)
+    {
+        var score = 0;
+        var breadthTotal = item.Advancers + item.Decliners + item.FlatCount;
+        if (breadthTotal > 0)
+        {
+            score += 3;
+        }
+
+        if (item.TotalTurnover > 0)
+        {
+            score += 2;
+        }
+
+        if (item.Top3SectorTurnoverShare > 0 || item.Top10SectorTurnoverShare > 0)
+        {
+            score += 2;
+        }
+
+        if (item.LimitUpCount > 0 || item.LimitDownCount > 0 || item.BrokenBoardCount > 0 || item.MaxLimitUpStreak > 0)
+        {
+            score += 1;
+        }
+
+        return score;
     }
 
     private static SectorRotationListItemDto MapSectorItem(Data.Entities.SectorRotationSnapshot item)

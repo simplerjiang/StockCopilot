@@ -40,6 +40,12 @@ public sealed class TradingPlanDraftService : ITradingPlanDraftService
         }
 
         using var document = JsonDocument.Parse(history.ResultJson);
+        var validation = StockAgentHistoryValidation.Validate(document.RootElement);
+        if (!validation.IsCommanderComplete)
+        {
+            throw new InvalidOperationException($"分析历史不完整，暂不能起草交易计划：{validation.BlockedReason}");
+        }
+
         var commanderData = FindCommanderData(document.RootElement);
         if (commanderData is null)
         {

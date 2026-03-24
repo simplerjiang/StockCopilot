@@ -14,7 +14,7 @@
 - 本地资讯库已经支持个股、板块、市场多层级资讯聚合和页面展示
 - 交易计划已经具备草稿、总览、提醒、市场上下文联动等基础闭环
 - Stock Copilot 的 MCP 运行时底座已经落地，包含 K 线、分时、策略、新闻、搜索五类受控工具接口
-- Stock Copilot 会话草案能力已经落地，能够返回 planner / governor 时间线、tool call 草案、follow-up action 和待执行 final answer contract
+- Stock Copilot 的首轮会话化 runtime 已经落地，但当前 UI 仍处于过渡版，下一步会重构为真正的聊天式 Copilot 工作台
 - Windows 桌面打包链路已经稳定，安装版会自动拉起后端，默认使用本地 SQLite 运行，不要求用户再手工装数据库
 - 发布版已经接上 GitHub Releases 更新检测，支持发现新版本并触发安装器升级
 
@@ -94,7 +94,7 @@
 - 交易计划支持草稿、总览、提醒和市场上下文展示
 - Stock Copilot MCP 运行时基础层已落地
 - Stock Copilot draft 会话 contract 已落地
-- Stock Copilot 右侧会话面板与动作化工作流已落地，支持 K 线、新闻、多 Agent 和交易计划起草联动
+- Stock Copilot 当前右侧面板已证明 MCP、工具调用和动作工作流底座可用，但会在下一轮重构为聊天式 Copilot 界面
 - 首次启动会引导配置 LLM Key
 - 新版本会从 GitHub Releases 检查更新，并支持安装器升级
 
@@ -102,16 +102,22 @@
 
 ### 近期规划
 
-- 做完整的 Copilot 验收与 replay 指标，把工具效率、证据覆盖率、local-first 命中率、answer traceability 量化下来
+- 重构 Stock Copilot 为真正的聊天式工作台：默认就是一个对话框，而不是右侧堆叠卡片
+- 补齐真正的 `提问 -> 调 MCP -> 展示思维结构摘要 -> 展示证据/抓取内容 -> 输出最终回答 -> 提供下一步动作` 闭环
+- 把 MCP 调用记录、工具耗时、降级状态、证据摘要和全文展开都内嵌到消息流，而不是散在多个并列面板里
+- 给股票终端分时图补上独立的 `分时九转` 信号层，并在该信号开启且当前正处于分时视图时进入 1 秒级图表刷新
+- 修掉当前 GOAL-AGENT-002 的核心阻塞，包括 grounded final answer 未推进、交易计划动作链路不稳定、Evidence / Source 摘要噪音过高
 - 继续补强交易计划提醒、复核、执行前检查和复盘链路
 - 把当前“桌面 EXE + 独立后端进程”继续收敛成“一个主 EXE 统一控制、单宿主单进程、无需用户预装 .NET runtime 的本地应用”；这里接受应用自带附属文件，不把“绝对单文件”作为硬目标
 
 ### 中期规划
 
-- 补齐真正的 LLM -> 工具执行 -> grounded final answer 闭环，而不只是 panel + action workflow
 - 继续收口多 Agent、图表信号、市场上下文和 Copilot 之间的统一能力层
+- 把当前过重的右侧信息堆叠拆成“主聊天区 + 会话详情抽屉 + 可折叠证据/工具记录”三层结构
 - 补更完整的桌面更新体验，包括更稳的升级回滚与异常恢复
 - 增加更可靠的历史回放、校准和效果评估能力，减少产品迭代后的“主观感觉变好”
+
+新的页面设计说明见 `docs/stock-copilot-chat-redesign-20260324.md`。
 
 ### 长期方向
 

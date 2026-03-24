@@ -61,6 +61,8 @@ const cnDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
 
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize.value)))
 const selectedSnapshot = computed(() => sectors.value.find(item => item.sectorCode === selectedSectorCode.value) ?? sectors.value[0] ?? null)
+const compareWindowLabel = computed(() => compareWindowOptions.find(option => option.value === compareWindow.value)?.label ?? '10日主线')
+const activeSortLabel = computed(() => sortOptions.find(option => option.value === sort.value)?.label ?? '综合强度')
 const stageToneClass = computed(() => {
   const label = summary.value?.stageLabelV2 || summary.value?.stageLabel || ''
   if (label === '主升') return 'tone-positive'
@@ -69,6 +71,53 @@ const stageToneClass = computed(() => {
   return 'tone-neutral'
 })
 const realtimeSectorItems = computed(() => realtimeSectorBoard.value?.items ?? [])
+const summaryNeedsBreadthFallback = computed(() => {
+  const breadth = realtimeOverview.value?.breadth
+  if (!summary.value || !breadth) return false
+
+  const summaryBreadthMissing = [summary.value.advancers, summary.value.decliners, summary.value.flatCount]
+    .every(value => Number(value ?? 0) === 0)
+  const summaryLimitCountsMissing = Number(summary.value.limitUpCount ?? 0) === 0
+  const realtimeHasBreadth = [breadth.limitUpCount, breadth.limitDownCount, breadth.advancers, breadth.decliners, breadth.flatCount]
+    .some(value => Number(value ?? 0) > 0)
+
+  return realtimeHasBreadth && (summaryBreadthMissing || summaryLimitCountsMissing)
+})
+const summaryTurnoverPending = computed(() => {
+  if (!summary.value) return false
+  return Number(summary.value.top3SectorTurnoverShare ?? 0) <= 0 && sectorBaseItems.value.length > 0
+})
+const displaySummary = computed(() => {
+  if (!summary.value) return null
+
+  if (!summaryNeedsBreadthFallback.value) {
+    return summary.value
+  }
+
+  const breadth = realtimeOverview.value?.breadth
+  if (!breadth) {
+    return summary.value
+  }
+
+  return {
+    ...summary.value,
+    limitUpCount: Number(breadth.limitUpCount ?? summary.value.limitUpCount ?? 0),
+    limitDownCount: Number(breadth.limitDownCount ?? summary.value.limitDownCount ?? 0),
+    advancers: Number(breadth.advancers ?? summary.value.advancers ?? 0),
+    decliners: Number(breadth.decliners ?? summary.value.decliners ?? 0),
+    flatCount: Number(breadth.flatCount ?? summary.value.flatCount ?? 0)
+  }
+})
+const summaryDataNotice = computed(() => {
+  const notices = []
+  if (summaryNeedsBreadthFallback.value) {
+    notices.push('涨跌家数与涨跌停已自动改用实时广度补足，避免把缺失快照误读成 0。')
+  }
+  if (summaryTurnoverPending.value) {
+    notices.push('热门板块成交占比尚未同步完成，本页不再把缺失值展示成 0。')
+  }
+  return notices.join(' ')
+})
 
 const normalizeSummary = payload => payload ? ({
   snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
@@ -283,6 +332,11 @@ const formatSignedAmount = value => {
   return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
 }
 
+const formatPercentOrPending = value => {
+  const number = Number(value ?? 0)
+  return number > 0 ? `${number.toFixed(2)}%` : '待同步'
+}
+
 const formatScale = value => `${(Number(value ?? 0) * 100).toFixed(0)}%`
 
 const getRealtimeSectorSort = value => {
@@ -291,7 +345,24 @@ const getRealtimeSectorSort = value => {
   return 'rank'
 }
 
-const applyRealtimeSectorBoard = (items, realtimePayload) => {
+const isSparseSectorSnapshot = item => {
+  if (!item) return false
+  const memberTotal = Number(item.advancerCount ?? 0) + Number(item.declinerCount ?? 0) + Number(item.flatMemberCount ?? 0)
+  return !item.leaderSymbol && memberTotal === 0 && Number(item.newsHotCount ?? 0) === 0
+}
+
+const isSparseSectorDetail = payload => {
+  if (!payload?.snapshot) return false
+  const memberTotal = Number(payload.snapshot.advancerCount ?? 0) + Number(payload.snapshot.declinerCount ?? 0) + Number(payload.snapshot.flatMemberCount ?? 0)
+  return memberTotal === 0 && !payload.snapshot.leaderSymbol && (!payload.leaders?.length) && (!payload.news?.length)
+}
+
+const getLeaderEmptyHint = payload => (isSparseSectorDetail(payload) ? '当前只同步到板块快照，龙头股明细待补齐。' : '当前没有龙头股快照。')
+const getNewsEmptyHint = payload => (isSparseSectorDetail(payload) ? '当前只同步到板块快照，相关新闻仍待补齐。' : '本地事实库暂无该板块新闻。')
+const getSectorOrderLabel = index => `当前第${(page.value - 1) * pageSize.value + index + 1}`
+const getReferenceRankLabel = item => `${realtimeSectorBoardEnabled.value ? '东财' : '快照'}#${item.rankNo}`
+
+const applyRealtimeSectorBoard = (items, realtimePayload, sortValue) => {
   if (!Array.isArray(items) || !items.length || !realtimeSectorBoardEnabled.value) {
     return Array.isArray(items) ? [...items] : []
   }
@@ -302,12 +373,9 @@ const applyRealtimeSectorBoard = (items, realtimePayload) => {
   }
 
   const realtimeMap = new Map(realtimeItems.map(item => [item.sectorCode, item]))
-  const matched = []
-  const unmatched = []
-
-  items.forEach(item => {
+  const mergedItems = items.map(item => {
     const realtimeItem = realtimeMap.get(item.sectorCode)
-    const mergedItem = realtimeItem
+    return realtimeItem
       ? {
           ...item,
           changePercent: realtimeItem.changePercent,
@@ -318,20 +386,23 @@ const applyRealtimeSectorBoard = (items, realtimePayload) => {
           realtimeTurnoverShare: realtimeItem.turnoverShare
         }
       : item
-
-    if (realtimeItem) {
-      matched.push(mergedItem)
-    } else {
-      unmatched.push(mergedItem)
-    }
   })
 
-  matched.sort((left, right) => {
-    if (left.rankNo !== right.rankNo) return left.rankNo - right.rankNo
-    return right.changePercent - left.changePercent
-  })
+  if (sortValue === 'change') {
+    return [...mergedItems].sort((left, right) => {
+      if (right.changePercent !== left.changePercent) return right.changePercent - left.changePercent
+      return left.rankNo - right.rankNo
+    })
+  }
 
-  return [...matched, ...unmatched]
+  if (sortValue === 'flow') {
+    return [...mergedItems].sort((left, right) => {
+      if (right.mainNetInflow !== left.mainNetInflow) return right.mainNetInflow - left.mainNetInflow
+      return right.changePercent - left.changePercent
+    })
+  }
+
+  return mergedItems
 }
 
 const getWindowStrength = item => {
@@ -403,7 +474,7 @@ const fetchRealtimeSectorBoard = async ({ silent = false } = {}) => {
     const realtimeSort = getRealtimeSectorSort(sort.value)
     const payload = await fetchJson(`/api/market/sectors/realtime?boardType=${encodeURIComponent(boardType.value)}&take=${Math.max(pageSize.value * 6, 60)}&sort=${encodeURIComponent(realtimeSort)}`)
     realtimeSectorBoard.value = normalizeRealtimeSectorBoard(payload)
-    sectors.value = applyRealtimeSectorBoard(sectorBaseItems.value, realtimeSectorBoard.value)
+    sectors.value = applyRealtimeSectorBoard(sectorBaseItems.value, realtimeSectorBoard.value, sort.value)
     return realtimeSectorBoard.value
   } catch (err) {
     realtimeSectorBoard.value = null
@@ -546,48 +617,6 @@ onMounted(() => {
       </div>
     </header>
 
-    <MarketRealtimeOverview
-      v-if="realtimeOverviewEnabled"
-      :overview="realtimeOverview"
-      :loading="realtimeLoading"
-      :error="realtimeError"
-      :format-date="formatDate"
-      :format-money="formatMoney"
-      :format-signed-percent="formatSignedPercent"
-      :format-signed-amount="formatSignedAmount"
-    />
-
-    <section class="metric-grid">
-      <article class="metric-card">
-        <span>涨停 / 跌停</span>
-        <strong>{{ summary?.limitUpCount ?? 0 }} / {{ summary?.limitDownCount ?? 0 }}</strong>
-        <small>5日均值 {{ (summary?.limitUpCount5dAvg ?? 0).toFixed(1) }} / 最高连板 {{ summary?.maxLimitUpStreak ?? 0 }}</small>
-      </article>
-      <article class="metric-card">
-        <span>炸板率</span>
-        <strong>{{ (summary?.brokenBoardRate ?? 0).toFixed(2) }}%</strong>
-        <small>5日均值 {{ (summary?.brokenBoardRate5dAvg ?? 0).toFixed(2) }}% / 炸板数 {{ summary?.brokenBoardCount ?? 0 }}</small>
-      </article>
-      <article class="metric-card">
-        <span>扩散 / 持续</span>
-        <strong>{{ (summary?.diffusionScore ?? 0).toFixed(1) }} / {{ (summary?.continuationScore ?? 0).toFixed(1) }}</strong>
-        <small>涨跌家数 {{ summary?.advancers ?? 0 }} / {{ summary?.decliners ?? 0 }} / 平盘 {{ summary?.flatCount ?? 0 }}</small>
-      </article>
-      <article class="metric-card">
-        <span>热门板块成交占比</span>
-        <strong>{{ (summary?.top3SectorTurnoverShare ?? 0).toFixed(2) }}%</strong>
-        <small>5日均值 {{ (summary?.top3SectorTurnoverShare5dAvg ?? 0).toFixed(2) }}% / Top10 {{ (summary?.top10SectorTurnoverShare5dAvg ?? 0).toFixed(2) }}%</small>
-      </article>
-    </section>
-
-    <section class="history-strip">
-      <div v-for="item in history" :key="`${item.tradingDate}-${item.snapshotTime}`" class="history-chip">
-        <span>{{ formatDate(item.tradingDate).slice(0, 10) }}</span>
-        <strong>{{ item.stageLabel }}</strong>
-        <small>{{ item.stageScore.toFixed(1) }} 分</small>
-      </div>
-    </section>
-
     <section class="board-toolbar">
       <label class="toolbar-field">
         <span>轮动维度</span>
@@ -608,7 +637,8 @@ onMounted(() => {
         </select>
       </label>
       <div class="toolbar-meta">
-        <strong>共 {{ total }} 个板块</strong>
+        <strong>{{ activeSortLabel }} / {{ compareWindowLabel }}</strong>
+        <span>共 {{ total }} 个板块</span>
         <span>快照 {{ formatDate(snapshotTime) }}</span>
         <span v-if="realtimeSectorBoardEnabled">东财实时榜 {{ formatDate(realtimeSectorBoard?.snapshotTime) }}</span>
         <button class="toolbar-inline-button" type="button" @click="fetchRealtimeSectorBoard" :disabled="realtimeSectorBoardLoading || !realtimeSectorBoardEnabled">刷新实时榜</button>
@@ -624,8 +654,15 @@ onMounted(() => {
     <div v-else-if="loading" class="feedback">正在同步情绪轮动快照...</div>
     <section v-else class="market-grid">
       <div class="sector-list">
+        <div class="panel-heading">
+          <div>
+            <p class="market-kicker panel-kicker">Priority Board</p>
+            <h3>{{ activeSortLabel }}榜单</h3>
+          </div>
+          <small>{{ compareWindowLabel }}</small>
+        </div>
         <button
-          v-for="item in sectors"
+          v-for="(item, index) in sectors"
           :key="`${item.boardType}-${item.sectorCode}`"
           type="button"
           class="sector-card"
@@ -633,16 +670,22 @@ onMounted(() => {
           @click="fetchDetail(item.sectorCode)"
         >
           <div class="sector-head">
-            <span class="sector-rank">#{{ item.rankNo }}</span>
+            <div class="sector-order-group">
+              <span class="sector-order">{{ getSectorOrderLabel(index) }}</span>
+              <span class="sector-rank">{{ getReferenceRankLabel(item) }}</span>
+            </div>
             <strong>{{ item.sectorName }}</strong>
-            <span v-if="item.isMainline" class="mainline-badge">主线</span>
-            <span class="sector-change" :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</span>
+            <div class="sector-state-group">
+              <span v-if="isSparseSectorSnapshot(item)" class="coverage-badge">快照有限</span>
+              <span v-if="item.isMainline" class="mainline-badge">主线</span>
+              <span class="sector-change" :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</span>
+            </div>
           </div>
           <div class="sector-metrics">
             <span>综合 {{ item.strengthScore.toFixed(1) }}</span>
-            <span>{{ compareWindowOptions.find(option => option.value === compareWindow)?.label }} {{ getWindowStrength(item).toFixed(1) }}</span>
+            <span>{{ compareWindowLabel }} {{ getWindowStrength(item).toFixed(1) }}</span>
             <span>扩散 {{ item.diffusionRate.toFixed(1) }}</span>
-            <span>排名变化 {{ getWindowRankLabel(item) }}</span>
+            <span>窗口变化 {{ getWindowRankLabel(item) }}</span>
           </div>
           <div class="sector-meta">
             <span>{{ item.newsSentiment }} / 热点 {{ item.newsHotCount }}</span>
@@ -659,6 +702,13 @@ onMounted(() => {
       </div>
 
       <aside class="detail-panel">
+        <div class="panel-heading detail-panel-heading">
+          <div>
+            <p class="market-kicker panel-kicker">Sector Detail</p>
+            <h3>板块详情</h3>
+          </div>
+          <small>{{ selectedSnapshot?.sectorCode || '未选择' }}</small>
+        </div>
         <div v-if="detailError" class="feedback error compact">{{ detailError }}</div>
         <div v-else-if="detailLoading" class="feedback compact">正在加载板块详情...</div>
         <template v-else-if="detail">
@@ -672,10 +722,14 @@ onMounted(() => {
             </div>
           </header>
 
+          <div v-if="isSparseSectorDetail(detail)" class="detail-warning">
+            当前板块只有涨幅快照，龙头、成员拆解或资讯尚未同步完整；以下内容先按“有限数据”理解。
+          </div>
+
           <section class="detail-block">
             <h4>龙头分布</h4>
             <p class="detail-summary">主线分 {{ detail.snapshot.mainlineScore.toFixed(1) }} / 龙头稳定 {{ detail.snapshot.leaderStabilityScore.toFixed(1) }} / {{ detail.snapshot.isMainline ? '当前主线' : '观察中' }}</p>
-            <div v-if="!detail.leaders.length" class="empty-hint">当前没有龙头股快照。</div>
+            <div v-if="!detail.leaders.length" class="empty-hint">{{ getLeaderEmptyHint(detail) }}</div>
             <div v-else class="leader-list">
               <div v-for="leader in detail.leaders" :key="`${detail.snapshot.sectorCode}-${leader.symbol}`" class="leader-item">
                 <span>#{{ leader.rankInSector }} {{ leader.name }} {{ leader.symbol }}</span>
@@ -692,7 +746,7 @@ onMounted(() => {
                 <span>{{ formatDate(item.tradingDate).slice(0, 10) }}</span>
                 <span>{{ formatSignedPercent(item.changePercent) }}</span>
                 <span>{{ compareWindow }} {{ (compareWindow === '5d' ? item.strengthAvg5d : compareWindow === '20d' ? item.strengthAvg20d : item.strengthAvg10d).toFixed(1) }}</span>
-                <span>排名 {{ compareWindow === '5d' ? item.rankChange5d : compareWindow === '20d' ? item.rankChange20d : item.rankChange10d }}</span>
+                <span>窗口变化 {{ compareWindow === '5d' ? item.rankChange5d : compareWindow === '20d' ? item.rankChange20d : item.rankChange10d }}</span>
               </div>
             </div>
           </section>
@@ -721,7 +775,7 @@ onMounted(() => {
 
           <section class="detail-block">
             <h4>相关新闻</h4>
-            <div v-if="!detail.news.length" class="empty-hint">本地事实库暂无该板块新闻。</div>
+            <div v-if="!detail.news.length" class="empty-hint">{{ getNewsEmptyHint(detail) }}</div>
             <article v-for="item in detail.news" :key="`${detail.snapshot.sectorCode}-${item.title}-${item.publishTime}`" class="news-item">
               <div>
                 <strong>{{ item.translatedTitle || item.title }}</strong>
@@ -734,6 +788,54 @@ onMounted(() => {
         <div v-else class="feedback compact">当前没有可展示的板块详情。</div>
       </aside>
     </section>
+
+    <p v-if="summaryDataNotice" class="summary-alert">{{ summaryDataNotice }}</p>
+
+    <section class="metric-grid">
+      <article class="metric-card">
+        <span>涨停 / 跌停</span>
+        <strong>{{ displaySummary?.limitUpCount ?? 0 }} / {{ displaySummary?.limitDownCount ?? 0 }}</strong>
+        <small>5日均值 {{ (displaySummary?.limitUpCount5dAvg ?? 0).toFixed(1) }} / 最高连板 {{ displaySummary?.maxLimitUpStreak ?? 0 }}</small>
+      </article>
+      <article class="metric-card">
+        <span>炸板率</span>
+        <strong>{{ (displaySummary?.brokenBoardRate ?? 0).toFixed(2) }}%</strong>
+        <small>5日均值 {{ (displaySummary?.brokenBoardRate5dAvg ?? 0).toFixed(2) }}% / 炸板数 {{ displaySummary?.brokenBoardCount ?? 0 }}</small>
+      </article>
+      <article class="metric-card">
+        <span>扩散 / 持续</span>
+        <strong>{{ (displaySummary?.diffusionScore ?? 0).toFixed(1) }} / {{ (displaySummary?.continuationScore ?? 0).toFixed(1) }}</strong>
+        <small>涨跌家数 {{ displaySummary?.advancers ?? 0 }} / {{ displaySummary?.decliners ?? 0 }} / 平盘 {{ displaySummary?.flatCount ?? 0 }}</small>
+      </article>
+      <article class="metric-card">
+        <span>热门板块成交占比</span>
+        <strong>{{ summaryTurnoverPending ? '待同步' : formatPercentOrPending(displaySummary?.top3SectorTurnoverShare) }}</strong>
+        <small>
+          {{ summaryTurnoverPending
+            ? '板块成交占比尚未入库，避免误读为 0。'
+            : `5日均值 ${(displaySummary?.top3SectorTurnoverShare5dAvg ?? 0).toFixed(2)}% / Top10 ${(displaySummary?.top10SectorTurnoverShare5dAvg ?? 0).toFixed(2)}%` }}
+        </small>
+      </article>
+    </section>
+
+    <section class="history-strip">
+      <div v-for="item in history" :key="`${item.tradingDate}-${item.snapshotTime}`" class="history-chip">
+        <span>{{ formatDate(item.tradingDate).slice(0, 10) }}</span>
+        <strong>{{ item.stageLabel }}</strong>
+        <small>{{ item.stageScore.toFixed(1) }} 分</small>
+      </div>
+    </section>
+
+    <MarketRealtimeOverview
+      v-if="realtimeOverviewEnabled"
+      :overview="realtimeOverview"
+      :loading="realtimeLoading"
+      :error="realtimeError"
+      :format-date="formatDate"
+      :format-money="formatMoney"
+      :format-signed-percent="formatSignedPercent"
+      :format-signed-amount="formatSignedAmount"
+    />
   </section>
 </template>
 
@@ -767,6 +869,10 @@ onMounted(() => {
   color: #c2410c;
 }
 
+.panel-kicker {
+  margin-bottom: 4px;
+}
+
 .hero-copy h2 {
   margin: 0;
   font-size: 34px;
@@ -774,7 +880,7 @@ onMounted(() => {
 
 .hero-subtitle {
   margin: 12px 0 0;
-  max-width: 720px;
+  max-width: 640px;
   color: #475569;
   line-height: 1.6;
 }
@@ -857,6 +963,15 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
+}
+
+.summary-alert {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(194, 65, 12, 0.18);
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .metric-card,
@@ -967,6 +1082,22 @@ onMounted(() => {
   gap: 12px;
 }
 
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  padding: 2px 2px 8px;
+}
+
+.panel-heading h3 {
+  margin: 0;
+}
+
+.detail-panel-heading {
+  padding-bottom: 0;
+}
+
 .sector-card {
   display: grid;
   gap: 10px;
@@ -980,6 +1111,26 @@ onMounted(() => {
 .sector-card.active {
   border-color: rgba(194, 65, 12, 0.34);
   box-shadow: 0 16px 36px rgba(194, 65, 12, 0.15);
+}
+
+.sector-order-group,
+.sector-state-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.sector-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .sector-head,
@@ -997,7 +1148,20 @@ onMounted(() => {
 }
 
 .sector-rank {
-  color: #c2410c;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.coverage-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1038,6 +1202,14 @@ onMounted(() => {
 .detail-block {
   display: grid;
   gap: 10px;
+}
+
+.detail-warning {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff7ed;
+  border: 1px solid rgba(194, 65, 12, 0.16);
+  color: #9a3412;
 }
 
 .leader-list,
@@ -1103,6 +1275,7 @@ onMounted(() => {
   }
 
   .market-hero,
+  .panel-heading,
   .sector-head,
   .sector-metrics,
   .sector-meta,

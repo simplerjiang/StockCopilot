@@ -126,6 +126,73 @@ const createRealtimeOverviewPayload = (symbol = 'sz000021', name = '深科技') 
   }
 })
 
+const createCopilotAcceptanceBaselinePayload = request => {
+  const turn = request?.turn || {}
+  const toolCalls = Array.isArray(turn.toolCalls) ? turn.toolCalls : []
+  const toolExecutions = Array.isArray(request?.toolExecutions) ? request.toolExecutions : []
+  const followUpActions = Array.isArray(turn.followUpActions) ? turn.followUpActions : []
+  const approvedToolCallCount = toolCalls.filter(item => item.approvalStatus === 'approved').length
+  const executedToolCallCount = toolExecutions.length
+  const localExecutions = toolExecutions.filter(item => item.policyClass === 'local_required').length
+  const externalExecutions = toolExecutions.filter(item => item.policyClass === 'external_gated').length
+  const evidenceCoveredCount = toolExecutions.filter(item => Number(item.evidenceCount || 0) > 0).length
+  const enabledActionCount = followUpActions.filter(item => item.enabled).length
+  const averageLatencyMs = executedToolCallCount
+    ? toolExecutions.reduce((sum, item) => sum + Number(item.latencyMs || 0), 0) / executedToolCallCount
+    : 0
+  const warningCount = toolExecutions.reduce((sum, item) => sum + ((item.warnings || []).length), 0)
+  const degradedFlagCount = toolExecutions.reduce((sum, item) => sum + ((item.degradedFlags || []).length), 0)
+  const percentage = (numerator, denominator) => (denominator ? Math.round((numerator * 10000) / denominator) / 100 : 0)
+
+  return {
+    symbol: request?.symbol || turn.symbol || 'sh600000',
+    sessionKey: turn.sessionKey || 'copilot-sh600000',
+    turnId: turn.turnId || 'turn-acceptance',
+    generatedAt: '2026-03-24T02:30:00Z',
+    overallScore: 82,
+    approvedToolCallCount,
+    executedToolCallCount,
+    averageLatencyMs,
+    warningCount,
+    degradedFlagCount,
+    highlights: [
+      `本轮已执行 ${executedToolCallCount}/${approvedToolCallCount} 张已批准工具卡。`,
+      'Replay 基线已有 4 条样本。'
+    ],
+    metrics: [
+      { key: 'tool_efficiency', label: '工具效率', value: percentage(executedToolCallCount, approvedToolCallCount), unit: '%', status: 'good', description: '已执行工具数占已批准工具数的比例。' },
+      { key: 'evidence_coverage', label: '证据覆盖率', value: percentage(evidenceCoveredCount, executedToolCallCount), unit: '%', status: 'good', description: '已执行工具中，实际返回 evidence 的占比。' },
+      { key: 'local_first_hit', label: 'Local-First 命中率', value: percentage(localExecutions, executedToolCallCount), unit: '%', status: 'good', description: '本轮执行工具中，Local-First 工具的占比。' },
+      { key: 'external_search_trigger', label: '外部搜索触发率', value: percentage(externalExecutions, executedToolCallCount), unit: '%', status: externalExecutions ? 'watch' : 'good', description: '本轮执行工具中，external-gated 搜索的占比。' },
+      { key: 'final_answer_traceability', label: '最终回答可追溯度', value: percentage(evidenceCoveredCount, executedToolCallCount), unit: '%', status: 'good', description: '已执行工具中，具备 traceId 或 evidence 的结果占比。' },
+      { key: 'action_quality', label: '动作卡就绪度', value: percentage(enabledActionCount, followUpActions.length), unit: '%', status: 'good', description: '当前动作卡中，已可执行动作的占比。' },
+      { key: 'tool_latency', label: '工具延迟得分', value: executedToolCallCount ? 100 : 0, unit: '%', status: 'good', description: '根据平均工具延迟换算出的体验得分。' }
+    ],
+    replayBaseline: {
+      scope: request?.symbol || turn.symbol || 'sh600000',
+      generatedAt: '2026-03-24T02:30:00Z',
+      sampleCount: 4,
+      traceableEvidenceRate: 75,
+      parseRepairRate: 25,
+      pollutedEvidenceRate: 5,
+      revisionCompletenessRate: 50,
+      horizons: [
+        {
+          horizonDays: 5,
+          sampleCount: 4,
+          hitRate: 75,
+          averageReturnPercent: 3.2,
+          brierScore: 0.18,
+          bullWinRate: 80,
+          bearWinRate: 20,
+          baseWinRate: 50
+        }
+      ],
+      samples: []
+    }
+  }
+}
+
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
 const findVisibleChatWindow = wrapper => wrapper.findAllComponents({ name: 'ChatWindow' }).find(component => component.isVisible())
 const findChatWindowForSymbol = (wrapper, symbolKey) =>
@@ -393,11 +460,11 @@ const createChatFetchMock = (handlers = {}) => {
               ],
               toolResults: [],
               finalAnswer: {
-                status: 'needs_tool_execution',
-                summary: '当前只是会话编排草案；需要先执行已批准工具步骤。',
-                groundingMode: 'tool_results_required',
-                confidenceScore: null,
-                needsToolExecution: true,
+                status: 'done',
+                summary: '结构与本地证据已经收口，可继续进入后续动作。',
+                groundingMode: 'local_first_grounded',
+                confidenceScore: 0.74,
+                needsToolExecution: false,
                 constraints: [
                   '最终回答只能引用 tool result 或已保存 evidence 中出现的事实。',
                   'degradedFlags 会系统性压低 confidence 与动作强度。'
@@ -417,6 +484,15 @@ const createChatFetchMock = (handlers = {}) => {
             }
           ]
         })
+      })
+    }
+
+    if (url === '/api/stocks/copilot/acceptance/baseline' && options.method === 'POST') {
+      const body = JSON.parse(options.body)
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => createCopilotAcceptanceBaselinePayload(body)
       })
     }
 
@@ -1212,6 +1288,38 @@ describe('StockInfoTab', () => {
     expect(wrapper.text()).toContain('上交所公告')
   })
 
+  it('renders copilot acceptance baseline and replay metrics after draft execution', async () => {
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.copilot-session-card textarea').setValue('核对这只股票的本地公告。')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.copilot-action-chip').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.some(args => args[0] === '/api/stocks/copilot/acceptance/baseline')).toBe(true)
+    expect(wrapper.text()).toContain('Copilot 质量基线')
+    expect(wrapper.text()).toContain('工具效率')
+    expect(wrapper.text()).toContain('Replay 基线')
+    expect(wrapper.text()).toContain('4 条样本')
+    expect(wrapper.text()).toContain('Evidence Traceability')
+  })
+
   it('drives chart, news, and plan workflows from copilot follow-up actions', async () => {
     const agentCalls = []
     const { fetchMock } = createChatFetchMock({
@@ -1256,8 +1364,9 @@ describe('StockInfoTab', () => {
                   ],
                   toolResults: [],
                   finalAnswer: {
-                    status: 'needs_tool_execution',
-                    summary: '需要先执行工具。',
+                    status: 'done',
+                    summary: '本轮已经具备 grounded final answer。',
+                    needsToolExecution: false,
                     constraints: []
                   },
                   followUpActions: [
@@ -1360,14 +1469,24 @@ describe('StockInfoTab', () => {
         }
 
         if (url === '/api/stocks/agents/history' && options.method === 'POST') {
-          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 88 }) })
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              id: 88,
+              symbol: 'sh600000',
+              createdAt: '2026-03-23T02:00:00Z',
+              isCommanderComplete: true,
+              commanderBlockedReason: null
+            })
+          })
         }
 
         if (String(url).startsWith('/api/stocks/agents/history?')) {
           return makeResponse({
             ok: true,
             status: 200,
-            json: async () => ([{ id: 88, symbol: 'sh600000', createdAt: '2026-03-23T02:00:00Z' }])
+            json: async () => ([{ id: 88, symbol: 'sh600000', createdAt: '2026-03-23T02:00:00Z', isCommanderComplete: true, commanderBlockedReason: null }])
           })
         }
 
@@ -1450,6 +1569,308 @@ describe('StockInfoTab', () => {
     expect(fetchMock.mock.calls.some(args => args[0] === '/api/stocks/plans/draft')).toBe(true)
     expect(wrapper.find('.plan-modal').exists()).toBe(true)
     expect(wrapper.find('.stock-plan-section').classes()).toContain('copilot-section-active')
+  })
+
+  it('renders cleaned copilot evidence snippets instead of navigation noise', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/copilot/turns/draft') {
+          const body = JSON.parse(options.body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sessionKey: 'copilot-r5c',
+              title: '浦发银行 Copilot',
+              turns: [
+                {
+                  turnId: 'turn-r5c',
+                  sessionKey: 'copilot-r5c',
+                  symbol: body.symbol,
+                  userQuestion: body.question,
+                  status: 'done',
+                  plannerSummary: '先检查公告证据。',
+                  governorSummary: '本轮只调用本地新闻工具。',
+                  planSteps: [],
+                  toolCalls: [
+                    {
+                      callId: 'call-news-r5c',
+                      toolName: 'StockNewsMcp',
+                      policyClass: 'local_required',
+                      purpose: '检查本地新闻证据',
+                      inputSummary: `symbol=${body.symbol}; level=stock`,
+                      approvalStatus: 'approved',
+                      blockedReason: null
+                    }
+                  ],
+                  toolResults: [],
+                  finalAnswer: {
+                    status: 'done',
+                    summary: '等待新闻证据。',
+                    needsToolExecution: false,
+                    constraints: []
+                  },
+                  followUpActions: [
+                    {
+                      actionId: 'action-news',
+                      label: '查看新闻证据',
+                      actionType: 'inspect_news',
+                      toolName: 'StockNewsMcp',
+                      description: '刷新本地新闻证据。',
+                      enabled: true,
+                      blockedReason: null
+                    }
+                  ]
+                }
+              ]
+            })
+          })
+        }
+
+        if (String(url).startsWith('/api/stocks/mcp/news?')) {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              traceId: 'trace-news-r5c',
+              data: {
+                itemCount: 1,
+                latestPublishedAt: '2026-03-23T01:00:00Z'
+              },
+              evidence: [
+                {
+                  source: '上交所公告',
+                  title: '浦发银行最新公告',
+                  url: 'https://example.com/pfbank-notice',
+                  publishedAt: '2026-03-23T01:00:00Z',
+                  excerpt: '财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金',
+                  summary: '公告确认本次事项未见新增重大风险，维持常规披露口径。',
+                  readMode: 'full_text',
+                  readStatus: 'summary_only'
+                }
+              ],
+              features: [{ key: 'itemCount', value: '1' }],
+              warnings: [],
+              degradedFlags: []
+            })
+          })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    await wrapper.find('.copilot-session-card textarea').setValue('看一下最新公告')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.copilot-action-chip[data-action-id="action-news"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('公告确认本次事项未见新增重大风险，维持常规披露口径。')
+    expect(wrapper.text()).not.toContain('财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金')
+  })
+
+  it('keeps copilot draft_trading_plan disabled when final answer is not grounded done', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/copilot/turns/draft') {
+          const body = JSON.parse(options.body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sessionKey: 'copilot-r5b-final',
+              title: '浦发银行 Copilot',
+              turns: [
+                {
+                  turnId: 'turn-r5b-final',
+                  sessionKey: 'copilot-r5b-final',
+                  symbol: body.symbol,
+                  userQuestion: body.question,
+                  status: 'finalizing_answer',
+                  plannerSummary: 'planner 已完成。',
+                  governorSummary: 'governor 已完成。',
+                  planSteps: [],
+                  toolCalls: [
+                    {
+                      callId: 'call-kline-final',
+                      toolName: 'StockKlineMcp',
+                      policyClass: 'local_required',
+                      purpose: '检查日 K 结构',
+                      inputSummary: `symbol=${body.symbol}; interval=day; count=60`,
+                      approvalStatus: 'approved',
+                      blockedReason: null
+                    }
+                  ],
+                  toolResults: [
+                    {
+                      callId: 'call-kline-final',
+                      toolName: 'StockKlineMcp',
+                      status: 'completed',
+                      summary: 'K 线结构正常。'
+                    }
+                  ],
+                  finalAnswer: {
+                    status: 'done_with_gaps',
+                    summary: '证据仍有缺口。',
+                    needsToolExecution: false,
+                    constraints: []
+                  },
+                  followUpActions: [
+                    {
+                      actionId: 'action-plan',
+                      label: '起草交易计划',
+                      actionType: 'draft_trading_plan',
+                      toolName: '',
+                      description: '把 Copilot 证据承接到交易计划。',
+                      enabled: true,
+                      blockedReason: null
+                    }
+                  ]
+                }
+              ]
+            })
+          })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    await wrapper.find('.copilot-session-card textarea').setValue('直接起草交易计划')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const planAction = wrapper.find('.copilot-action-chip[data-action-id="action-plan"]')
+    expect(planAction.attributes('disabled')).toBeDefined()
+    expect(planAction.attributes('title')).toContain('grounded final answer')
+  })
+
+  it('blocks copilot draft_trading_plan when selected history is not commander complete', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/copilot/turns/draft') {
+          const body = JSON.parse(options.body)
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sessionKey: 'copilot-r5b-history',
+              title: '浦发银行 Copilot',
+              turns: [
+                {
+                  turnId: 'turn-r5b-history',
+                  sessionKey: 'copilot-r5b-history',
+                  symbol: body.symbol,
+                  userQuestion: body.question,
+                  status: 'done',
+                  plannerSummary: 'planner 已完成。',
+                  governorSummary: 'governor 已完成。',
+                  planSteps: [],
+                  toolCalls: [
+                    {
+                      callId: 'call-kline-history',
+                      toolName: 'StockKlineMcp',
+                      policyClass: 'local_required',
+                      purpose: '检查日 K 结构',
+                      inputSummary: `symbol=${body.symbol}; interval=day; count=60`,
+                      approvalStatus: 'approved',
+                      blockedReason: null
+                    }
+                  ],
+                  toolResults: [
+                    {
+                      callId: 'call-kline-history',
+                      toolName: 'StockKlineMcp',
+                      status: 'completed',
+                      summary: 'K 线结构正常。'
+                    }
+                  ],
+                  finalAnswer: {
+                    status: 'done',
+                    summary: '已经有 grounded answer。',
+                    needsToolExecution: false,
+                    constraints: []
+                  },
+                  followUpActions: [
+                    {
+                      actionId: 'action-plan',
+                      label: '起草交易计划',
+                      actionType: 'draft_trading_plan',
+                      toolName: '',
+                      description: '把 Copilot 证据承接到交易计划。',
+                      enabled: true,
+                      blockedReason: null
+                    }
+                  ]
+                }
+              ]
+            })
+          })
+        }
+
+        return null
+      }
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '浦发银行', symbol: 'sh600000', price: 10.1, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+    wrapper.vm.selectedAgentHistoryId = '3'
+    wrapper.vm.agentHistoryList = [
+      {
+        id: 3,
+        symbol: 'sh600000',
+        createdAt: '2026-03-23T02:00:00Z',
+        isCommanderComplete: false,
+        commanderBlockedReason: '缺少指挥Agent结果，当前还不是完整的 commander 历史。'
+      }
+    ]
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    await wrapper.find('.copilot-session-card textarea').setValue('起草交易计划')
+    await wrapper.find('.copilot-session-form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const planAction = wrapper.find('.copilot-action-chip[data-action-id="action-plan"]')
+    expect(planAction.attributes('disabled')).toBeDefined()
+    expect(planAction.attributes('title')).toContain('指挥Agent')
   })
 
   it('keeps recent stock copilot turns as replay chips', async () => {
@@ -1828,9 +2249,30 @@ describe('StockInfoTab', () => {
 
   it('loads stock detail immediately when clicking a recent-history item', async () => {
     const liveChart = createDeferred()
+    const savedHistory = {
+      id: 9,
+      symbol: 'sh600000',
+      name: '浦发银行',
+      price: 10.1,
+      changePercent: 0,
+      turnoverRate: 1.5,
+      peRatio: 8,
+      high: 10.3,
+      low: 9.8,
+      speed: 0.2,
+      updatedAt: '2026-03-13T00:00:00Z'
+    }
     const { fetchMock } = createChatFetchMock({
-      handle: async url => {
+      handle: async (url, options = {}) => {
         if (url === '/api/stocks/history') {
+          if (options.method === 'POST') {
+            return makeResponse({
+              ok: true,
+              status: 200,
+              json: async () => savedHistory
+            })
+          }
+
           return makeResponse({
             ok: true,
             status: 200,
@@ -1913,9 +2355,160 @@ describe('StockInfoTab', () => {
     await flushPromises()
     await flushPromises()
 
+    const recordCall = fetchMock.mock.calls.find(args => args[0] === '/api/stocks/history' && args[1]?.method === 'POST')
+    expect(recordCall).toBeTruthy()
     expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600000')
     expect(wrapper.vm.detail?.quote?.price).toBe(10.1)
     expect(wrapper.vm.loading).toBe(false)
+    expect(wrapper.vm.historyList[0]).toMatchObject(savedHistory)
+  })
+
+  it('records history only for manual fetchQuote success and prepends returned item', async () => {
+    const recordedItems = []
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/history') {
+          if (options.method === 'POST') {
+            const body = JSON.parse(options.body)
+            recordedItems.push(body)
+            return makeResponse({
+              ok: true,
+              status: 200,
+              json: async () => ({
+                id: 101,
+                symbol: body.symbol,
+                name: body.name,
+                price: body.price,
+                changePercent: body.changePercent,
+                updatedAt: '2026-03-24T01:00:00Z'
+              })
+            })
+          }
+
+          return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+        }
+
+        if (String(url).startsWith('/api/stocks/detail/cache?')) {
+          return makeResponse({ ok: false, status: 404, json: async () => ({}) })
+        }
+
+        if (String(url).startsWith('/api/stocks/chart?')) {
+          const params = new URLSearchParams(String(url).split('?')[1])
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: {
+                name: '贵州茅台',
+                symbol: params.get('symbol') || '',
+                price: 1234,
+                change: 0,
+                changePercent: 1.8,
+                turnoverRate: 2.1,
+                peRatio: 30,
+                high: 1250,
+                low: 1200,
+                speed: 0.5
+              },
+              kLines: [],
+              minuteLines: [],
+              messages: []
+            })
+          })
+        }
+
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.search-field input').setValue('600519')
+    await wrapper.find('.search-field button').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(recordedItems).toHaveLength(1)
+    expect(recordedItems[0]).toMatchObject({
+      symbol: 'sh600519',
+      name: '贵州茅台',
+      price: 1234,
+      changePercent: 1.8
+    })
+    expect(wrapper.vm.historyList[0]).toMatchObject({
+      id: 101,
+      symbol: 'sh600519',
+      name: '贵州茅台'
+    })
+
+    await wrapper.vm.refreshChartData('sh600519')
+    await flushPromises()
+    await flushPromises()
+
+    expect(recordedItems).toHaveLength(1)
+  })
+
+  it('keeps quote visible when history recording fails after a successful manual query', async () => {
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url, options = {}) => {
+        if (url === '/api/stocks/history') {
+          if (options.method === 'POST') {
+            return makeResponse({ ok: false, status: 500, text: async () => JSON.stringify({ message: '保存失败' }) })
+          }
+
+          return makeResponse({ ok: true, status: 200, json: async () => ([]) })
+        }
+
+        if (String(url).startsWith('/api/stocks/detail/cache?')) {
+          return makeResponse({ ok: false, status: 404, json: async () => ({}) })
+        }
+
+        if (String(url).startsWith('/api/stocks/chart?')) {
+          const params = new URLSearchParams(String(url).split('?')[1])
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              quote: {
+                name: '浦发银行',
+                symbol: params.get('symbol') || '',
+                price: 10.1,
+                change: 0,
+                changePercent: 1.2,
+                turnoverRate: 1.5,
+                peRatio: 8,
+                high: 10.3,
+                low: 9.8,
+                speed: 0.2
+              },
+              kLines: [],
+              minuteLines: [],
+              messages: []
+            })
+          })
+        }
+
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.search-field input').setValue('600000')
+    await wrapper.find('.search-field button').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.vm.detail?.quote?.symbol).toBe('sh600000')
+    expect(wrapper.vm.detail?.quote?.price).toBe(10.1)
+    expect(wrapper.vm.error).toBe('')
+    expect(wrapper.vm.historyError).toBe('保存失败')
   })
 
   it('starts cache and live chart requests in parallel', async () => {
@@ -2106,6 +2699,75 @@ describe('StockInfoTab', () => {
     expect(chartCall).toBeTruthy()
     expect(String(chartCall[0])).toContain('includeQuote=false')
     expect(String(chartCall[0])).toContain('includeMinute=true')
+  })
+
+  it('refreshes the chart every second only when minute TD sequential is enabled in minute view', async () => {
+    vi.useFakeTimers()
+    const { fetchMock } = createChatFetchMock()
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      const wrapper = mount(StockInfoTab)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      const input = wrapper.find('.search-field input')
+      const button = wrapper.find('.search-field button')
+
+      await input.setValue('600000')
+      await button.trigger('click')
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      fetchMock.mockClear()
+
+      const chart = wrapper.findComponent({ name: 'StockCharts' })
+      chart.vm.$emit('strategy-visibility-change', {
+        viewId: 'minute',
+        strategyId: 'minuteTdSequential',
+        active: true,
+        visibilityState: { minuteTdSequential: true }
+      })
+      await wrapper.vm.$nextTick()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(fetchMock.mock.calls.filter(args => String(args[0]).startsWith('/api/stocks/chart?'))).toHaveLength(0)
+
+      chart.vm.$emit('view-change', 'minute')
+      await wrapper.vm.$nextTick()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      const chartCallsAfterEnable = fetchMock.mock.calls.filter(args => String(args[0]).startsWith('/api/stocks/chart?'))
+      expect(chartCallsAfterEnable).toHaveLength(1)
+      expect(String(chartCallsAfterEnable[0][0])).toContain('includeQuote=false')
+      expect(String(chartCallsAfterEnable[0][0])).toContain('includeMinute=true')
+
+      chart.vm.$emit('strategy-visibility-change', {
+        viewId: 'minute',
+        strategyId: 'minuteTdSequential',
+        active: false,
+        visibilityState: { minuteTdSequential: false }
+      })
+      await wrapper.vm.$nextTick()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(fetchMock.mock.calls.filter(args => String(args[0]).startsWith('/api/stocks/chart?'))).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('requests quote in chart payload for a newly searched stock without cache', async () => {
@@ -2949,7 +3611,17 @@ describe('StockInfoTab', () => {
     const { fetchMock } = createChatFetchMock({
       handle: async (url, options = {}) => {
         if (url === '/api/stocks/agents/history' && options.method === 'POST') {
-          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 42 }) })
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              id: 42,
+              symbol: 'sz000021',
+              createdAt: '2026-03-23T02:00:00Z',
+              isCommanderComplete: true,
+              commanderBlockedReason: null
+            })
+          })
         }
 
         if (url === '/api/stocks/plans/draft' && options.method === 'POST') {
@@ -3083,6 +3755,30 @@ describe('StockInfoTab', () => {
     }
     wrapper.vm.agentResults = [
       {
+        agentId: 'stock_news',
+        agentName: '个股资讯Agent',
+        success: true,
+        data: { summary: '公告正常' }
+      },
+      {
+        agentId: 'sector_news',
+        agentName: '板块资讯Agent',
+        success: true,
+        data: { summary: '板块偏强' }
+      },
+      {
+        agentId: 'financial_analysis',
+        agentName: '个股分析Agent',
+        success: true,
+        data: { summary: '财务结构稳定' }
+      },
+      {
+        agentId: 'trend_analysis',
+        agentName: '走势分析Agent',
+        success: true,
+        data: { summary: '趋势向上' }
+      },
+      {
         agentId: 'commander',
         agentName: '指挥Agent',
         success: true,
@@ -3135,14 +3831,24 @@ describe('StockInfoTab', () => {
     const { fetchMock } = createChatFetchMock({
       handle: async (url, options = {}) => {
         if (url === '/api/stocks/agents/history' && options.method === 'POST') {
-          return makeResponse({ ok: true, status: 200, json: async () => ({ id: 88 }) })
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              id: 88,
+              symbol: 'sh600000',
+              createdAt: '2026-03-23T02:00:00Z',
+              isCommanderComplete: true,
+              commanderBlockedReason: null
+            })
+          })
         }
 
         if (String(url).startsWith('/api/stocks/agents/history?')) {
           return makeResponse({
             ok: true,
             status: 200,
-            json: async () => ([{ id: 88, symbol: 'sh600000', createdAt: '2026-03-23T02:00:00Z' }])
+            json: async () => ([{ id: 88, symbol: 'sh600000', createdAt: '2026-03-23T02:00:00Z', isCommanderComplete: true, commanderBlockedReason: null }])
           })
         }
 
@@ -3185,6 +3891,30 @@ describe('StockInfoTab', () => {
       messages: []
     }
     wrapper.vm.agentResults = [
+      {
+        agentId: 'stock_news',
+        agentName: '个股资讯Agent',
+        success: true,
+        data: { summary: '公告正常' }
+      },
+      {
+        agentId: 'sector_news',
+        agentName: '板块资讯Agent',
+        success: true,
+        data: { summary: '银行板块偏强' }
+      },
+      {
+        agentId: 'financial_analysis',
+        agentName: '个股分析Agent',
+        success: true,
+        data: { summary: '财务结构稳定' }
+      },
+      {
+        agentId: 'trend_analysis',
+        agentName: '走势分析Agent',
+        success: true,
+        data: { summary: '趋势向上' }
+      },
       {
         agentId: 'commander',
         agentName: '指挥Agent',

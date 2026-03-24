@@ -32,6 +32,55 @@ const TD_MARKER_STYLES = Object.freeze({
   sellStrong: { color: '#ef4444', lineSize: 2, textSize: 12, textWeight: '700' }
 })
 
+const TD_MARKER_PRICE_OFFSETS = Object.freeze({
+  buyWeak: 0.99,
+  buyStrong: 0.982,
+  sellWeak: 1.01,
+  sellStrong: 1.018
+})
+
+const MINUTE_TD_MARKER_PRICE_OFFSETS = Object.freeze({
+  buyWeak: 0.9996,
+  buyStrong: 0.9992,
+  sellWeak: 1.0004,
+  sellStrong: 1.0008
+})
+
+const collapseCompletedTdRuns = markers => {
+  const collapsed = []
+  let run = []
+
+  const flushRun = () => {
+    if (!run.length) {
+      return
+    }
+
+    const completedMarker = run.find(item => item.count === 9)
+    if (completedMarker) {
+      collapsed.push(completedMarker)
+    } else {
+      collapsed.push(...run)
+    }
+    run = []
+  }
+
+  markers.forEach(marker => {
+    const previous = run.at(-1)
+    const isSameRun = previous
+      && previous.direction === marker.direction
+      && marker.count === previous.count + 1
+
+    if (!isSameRun) {
+      flushRun()
+    }
+
+    run.push(marker)
+  })
+
+  flushRun()
+  return collapsed
+}
+
 const roundNumber = (value, precision = 4) => {
   const number = Number(value)
   if (!Number.isFinite(number)) return null
@@ -186,10 +235,24 @@ const buildMaCrossMarkers = records => {
   return markers
 }
 
-const buildTdSequentialMarkers = records => {
+const buildTdSequentialMarkers = (records, options = {}) => {
+  const {
+    priceOffsets = TD_MARKER_PRICE_OFFSETS,
+    collapseCompletedRuns = false
+  } = options
   const markers = []
-  let buyCount = 0
-  let sellCount = 0
+  let activeDirection = null
+  let activeCount = 0
+
+  const resolveTdDirection = (currentClose, referenceClose, previousDirection) => {
+    if (currentClose > referenceClose) {
+      return 'sell'
+    }
+    if (currentClose < referenceClose) {
+      return 'buy'
+    }
+    return previousDirection
+  }
 
   const pushTdMarker = ({ direction, count, timestamp, high, low }) => {
     if (count < 6) {
@@ -201,11 +264,16 @@ const buildTdSequentialMarkers = records => {
     const markerStyle = isBuy
       ? (isStrong ? TD_MARKER_STYLES.buyStrong : TD_MARKER_STYLES.buyWeak)
       : (isStrong ? TD_MARKER_STYLES.sellStrong : TD_MARKER_STYLES.sellWeak)
+    const valueOffset = isBuy
+      ? (isStrong ? priceOffsets.buyStrong : priceOffsets.buyWeak)
+      : (isStrong ? priceOffsets.sellStrong : priceOffsets.sellWeak)
 
     markers.push({
       id: `td-sequential-${direction}-${count}-${timestamp}`,
       timestamp,
-      value: roundPrice(isBuy ? low * (isStrong ? 0.982 : 0.99) : high * (isStrong ? 1.018 : 1.01)),
+      value: roundPrice((isBuy ? low : high) * valueOffset),
+      direction,
+      count,
       text: `${isBuy ? 'TD买' : 'TD卖'}${count}`,
       color: markerStyle.color,
       lineSize: markerStyle.lineSize,
@@ -222,36 +290,28 @@ const buildTdSequentialMarkers = records => {
     const timestamp = Number(records[index]?.timestamp)
 
     if (![currentClose, referenceClose, high, low, timestamp].every(Number.isFinite)) {
-      buyCount = 0
-      sellCount = 0
+      activeDirection = null
+      activeCount = 0
       continue
     }
 
-    if (currentClose > referenceClose) {
-      sellCount += 1
-      buyCount = 0
-      pushTdMarker({ direction: 'sell', count: sellCount, timestamp, high, low })
-      if (sellCount === 9) {
-        sellCount = 0
-      }
+    const nextDirection = resolveTdDirection(currentClose, referenceClose, activeDirection)
+    if (!nextDirection) {
+      activeDirection = null
+      activeCount = 0
       continue
     }
 
-    if (currentClose < referenceClose) {
-      buyCount += 1
-      sellCount = 0
-      pushTdMarker({ direction: 'buy', count: buyCount, timestamp, high, low })
-      if (buyCount === 9) {
-        buyCount = 0
-      }
-      continue
-    }
+    const previousCount = activeDirection === nextDirection ? activeCount : 0
+    activeDirection = nextDirection
+    activeCount = previousCount >= 9 ? 9 : previousCount + 1
 
-    buyCount = 0
-    sellCount = 0
+    if (activeCount > previousCount) {
+      pushTdMarker({ direction: activeDirection, count: activeCount, timestamp, high, low })
+    }
   }
 
-  return markers
+  return collapseCompletedRuns ? collapseCompletedTdRuns(markers) : markers
 }
 
 const calculateMacdSeries = (records, shortPeriod = 12, longPeriod = 26, signalPeriod = 9) => {
@@ -1056,6 +1116,35 @@ const CHART_STRATEGIES = Object.freeze([
     requires: ['close'],
     compute: ({ records }) => {
       const markers = buildTdSequentialMarkers(records)
+      return markers.length ? { markers } : null
+    }
+  }),
+  createStrategyDefinition({
+    id: 'minuteTdSequential',
+    label: '分时九转',
+    category: 'signal',
+    kind: 'marker',
+    accentColor: '#22c55e',
+    accentSecondaryColor: '#ef4444',
+    help: createHelp(
+      '分时九转沿用 TD setup 的四周期比较逻辑，用分时收盘价寻找盘中衰竭位。',
+      '当分时连续 9 根都弱于或强于各自 4 根之前的收盘价时，往往说明盘中节奏已进入后半段。',
+      '它只适合盘中节奏观察，必须和 VWAP、量能、关键价位一起看，不能单独当成反转确认。'
+    ),
+    lineLegends: [
+      createLineLegend('#86efac', '分时买6-7', '盘中买方序列后半段预警，说明下行节奏正在接近衰竭。'),
+      createLineLegend('#22c55e', '分时买8-9', '盘中买方序列强提示，通常更接近分时反抽观察位。'),
+      createLineLegend('#fca5a5', '分时卖6-7', '盘中卖方序列后半段预警，说明上行节奏已明显过热。'),
+      createLineLegend('#ef4444', '分时卖8-9', '盘中卖方序列强提示，通常更接近分时回落观察位。')
+    ],
+    supportedViews: ['minute'],
+    defaultVisible: false,
+    requires: ['close'],
+    compute: ({ records }) => {
+      const markers = buildTdSequentialMarkers(records, {
+        priceOffsets: MINUTE_TD_MARKER_PRICE_OFFSETS,
+        collapseCompletedRuns: true
+      })
       return markers.length ? { markers } : null
     }
   }),

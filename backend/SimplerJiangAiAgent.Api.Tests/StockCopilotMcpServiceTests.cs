@@ -36,6 +36,20 @@ public sealed class StockCopilotMcpServiceTests
     }
 
     [Fact]
+    public async Task GetNewsAsync_ShouldStripNavigationNoiseFromEvidenceSnippet()
+    {
+        var service = CreateService(queryTool: new FakeQueryLocalFactDatabaseTool(
+            excerpt: "财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金 这是一条真正的公告摘要，说明本次事项未见新增重大风险。",
+            summary: "财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金"));
+
+        var result = await service.GetNewsAsync("sh600000", "stock", "task-news-clean");
+
+        var evidence = Assert.Single(result.Evidence);
+        Assert.Equal("这是一条真正的公告摘要，说明本次事项未见新增重大风险。", evidence.Excerpt);
+        Assert.Equal(evidence.Excerpt, evidence.Summary);
+    }
+
+    [Fact]
     public async Task SearchAsync_WhenProviderDisabled_ShouldReturnExternalGatedDegradedEnvelope()
     {
         var service = CreateService(new StockCopilotSearchOptions { Enabled = false, Provider = "tavily" });
@@ -48,11 +62,32 @@ public sealed class StockCopilotMcpServiceTests
         Assert.NotEmpty(result.Warnings);
     }
 
-    private static StockCopilotMcpService CreateService(StockCopilotSearchOptions? options = null)
+    [Fact]
+    public async Task GetStrategyAsync_ShouldTreatEqualClosesAsTdContinuation()
+    {
+        var closes = new decimal[] { 10m, 11m, 12m, 13m, 14m, 15m, 16m, 17m, 18m, 15m, 16m, 18m, 19m };
+        var service = CreateService(dataService: new FakeStockDataService(
+            kLines: closes.Select((close, index) => new KLinePointDto(
+                new DateTime(2026, 4, 1).AddDays(index),
+                close,
+                close,
+                close + 0.2m,
+                close - 0.2m,
+                1000m + index * 50m)).ToArray()));
+
+        var result = await service.GetStrategyAsync("sh600000", "day", 60, null, new[] { "td" }, "task-td");
+
+        var tdSignal = Assert.Single(result.Data.Signals);
+        Assert.Equal("td", tdSignal.Strategy);
+        Assert.Equal("setup_up", tdSignal.Signal);
+        Assert.Equal(9m, tdSignal.NumericValue);
+    }
+
+    private static StockCopilotMcpService CreateService(StockCopilotSearchOptions? options = null, IStockDataService? dataService = null, IQueryLocalFactDatabaseTool? queryTool = null)
     {
         return new StockCopilotMcpService(
-            new FakeStockDataService(),
-            new FakeQueryLocalFactDatabaseTool(),
+            dataService ?? new FakeStockDataService(),
+            queryTool ?? new FakeQueryLocalFactDatabaseTool(),
             new FakeStockMarketContextService(),
             new StockAgentFeatureEngineeringService(),
             new FakeHttpClientFactory(),
@@ -61,6 +96,24 @@ public sealed class StockCopilotMcpServiceTests
 
     private sealed class FakeStockDataService : IStockDataService
     {
+        private readonly IReadOnlyList<KLinePointDto> _kLines;
+        private readonly IReadOnlyList<MinuteLinePointDto> _minuteLines;
+
+        public FakeStockDataService(
+            IReadOnlyList<KLinePointDto>? kLines = null,
+            IReadOnlyList<MinuteLinePointDto>? minuteLines = null)
+        {
+            _kLines = kLines ?? Enumerable.Range(0, 30)
+                .Select(index => new KLinePointDto(new DateTime(2026, 2, 1).AddDays(index), 9.8m + index * 0.02m, 9.9m + index * 0.02m, 10m + index * 0.02m, 9.7m + index * 0.02m, 1000 + index * 20))
+                .ToArray();
+            _minuteLines = minuteLines ?? new[]
+            {
+                new MinuteLinePointDto(new DateOnly(2026, 3, 21), new TimeSpan(9, 30, 0), 10.2m, 10.2m, 100),
+                new MinuteLinePointDto(new DateOnly(2026, 3, 21), new TimeSpan(10, 0, 0), 10.3m, 10.25m, 180),
+                new MinuteLinePointDto(new DateOnly(2026, 3, 21), new TimeSpan(14, 50, 0), 10.45m, 10.32m, 220)
+            };
+        }
+
         public Task<StockQuoteDto> GetQuoteAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new StockQuoteDto(symbol, "浦发银行", 10.5m, 0.2m, 1.9m, 13m, 8m, 10.7m, 10.1m, 0.1m, new DateTime(2026, 3, 21, 10, 0, 0), Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(), 320_000_000_000m, 2.8m, 100000, "银行"));
@@ -73,21 +126,12 @@ public sealed class StockCopilotMcpServiceTests
 
         public Task<IReadOnlyList<KLinePointDto>> GetKLineAsync(string symbol, string interval, int count, string? source = null, CancellationToken cancellationToken = default)
         {
-            IReadOnlyList<KLinePointDto> data = Enumerable.Range(0, 30)
-                .Select(index => new KLinePointDto(new DateTime(2026, 2, 1).AddDays(index), 9.8m + index * 0.02m, 9.9m + index * 0.02m, 10m + index * 0.02m, 9.7m + index * 0.02m, 1000 + index * 20))
-                .ToArray();
-            return Task.FromResult(data);
+            return Task.FromResult(_kLines);
         }
 
         public Task<IReadOnlyList<MinuteLinePointDto>> GetMinuteLineAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
         {
-            IReadOnlyList<MinuteLinePointDto> data = new[]
-            {
-                new MinuteLinePointDto(new DateOnly(2026, 3, 21), new TimeSpan(9, 30, 0), 10.2m, 10.2m, 100),
-                new MinuteLinePointDto(new DateOnly(2026, 3, 21), new TimeSpan(10, 0, 0), 10.3m, 10.25m, 180),
-                new MinuteLinePointDto(new DateOnly(2026, 3, 21), new TimeSpan(14, 50, 0), 10.45m, 10.32m, 220)
-            };
-            return Task.FromResult(data);
+            return Task.FromResult(_minuteLines);
         }
 
         public Task<IReadOnlyList<IntradayMessageDto>> GetIntradayMessagesAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
@@ -102,6 +146,15 @@ public sealed class StockCopilotMcpServiceTests
 
     private sealed class FakeQueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
     {
+        private readonly string? _excerpt;
+        private readonly string? _summary;
+
+        public FakeQueryLocalFactDatabaseTool(string? excerpt = "公告摘要", string? summary = "公告摘要")
+        {
+            _excerpt = excerpt;
+            _summary = summary;
+        }
+
         public Task<LocalFactPackageDto> QueryAsync(string symbol, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new LocalFactPackageDto(
@@ -110,7 +163,7 @@ public sealed class StockCopilotMcpServiceTests
                 "银行",
                 new[]
                 {
-                    new LocalNewsItemDto(1, "stock_news:1", "浦发银行公告", null, "上交所公告", "announcement", "announcement", "利好", new DateTime(2026, 3, 21, 8, 30, 0), new DateTime(2026, 3, 21, 8, 31, 0), "https://example.com/a", "公告摘要", "公告摘要", "local_fact", "summary_only", new DateTime(2026, 3, 21, 8, 31, 0), "个股:浦发银行", new[] { "公告" })
+                    new LocalNewsItemDto(1, "stock_news:1", "浦发银行公告", null, "上交所公告", "announcement", "announcement", "利好", new DateTime(2026, 3, 21, 8, 30, 0), new DateTime(2026, 3, 21, 8, 31, 0), "https://example.com/a", _excerpt, _summary, "local_fact", "summary_only", new DateTime(2026, 3, 21, 8, 31, 0), "个股:浦发银行", new[] { "公告" })
                 },
                 Array.Empty<LocalNewsItemDto>(),
                 Array.Empty<LocalNewsItemDto>(),
@@ -122,7 +175,7 @@ public sealed class StockCopilotMcpServiceTests
         {
             return Task.FromResult(new LocalNewsBucketDto(symbol, level, "银行", new[]
             {
-                new LocalNewsItemDto(1, "stock_news:1", "浦发银行公告", null, "上交所公告", "announcement", level, "利好", new DateTime(2026, 3, 21, 8, 30, 0), new DateTime(2026, 3, 21, 8, 31, 0), "https://example.com/a", "公告摘要", "公告摘要", "local_fact", "summary_only", new DateTime(2026, 3, 21, 8, 31, 0), "个股:浦发银行", new[] { "公告" })
+                new LocalNewsItemDto(1, "stock_news:1", "浦发银行公告", null, "上交所公告", "announcement", level, "利好", new DateTime(2026, 3, 21, 8, 30, 0), new DateTime(2026, 3, 21, 8, 31, 0), "https://example.com/a", _excerpt, _summary, "local_fact", "summary_only", new DateTime(2026, 3, 21, 8, 31, 0), "个股:浦发银行", new[] { "公告" })
             }));
         }
 

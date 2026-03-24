@@ -18,7 +18,9 @@ public sealed record StockAgentHistoryItemDto(
     string Symbol,
     string Name,
     string? Summary,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    bool IsCommanderComplete,
+    string? CommanderBlockedReason
 );
 
 public sealed record StockAgentHistoryDetailDto(
@@ -27,5 +29,7 @@ public sealed record StockAgentHistoryDetailDto(
     string Name,
     string? Summary,
     DateTime CreatedAt,
-    JsonElement Result
+    JsonElement Result,
+    bool IsCommanderComplete,
+    string? CommanderBlockedReason
 );

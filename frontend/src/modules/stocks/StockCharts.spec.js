@@ -17,6 +17,10 @@ const chartMocks = vi.hoisted(() => ({
   minuteRemoveOverlayCalls: [],
   klineStyleCalls: [],
   minuteStyleCalls: [],
+  klineSetZoomEnabledMock: vi.fn(),
+  minuteSetZoomEnabledMock: vi.fn(),
+  klineSetScrollEnabledMock: vi.fn(),
+  minuteSetScrollEnabledMock: vi.fn(),
   klineResizeMock: vi.fn(),
   minuteResizeMock: vi.fn(),
   klineSubscribeActionMock: vi.fn(),
@@ -39,6 +43,8 @@ vi.mock('klinecharts', () => {
     const targetRemoveIndicators = kind === 'kline' ? chartMocks.klineRemoveIndicatorCalls : chartMocks.minuteRemoveIndicatorCalls
     const targetRemoveOverlays = kind === 'kline' ? chartMocks.klineRemoveOverlayCalls : chartMocks.minuteRemoveOverlayCalls
     const targetStyles = kind === 'kline' ? chartMocks.klineStyleCalls : chartMocks.minuteStyleCalls
+    const targetSetZoomEnabled = kind === 'kline' ? chartMocks.klineSetZoomEnabledMock : chartMocks.minuteSetZoomEnabledMock
+    const targetSetScrollEnabled = kind === 'kline' ? chartMocks.klineSetScrollEnabledMock : chartMocks.minuteSetScrollEnabledMock
     const targetResize = kind === 'kline' ? chartMocks.klineResizeMock : chartMocks.minuteResizeMock
     const targetSubscribe = kind === 'kline' ? chartMocks.klineSubscribeActionMock : chartMocks.minuteSubscribeActionMock
     let loader = null
@@ -59,6 +65,8 @@ vi.mock('klinecharts', () => {
     }
 
     return {
+      setZoomEnabled: targetSetZoomEnabled,
+      setScrollEnabled: targetSetScrollEnabled,
       setStyles: vi.fn(styles => {
         targetStyles.push(styles)
       }),
@@ -126,6 +134,10 @@ describe('StockCharts', () => {
     chartMocks.minuteRemoveOverlayCalls.length = 0
     chartMocks.klineStyleCalls.length = 0
     chartMocks.minuteStyleCalls.length = 0
+    chartMocks.klineSetZoomEnabledMock.mockClear()
+    chartMocks.minuteSetZoomEnabledMock.mockClear()
+    chartMocks.klineSetScrollEnabledMock.mockClear()
+    chartMocks.minuteSetScrollEnabledMock.mockClear()
     chartMocks.klineResizeMock.mockClear()
     chartMocks.minuteResizeMock.mockClear()
     chartMocks.klineSubscribeActionMock.mockClear()
@@ -202,7 +214,8 @@ describe('StockCharts', () => {
     expect(minuteSeriesData[0].open).toBe(31.1)
     expect(minuteSeriesData[1].open).toBe(31.1)
     expect(minuteSeriesData[1].volume).toBe(500)
-    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.lineColor).toBe('rgba(148, 163, 184, 0)')
+    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.lineColor).toBe('#ef4444')
+    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.backgroundColor?.[0]?.color).toBe('rgba(239, 68, 68, 0.18)')
     expect(chartMocks.minuteStyleCalls.at(-1)?.indicator?.bars?.[0]?.upColor).toBe('#ef4444')
     expect(chartMocks.minuteStyleCalls.at(-1)?.indicator?.bars?.[0]?.downColor).toBe('#22c55e')
 
@@ -215,6 +228,58 @@ describe('StockCharts', () => {
     expect(minuteAiOverlays[0].points[0].value).toBe(32)
     expect(minuteAiOverlays[1].points[0].value).toBe(30.5)
     expect(minuteBaseOverlay?.points[0].value).toBe(31.1)
+  })
+
+  it('does not force-disable zoom and scroll on minute charts', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        width: 600,
+        height: 300,
+        top: 0,
+        left: 0,
+        right: 600,
+        bottom: 300
+      })
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 300
+      }
+    })
+
+    mount(StockCharts, {
+      props: {
+        interval: 'day',
+        basePrice: 31.1,
+        minuteLines: [
+          { date: '2026-01-29', time: '09:31:00', price: 31.2, volume: 2300 },
+          { date: '2026-01-29', time: '09:32:00', price: 31.28, volume: 2600 }
+        ],
+        kLines: [
+          { date: '2026-01-28', open: 30.6, high: 31.0, low: 30.4, close: 30.9, volume: 102300 },
+          { date: '2026-01-29', open: 30.9, high: 31.4, low: 30.8, close: 31.2, volume: 124500 }
+        ],
+        aiLevels: {
+          resistance: 31.8,
+          support: 30.5
+        }
+      }
+    })
+
+    await nextTick()
+
+    expect(chartMocks.minuteSetZoomEnabledMock).not.toHaveBeenCalled()
+    expect(chartMocks.minuteSetScrollEnabledMock).not.toHaveBeenCalled()
+    expect(chartMocks.klineSetZoomEnabledMock).not.toHaveBeenCalled()
+    expect(chartMocks.klineSetScrollEnabledMock).not.toHaveBeenCalled()
   })
 
   it('sorts kline data and includes candlestick + volume + MA overlays', async () => {
@@ -554,10 +619,10 @@ describe('StockCharts', () => {
 
     await nextTick()
 
-    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.lineColor).toBe('rgba(148, 163, 184, 0)')
+    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.lineColor).toBe('#22c55e')
   })
 
-  it('renders segmented minute lines, stronger fill, and colored right-axis labels', async () => {
+  it('uses built-in minute chart rendering instead of the custom svg overlay', async () => {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
       get() {
@@ -591,21 +656,11 @@ describe('StockCharts', () => {
     await minuteTab.trigger('click')
     await nextTick()
 
-    const segments = wrapper.findAll('.minute-segment-line')
-    expect(segments).toHaveLength(3)
-    expect(segments[0].classes()).toContain('minute-segment-up')
-    expect(segments[1].classes()).toContain('minute-segment-down')
-    expect(segments[2].classes()).toContain('minute-segment-up')
-
-    const fillPath = wrapper.find('.minute-fill-path')
-    expect(fillPath.exists()).toBe(true)
-    expect(fillPath.attributes('fill')).toBe('#ef4444')
-    expect(fillPath.attributes('fill-opacity')).toBe('0.18')
-
-    const labels = wrapper.findAll('.minute-axis-label')
-    expect(labels).toHaveLength(5)
-    expect(labels.some(label => label.classes().includes('minute-axis-up'))).toBe(true)
-    expect(labels.some(label => label.classes().includes('minute-axis-down'))).toBe(true)
+    expect(wrapper.find('.minute-segment-overlay').exists()).toBe(false)
+    expect(wrapper.find('.minute-axis-overlay').exists()).toBe(false)
+    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.lineColor).toBe('#ef4444')
+    expect(chartMocks.minuteStyleCalls.at(-1)?.candle?.area?.backgroundColor?.[0]?.color).toBe('rgba(239, 68, 68, 0.18)')
+    expect(chartMocks.minuteStyleCalls.at(-1)?.xAxis?.tickText?.color).toBe('#94a3b8')
   })
 
   it('toggles kline MA and AI chips to control overlays', async () => {
@@ -976,6 +1031,125 @@ describe('StockCharts', () => {
     await nextTick()
 
     expect(wrapper.findAll('.chart-chip-button').some(button => button.text() === 'TD九转')).toBe(false)
+  })
+
+  it('renders minute TD sequential markers and emits minute strategy visibility changes', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 320
+      }
+    })
+
+    const minuteLines = Array.from({ length: 13 }, (_, index) => ({
+      date: '2026-03-24',
+      time: `09:${String(30 + index).padStart(2, '0')}:00`,
+      price: 10 + index * 0.2,
+      volume: 1000 + index * 100
+    }))
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines: [],
+        minuteLines,
+        basePrice: 9.8,
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+
+    const minuteTab = wrapper.findAll('.tab').find(tab => tab.text() === '分时图')
+    expect(minuteTab).toBeTruthy()
+    await minuteTab.trigger('click')
+    await nextTick()
+
+    expect(wrapper.emitted('view-change')?.at(-1)).toEqual(['minute'])
+
+    const tdChip = wrapper.findAll('.chart-chip-button').find(button => button.text() === '分时九转')
+    expect(tdChip).toBeTruthy()
+    await tdChip.trigger('click')
+    await nextTick()
+
+    const visibilityEvent = wrapper.emitted('strategy-visibility-change')?.at(-1)?.[0]
+    expect(visibilityEvent).toMatchObject({
+      viewId: 'minute',
+      strategyId: 'minuteTdSequential',
+      active: true
+    })
+
+    const markerOverlays = chartMocks.minuteOverlayCalls.filter(item => item?.groupId === 'minute-markers' && item?.name === 'simpleAnnotation')
+    const uniqueTdOverlays = Array.from(new Map(
+      markerOverlays
+        .filter(item => /^TD[买卖][1-9]$/.test(item.extendData ?? ''))
+        .map(item => [`${item.extendData}-${item.points?.[0]?.timestamp}`, item])
+    ).values())
+
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖6')).toBe(false)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖7')).toBe(false)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖8')).toBe(false)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖9')).toBe(true)
+    expect(uniqueTdOverlays.find(item => item.extendData === 'TD卖9')?.points?.[0]?.value).toBe(12.41)
+  })
+
+  it('treats equal closes as continuation so TD setup does not lag by two bars', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 600
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return 320
+      }
+    })
+
+    const closes = [10, 11, 12, 13, 14, 15, 16, 17, 18, 15, 16, 18, 19]
+    const kLines = closes.map((close, index) => ({
+      date: `2026-04-${String(index + 1).padStart(2, '0')}`,
+      open: close,
+      close,
+      low: Number((close - 0.2).toFixed(2)),
+      high: Number((close + 0.2).toFixed(2)),
+      volume: 1000 + index * 50
+    }))
+
+    const wrapper = mount(StockCharts, {
+      props: {
+        kLines,
+        minuteLines: [],
+        interval: 'day'
+      }
+    })
+
+    await nextTick()
+
+    const tdChip = wrapper.findAll('.chart-chip-button').find(button => button.text() === 'TD九转')
+    expect(tdChip).toBeTruthy()
+
+    await tdChip.trigger('click')
+    await nextTick()
+
+    const markerOverlays = chartMocks.klineOverlayCalls.filter(item => item?.groupId === 'day-markers' && item?.name === 'simpleAnnotation')
+    const uniqueTdOverlays = Array.from(new Map(
+      markerOverlays
+        .filter(item => /^TD[买卖][1-9]$/.test(item.extendData ?? ''))
+        .map(item => [`${item.extendData}-${item.points?.[0]?.timestamp}`, item])
+    ).values())
+
+    expect(uniqueTdOverlays).toHaveLength(4)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖6')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖7')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖8')).toBe(true)
+    expect(uniqueTdOverlays.some(item => item.extendData === 'TD卖9')).toBe(true)
   })
 
   it('renders MACD cross markers on day view with deterministic buy and sell signals', async () => {

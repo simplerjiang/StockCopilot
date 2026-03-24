@@ -58,18 +58,18 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
 
             var boardTasks = SectorBoardTypes.All.ToDictionary(
                 boardType => boardType,
-                boardType => SafeFetchAsync(
+                boardType => FetchWithFallbackAsync(
                     () => _client.GetBoardRankingsAsync(boardType, _options.BoardPageSize, cancellationToken),
                     Array.Empty<EastmoneySectorBoardRow>(),
                     $"板块榜单 {boardType}"));
-            var breadthTask = SafeFetchAsync(
+            var breadthTask = FetchWithFallbackAsync(
                 () => _client.GetMarketBreadthAsync(_options.BreadthSampleSize, cancellationToken),
                 new EastmoneyMarketBreadthSnapshot(0, 0, 0, 0m),
                 "市场广度");
-            var limitUpTask = SafeFetchAsync(() => _client.GetLimitUpCountAsync(tradingDate, cancellationToken), 0, "涨停池");
-            var limitDownTask = SafeFetchAsync(() => _client.GetLimitDownCountAsync(tradingDate, cancellationToken), 0, "跌停池");
-            var brokenBoardTask = SafeFetchAsync(() => _client.GetBrokenBoardCountAsync(tradingDate, cancellationToken), 0, "炸板池");
-            var maxStreakTask = SafeFetchAsync(() => _client.GetMaxLimitUpStreakAsync(tradingDate, cancellationToken), 0, "连板高度");
+            var limitUpTask = FetchWithFallbackAsync(() => _client.GetLimitUpCountAsync(tradingDate, cancellationToken), 0, "涨停池");
+            var limitDownTask = FetchWithFallbackAsync(() => _client.GetLimitDownCountAsync(tradingDate, cancellationToken), 0, "跌停池");
+            var brokenBoardTask = FetchWithFallbackAsync(() => _client.GetBrokenBoardCountAsync(tradingDate, cancellationToken), 0, "炸板池");
+            var maxStreakTask = FetchWithFallbackAsync(() => _client.GetMaxLimitUpStreakAsync(tradingDate, cancellationToken), 0, "连板高度");
 
             await Task.WhenAll(boardTasks.Values.Cast<Task>()
                 .Append(breadthTask)
@@ -78,23 +78,28 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 .Append(brokenBoardTask)
                 .Append(maxStreakTask));
 
-            var allRows = boardTasks.SelectMany(pair => pair.Value.Result).ToList();
+            var allRows = boardTasks.SelectMany(pair => pair.Value.Result.Value).ToList();
+            var breadthSnapshot = breadthTask.Result.Value;
+            var limitUpCount = limitUpTask.Result.Value;
+            var limitDownCount = limitDownTask.Result.Value;
+            var brokenBoardCount = brokenBoardTask.Result.Value;
+            var maxLimitUpStreak = maxStreakTask.Result.Value;
             var sectorTurnoverBase = allRows.Sum(x => Math.Max(0, x.TurnoverAmount));
-            var totalTurnoverBase = breadthTask.Result.TotalTurnover > 0
-                ? breadthTask.Result.TotalTurnover
+            var totalTurnoverBase = breadthSnapshot.TotalTurnover > 0
+                ? breadthSnapshot.TotalTurnover
                 : sectorTurnoverBase;
             var (top3Share, top10Share) = ComputeTurnoverConcentration(allRows, totalTurnoverBase);
-            var brokenBoardRate = limitUpTask.Result > 0
-                ? brokenBoardTask.Result / (decimal)Math.Max(1, limitUpTask.Result) * 100m
+            var brokenBoardRate = limitUpCount > 0
+                ? brokenBoardCount / (decimal)Math.Max(1, limitUpCount) * 100m
                 : 0m;
             var stageScore = ComputeStageScore(
-                breadthTask.Result.Advancers,
-                breadthTask.Result.Decliners,
-                breadthTask.Result.FlatCount,
-                limitUpTask.Result,
-                limitDownTask.Result,
+                breadthSnapshot.Advancers,
+                breadthSnapshot.Decliners,
+                breadthSnapshot.FlatCount,
+                limitUpCount,
+                limitDownCount,
                 brokenBoardRate,
-                maxStreakTask.Result);
+                maxLimitUpStreak);
             var stageLabel = ResolveStageLabel(stageScore);
 
             var marketSnapshot = new MarketSentimentSnapshot
@@ -104,38 +109,63 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 SessionPhase = ResolveSessionPhase(localNow),
                 StageLabel = stageLabel,
                 StageScore = stageScore,
-                MaxLimitUpStreak = maxStreakTask.Result,
-                LimitUpCount = limitUpTask.Result,
-                LimitDownCount = limitDownTask.Result,
-                BrokenBoardCount = brokenBoardTask.Result,
+                MaxLimitUpStreak = maxLimitUpStreak,
+                LimitUpCount = limitUpCount,
+                LimitDownCount = limitDownCount,
+                BrokenBoardCount = brokenBoardCount,
                 BrokenBoardRate = decimal.Round(brokenBoardRate, 2),
-                Advancers = breadthTask.Result.Advancers,
-                Decliners = breadthTask.Result.Decliners,
-                FlatCount = breadthTask.Result.FlatCount,
+                Advancers = breadthSnapshot.Advancers,
+                Decliners = breadthSnapshot.Decliners,
+                FlatCount = breadthSnapshot.FlatCount,
                 TotalTurnover = decimal.Round(totalTurnoverBase, 2),
                 Top3SectorTurnoverShare = top3Share,
                 Top10SectorTurnoverShare = top10Share,
                 SourceTag = "eastmoney",
                 RawJson = JsonSerializer.Serialize(new
                 {
-                    breadth = breadthTask.Result,
-                    limitUp = limitUpTask.Result,
-                    limitDown = limitDownTask.Result,
-                    brokenBoard = brokenBoardTask.Result,
-                    maxStreak = maxStreakTask.Result
+                    breadth = breadthSnapshot,
+                    limitUp = limitUpCount,
+                    limitDown = limitDownCount,
+                    brokenBoard = brokenBoardCount,
+                    maxStreak = maxLimitUpStreak
                 }),
                 CreatedAt = snapshotTime
-                };
-                _dbContext.MarketSentimentSnapshots.Add(marketSnapshot);
+            };
 
-                var currentSectorSnapshots = new List<SectorRotationSnapshot>();
+            var shouldPersistMarketSnapshot = ShouldPersistMarketSnapshot(
+                marketSnapshot,
+                breadthTask.Result.Succeeded,
+                limitUpTask.Result.Succeeded,
+                limitDownTask.Result.Succeeded,
+                brokenBoardTask.Result.Succeeded,
+                maxStreakTask.Result.Succeeded);
+
+            if (shouldPersistMarketSnapshot)
+            {
+                _dbContext.MarketSentimentSnapshots.Add(marketSnapshot);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "跳过 MarketSentimentSnapshot 落库：关键市场数据抓取不完整。breadth={BreadthSucceeded}, limitUp={LimitUpSucceeded}, limitDown={LimitDownSucceeded}, brokenBoard={BrokenBoardSucceeded}, maxStreak={MaxStreakSucceeded}, turnover={TotalTurnover}, advancers={Advancers}, decliners={Decliners}",
+                    breadthTask.Result.Succeeded,
+                    limitUpTask.Result.Succeeded,
+                    limitDownTask.Result.Succeeded,
+                    brokenBoardTask.Result.Succeeded,
+                    maxStreakTask.Result.Succeeded,
+                    marketSnapshot.TotalTurnover,
+                    marketSnapshot.Advancers,
+                    marketSnapshot.Decliners);
+            }
+
+            var currentSectorSnapshots = new List<SectorRotationSnapshot>();
 
             foreach (var row in allRows)
             {
-                    var members = (await SafeFetchAsync(
+                    var members = (await FetchWithFallbackAsync(
                         () => _client.GetSectorLeadersAsync(row.SectorCode, Math.Max(_options.LeaderTake, _options.SectorMemberTake), cancellationToken),
-                    Array.Empty<EastmoneySectorLeaderRow>(),
-                        $"板块龙头 {row.SectorCode}")).ToList();
+                        Array.Empty<EastmoneySectorLeaderRow>(),
+                        $"板块龙头 {row.SectorCode}")).Value.ToList();
                     var leaders = members.Take(Math.Max(1, _options.LeaderTake)).ToList();
                 var newsInsight = BuildNewsInsight(row.SectorName, reports);
                     var advancerCount = members.Count(x => x.ChangePercent > 0);
@@ -216,7 +246,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             }
 
             await _dbContext.SaveChangesAsync(cancellationToken);
-            await ApplyRollingMetricsAsync(marketSnapshot, currentSectorSnapshots, cancellationToken);
+            await ApplyRollingMetricsAsync(shouldPersistMarketSnapshot ? marketSnapshot : null, currentSectorSnapshots, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex)
@@ -267,7 +297,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
     }
 
     private async Task ApplyRollingMetricsAsync(
-        MarketSentimentSnapshot marketSnapshot,
+        MarketSentimentSnapshot? marketSnapshot,
         IReadOnlyList<SectorRotationSnapshot> currentSectorSnapshots,
         CancellationToken cancellationToken)
     {
@@ -302,6 +332,11 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             }
         }
 
+        if (marketSnapshot is null)
+        {
+            return;
+        }
+
         var marketHistory = await LoadDailyMarketHistoryAsync(marketSnapshot.TradingDate, cancellationToken);
         marketSnapshot.Top3SectorTurnoverShare5dAvg = RoundAverage(marketHistory.Take(5).Select(item => item.Top3SectorTurnoverShare)) ?? marketSnapshot.Top3SectorTurnoverShare;
         marketSnapshot.Top10SectorTurnoverShare5dAvg = RoundAverage(marketHistory.Take(5).Select(item => item.Top10SectorTurnoverShare)) ?? marketSnapshot.Top10SectorTurnoverShare;
@@ -320,18 +355,39 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
         marketSnapshot.StageConfidence = stageConfidence;
     }
 
-    private async Task<T> SafeFetchAsync<T>(Func<Task<T>> action, T fallback, string sourceName)
+    private async Task<FetchResult<T>> FetchWithFallbackAsync<T>(Func<Task<T>> action, T fallback, string sourceName)
     {
         try
         {
-            return await action();
+            return new FetchResult<T>(await action(), true);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "GOAL-009 数据源失败，已降级跳过: {SourceName}", sourceName);
-            return fallback;
+            return new FetchResult<T>(fallback, false);
         }
     }
+
+    private static bool ShouldPersistMarketSnapshot(
+        MarketSentimentSnapshot marketSnapshot,
+        bool breadthSucceeded,
+        bool limitUpSucceeded,
+        bool limitDownSucceeded,
+        bool brokenBoardSucceeded,
+        bool maxStreakSucceeded)
+    {
+        if (!breadthSucceeded || !limitUpSucceeded || !limitDownSucceeded || !brokenBoardSucceeded || !maxStreakSucceeded)
+        {
+            return false;
+        }
+
+        var breadthTotal = marketSnapshot.Advancers + marketSnapshot.Decliners + marketSnapshot.FlatCount;
+        return breadthTotal > 0
+            && marketSnapshot.TotalTurnover > 0
+            && (marketSnapshot.Top3SectorTurnoverShare > 0 || marketSnapshot.Top10SectorTurnoverShare > 0);
+    }
+
+    private sealed record FetchResult<T>(T Value, bool Succeeded);
 
     private static (string sentiment, int hotCount) BuildNewsInsight(string sectorName, IReadOnlyList<LocalSectorReport> reports)
     {

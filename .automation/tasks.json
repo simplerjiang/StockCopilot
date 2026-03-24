@@ -1,6 +1,50 @@
 {
   "tasks": [
     {
+      "id": "MANUAL-20260324-BUGLIST-CLOSEOUT",
+      "title": "Close remaining buglist items",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-24 已完成 buglist 收口。Bug 6/7 经 fresh runtime 复核已不再复现；Bug 8 进一步定位为桌面宿主 `Form1.cs` 的健康探针与自动恢复策略过于激进，而非后台自身稳定崩溃。现已把探针改为 5 秒间隔/5 秒超时、连续 3 次失败且持续失联超过 20 秒才恢复，并新增非重入保护与导航失败二次健康确认。验证包括 `dotnet build .\\desktop\\SimplerJiangAiAgent.Desktop\\SimplerJiangAiAgent.Desktop.csproj` 通过、`.\\scripts\\publish-windows-package.ps1` 通过，以及 packaged desktop 健康页 `http://localhost:5119/api/health` 返回 `{\"status\":\"ok\"}`。对应报告：`.automation/reports/MANUAL-20260324-BUGLIST-CLOSEOUT.md`。"
+    },
+    {
+      "id": "MANUAL-20260324-TD-SEQUENTIAL-FIX",
+      "title": "Daily TD sequential lag fix",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-24 已完成日 K 九转滞后修正。排查结论：前端 `chartStrategyRegistry.js` 与后端 `StockCopilotMcpService.CalculateTdSequential(...)` 都采用严格 `>` / `<`，当 `close == close[4]` 时直接重置计数；这在 A 股常见的 0.01 价位台阶里会吞掉 setup bar，导致相对常见九转口径慢 1-2 根。前端还存在一个附带问题：同方向连续趋势在到达 9 后会立即重新起算，容易生成重复 setup。现已统一为“相等收盘沿用当前 setup 方向、计数可推进到 9，但同方向到 9 后不重复继续发新标记”。验证包括前端单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockCharts.spec.js` 21/21 通过，新增回归样本锁定两根 equality bar 仍能到 `TD卖9`；后端单测 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~StockCopilotMcpServiceTests\"` 4/4 通过，新增回归锁定 MCP `td` 信号计数为 9。Browser MCP 还补做了 backend-served 股票页 `http://localhost:5119/?tab=stock-info` 的最小验收：页面可加载、`sh600000` 查询成功、`TD九转` 文本可见、CopilotBrowser console 0 error。"
+    },
+    {
+      "id": "MANUAL-20260324-MINUTE-TD9-PLAN",
+      "title": "Minute TD9 overlay and 1s refresh planning",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-24 已完成分时九转与开启后 1 秒级刷新落地。实现内容：1) `frontend/src/modules/stocks/charting/chartStrategyRegistry.js` 新增 minute view 专用 `minuteTdSequential`，复用 TD setup 计数逻辑并输出分时买/卖 6-9 标记；2) `frontend/src/modules/stocks/StockCharts.vue` 新增 `view-change` 与 `strategy-visibility-change` 事件，把当前图表视图和策略开关状态抬给父层；3) `frontend/src/modules/stocks/StockInfoTab.vue` 增加 `chartActiveView`、`minuteTdSequentialEnabled` 与专用 `minuteTdSequentialRefreshTimer`，仅在“当前视图=分时 且 分时九转开启 且 当前股票存在”时每秒调用 `refreshChartData(...)`，并继续复用原有 `quoteRequestToken + AbortController` 防并发覆盖；4) `buildChartQuery(...)` 调整为只要当前活动图表视图是分时，就强制携带 `includeMinute=true`，避免秒级刷新拿不到分时数据。验证：`npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockCharts.spec.js` 22/22 通过，新增 minute TD9 marker + visibility emit 回归；`npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 60/60 通过，新增“仅在分时视图且分时九转开启时才每秒刷新”的 fake-timer 回归；Browser MCP 在 backend-served 页面 `http://localhost:5119/?tab=stock-info` 查询 `sh603099` 后切到分时图，确认 `分时九转` 按钮在真实运行态可见并已切到 active 状态，网络请求持续出现 `/api/stocks/chart?...includeMinute=true`；当前唯一 console error 是既有 `/api/stocks/detail/cache?symbol=sh603099` 404，不属于本次改动。开发报告：`.automation/reports/MANUAL-20260324-MINUTE-TD9-DEV.md`。"
+    },
+    {
+      "id": "MANUAL-20260324-V004-PLAN",
+      "title": "v0.0.4 release planning and scope split",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-24 已完成 v0.0.4 首轮规划收口：v0.0.3 Release 文案已按对外发布口径复核并准备补强，下一版本优先级明确为 1) GOAL-AGENT-002-R4 Copilot 验收与 replay 指标，2) GOAL-015 基本面快照与详情加载链路的 UI/Browser MCP 验收收口，3) GOAL-017-R1 量化归一化输入层与 signal contract。目标是先让 Stock Copilot 的产品质量可度量、可回放、可审计，再继续扩展量化深度。"
+    },
+    {
       "id": "MANUAL-20260320-VUE-READABILITY",
       "title": "Vue page readability split refactor",
       "status": "done",
@@ -9,7 +53,7 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "2026-03-20 已完成前端长 Vue 页面可读性拆分，保持行为不变的前提下把 `StockAgentPanels.vue` 拆出 `StockAgentCard.vue`，把 `MarketSentimentTab.vue` 的实时总览拆出 `MarketRealtimeOverview.vue`，把 `StockInfoTab.vue` 的加载进度拆出 `StockSourceLoadProgress.vue`。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockAgentPanels.spec.js src/modules/market/MarketSentimentTab.spec.js src/modules/stocks/StockInfoTab.spec.js` 57/57 通过，以及 Browser MCP 在 `http://localhost:5119/` 实测确认股票页与情绪页渲染正常。情绪页浏览器验收中 `/api/market/sectors?boardType=concept&page=1&pageSize=12&sort=strength` 返回服务端错误，属于现有后端运行态问题，不是本次模板拆分回归。"
+      "notes": "2026-03-20 已完成前端长 Vue 页面可读性拆分，保持行为不变的前提下把 `StockAgentPanels.vue` 拆出 `StockAgentCard.vue`，把 `MarketSentimentTab.vue` 的实时总览拆出 `MarketRealtimeOverview.vue`，把 `StockInfoTab.vue` 的加载进度拆出 `StockSourceLoadProgress.vue`。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockAgentPanels.spec.js src/modules/market/MarketSentimentTab.spec.js src/modules/stocks/StockInfoTab.spec.js` 57/57 通过，以及 Browser MCP 在 `http://localhost:5119/` 实测确认股票页与情绪页渲染正常。情绪页浏览器验收中 `/api/market/sectors?boardType=concept&page=1&pageSize=12&sort=strength` 返回服务端错误，属于现有后端运行态问题，不是本次模板拆分回归。2026-03-24 follow-up：继续针对 `StockInfoTab.vue` 做纯逻辑拆分，在不改行为的前提下新增 `stockInfoTabWorkspace.js`、`stockInfoTabCopilot.js`、`stockInfoTabPlanHelpers.js`，把 workspace 工厂、Copilot tool/result 辅助逻辑和交易计划 gating 规则移出主组件；`StockInfoTab.vue` 行数从 4915 降到 4558，并通过 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 验证 59/59 通过。2026-03-24 second follow-up：把模板里的交易计划区域继续拆成 `StockTradingPlanSection.vue` 与 `StockTradingPlanModal.vue` 两个子组件，父层仍保留计划请求、保存、删除、恢复和 workspace 状态；`StockInfoTab.vue` 行数进一步降到 4428，定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 继续通过。2026-03-24 third follow-up：继续把 `StockInfoTab.vue` 中独立度高的区域拆出到 `stockInfoTabFormatting.js`、`StockSearchToolbar.vue`、`StockTopMarketOverview.vue`、`StockMarketNewsPanel.vue`、`StockNewsImpactPanel.vue`，父层继续保留查询、刷新、缓存和 workspace 编排逻辑；定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 再次 59/59 通过。2026-03-24 fourth follow-up：继续把主视区摘要与交易计划总览拆成 `StockTerminalSummary.vue`、`StockTradingPlanBoard.vue`，并从 `StockInfoTab.vue` 清理已经迁出的搜索、市场、资讯、摘要样式；主文件行数进一步降到 3484。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 通过，以及本地启动后 `Invoke-WebRequest http://localhost:5119/?tab=stock-info` 返回 200、浏览器控制台 error 计数为 0。当前 VS Code 环境未开启 `workbench.browser.enableChatTools`，因此这次浏览器验收无法继续做 DOM 级自动点击，仅完成页面可达性和控制台回归检查。2026-03-24 style-constraint cleanup：对已拆出的 `StockSearchToolbar.vue`、`StockTopMarketOverview.vue`、`StockNewsImpactPanel.vue`、`StockTradingPlanModal.vue` 做了一轮系统样式补漏，补齐 sticky 工具条、搜索下拉与历史列表滚动上限、上下文菜单定位、资讯影响列表滚动、窄屏换行、顶部市场带按钮与文本布局，以及交易计划弹层自身的滚动与响应式表单约束；定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 通过。2026-03-24 trading-plan style decoupling follow-up：继续把 `StockTradingPlanSection.vue` 与 `StockTradingPlanBoard.vue` 的卡片、状态徽标、滚动区和响应式约束本地化，移除 `StockInfoTab.vue` 中残留的交易计划后代样式依赖；过程中顺手修复了父组件顶部 import/workspace 绑定区被误伤的问题，恢复 `stockInfoTabPlanHelpers.js`、`stockInfoTabWorkspace.js`、`stockInfoTabFormatting.js` 与 `tradingPlanReview` 的导入和 realtime/workspace 计算区。验证命令仍为 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js`，结果 59/59 通过。2026-03-24 trading-plan helper follow-up：继续把交易计划纯逻辑从 `StockInfoTab.vue` 抽离到新模块 `stockInfoTabTradingPlans.js`，集中收口计划/市场上下文归一化、表单默认值工厂、realtime context symbol 组装、告警摘要和复盘标题/文案，以及编辑/恢复 gating；同时移除父层残留的交易计划样式。期间修复了一处 helper 新签名导致的 `domesticSymbols is not iterable` 回归，方法是把 `DOMESTIC_REALTIME_CONTEXT_SYMBOLS` 与 `GLOBAL_REALTIME_CONTEXT_SYMBOLS` 显式回传给 `buildRealtimeContextSymbols(...)` 调用点。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 首次暴露 2 个失败、修复后 59/59 通过；`start-all.bat` 完成 packaged desktop 拉起；`Invoke-WebRequest http://localhost:5119/?tab=stock-info` 返回 200；Browser MCP 在 `http://localhost:5119/?tab=stock-info` 实测确认首屏关键请求全部 200、console `error/warn` 为 0，并通过 `展开阅读 -> 关闭` 与 `顶部市场总览带 隐藏 -> 显示` 两组基础交互。2026-03-24 helper extraction follow-up：继续把页面内剩余的大块无状态 JS 从 `StockInfoTab.vue` 拆到 `stockInfoTabRequestUtils.js` 与 `stockInfoTabViewHelpers.js`，集中收口 abort/retry/request message 解析、本地资讯与 realtime overview 归一化、聊天上下文拼装、AI 价位解析、历史排序值计算以及纯视图 class/percent helper；父组件进一步收敛为响应式状态、watch、生命周期和业务编排层。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 通过，`start-all.bat` 重新拉起 packaged desktop 与 backend，`Invoke-WebRequest http://localhost:5119/?tab=stock-info` 返回 200，以及 Browser MCP 重开 `http://localhost:5119/?tab=stock-info` 后 console `error/warn` 为 0。2026-03-24 runtime extraction follow-up：继续处理页面里仍然过长的编排代码，这一轮新增 `stockInfoTabCopilotRuntime.js` 与 `stockInfoTabDataRequests.js`，把 Copilot/chat draft/tool/action/session/history adapter 编排，以及 market news、local news、news impact、trading plans、realtime overview、sources/history 等 request flow 从 `StockInfoTab.vue` 中下沉到可单独阅读的运行时模块；父组件保留 quote/chart 与多 Agent 主流程。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 通过，以及 Browser MCP 重开 `http://localhost:5119/?tab=stock-info` 后确认 `/api/stocks/sources`、`/api/stocks/history`、`/api/news?level=market`、`/api/stocks/plans`、`/api/stocks/plans/alerts`、`/api/market/realtime/overview` 均返回 200，console `error/warn` 为 0。2026-03-24 quote-agent runtime follow-up：继续把 `StockInfoTab.vue` 里最重的剩余主流程下沉到 `stockInfoTabQuoteRuntime.js` 与 `stockInfoTabAgentRuntime.js`，分别收口首次查股/轻量图表刷新，以及多 Agent 历史/保存/顺序执行编排；父组件保留原有公开方法名与 workspace 状态归属。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 通过。本轮 Browser MCP 打开 `http://localhost:5119/?tab=stock-info` 时命中本地 `/api/stocks/plans*` `ERR_CONNECTION_REFUSED`，说明浏览器验收被当前服务态阻塞，未发现由本次前端拆分引入的静态错误或单测回归。"
     },
     {
       "id": "MANUAL-20260319-EXTENSION-INTERFACE",
@@ -174,7 +218,7 @@
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "2026-03-22 已完成父级规划：R4 之后的下一阶段不再继续补裸工具，而是把现有 evidence/replay/MCP 底座提升为真正类似 GitHub Copilot 的股票协驾产品层。范围拆为 P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。优先级：先收口 buglist 中直接阻塞 Copilot 的高优先级运行问题，再做会话 runtime 与面板化交互，量化双引擎 GOAL-017 作为并行但次优先的底座线。2026-03-23 follow-up：P0、R1、R2、R3 已完成；当前父级剩余主线只剩 R4 Copilot 产品验收与 replay 指标。"
+      "notes": "2026-03-22 已完成父级规划：R4 之后的下一阶段不再继续补裸工具，而是把现有 evidence/replay/MCP 底座提升为真正类似 GitHub Copilot 的股票协驾产品层。范围拆为 P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。优先级：先收口 buglist 中直接阻塞 Copilot 的高优先级运行问题，再做会话 runtime 与面板化交互，量化双引擎 GOAL-017 作为并行但次优先的底座线。2026-03-23 follow-up：P0、R1、R2、R3 已完成；当前父级剩余主线只剩 R4 Copilot 产品验收与 replay 指标。2026-03-24 follow-up：R4 已完成，当前 Stock Copilot 已具备 session 化计划/工具/证据/动作流，以及与之配套的 acceptance baseline 和 replay baseline 产品验收面板；原父级一度标记收口。2026-03-24 second follow-up：经新一轮产品复核，现有 UI 与用户目标严重偏离，仍缺少真正的聊天形态、明确的最终回答闭环、可读的 MCP/证据展示和连续上下文体验，因此父级重新打开，并新增 R5 作为会话式重构切片。"
     },
     {
       "id": "GOAL-AGENT-002-P0",
@@ -223,13 +267,101 @@
     {
       "id": "GOAL-AGENT-002-R4",
       "title": "Copilot acceptance and replay metrics",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-24 已完成 R4：后端新增 `IStockCopilotAcceptanceService` / `StockCopilotAcceptanceService`、`StockCopilotAcceptanceBaselineRequestDto` / `StockCopilotAcceptanceBaselineDto` 等契约，并开放 `POST /api/stocks/copilot/acceptance/baseline`，把当前 Copilot turn 的工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、final answer traceability、动作卡就绪度、工具延迟得分与整体 acceptance score 统一计算出来，同时复用既有 `/api/stocks/agents/replay/baseline` 输出 symbol 级 replay baseline。前端 `StockInfoTab.vue` / `StockCopilotSessionPanel.vue` 已接入新的 `Copilot 质量基线` 与 `Replay 基线` 卡片，并在生成草案、切换 replay turn、执行工具后自动刷新指标。开发过程中通过 Browser MCP 发现 replay 百分比被重复乘以 100、页面一度显示 `10000%`，已同步修复后端 highlight 文案、前端百分比格式化和测试 mock。验证包括后端定向单测 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~StockCopilotAcceptanceServiceTests|FullyQualifiedName~StockCopilotSessionServiceTests|FullyQualifiedName~StockAgentReplayCalibrationServiceTests\"` 6/6 通过，前端定向单测 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 57/57 通过，以及 Browser MCP 在 fresh runtime `http://localhost:5121/?tab=stock-info` 查询 `sh600000`、提交 Copilot 问题并执行 `StockNewsMcp` 后确认 `Copilot 质量基线` / `Replay 基线` 可见，且 replay 百分比正常显示为 `100%` 而非 `10000%`。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5",
+      "title": "Conversational Copilot redesign and grounded answer loop",
       "status": "todo",
       "stages": {
         "plan": "done",
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "R4 建立新的产品层验收指标：工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、final answer traceability、action card 使用质量，以及可回放的 session acceptance baseline。目标是让后续 prompt/runtime 变更都能回答“这次改动是否真的让 Copilot 变好”。"
+      "notes": "2026-03-24 新增 R5：按 GitHub Copilot 风格重构 Stock Copilot，目标不再是右侧堆叠卡片，而是单一聊天工作台。新的用户可见形态必须满足：1) 以对话消息为中心，支持上下文连续会话；2) 每轮回答必须产出清晰的最终结论，而不是停留在草案/待执行状态；3) 展示结构化思维流程摘要，但不暴露原始 chain-of-thought；4) MCP 调用、证据抓取、网页/公告内容采用简写卡片 + 点击展开全文；5) 工具执行轨迹、耗时、降级与失败要内嵌在消息流中；6) 去掉当前分散的 timeline / acceptance / replay 大卡片默认铺满式布局，仅把质量与 replay 放入折叠侧栏或会话详情抽屉。设计文档见 `docs/stock-copilot-chat-redesign-20260324.md`，规划报告见 `.automation/reports/GOAL-AGENT-002-R5-PLAN-20260324.md`。2026-03-24 细化执行拆分：R5-A 后端受控 loop 与 grounded final answer 状态机；R5-B 交易计划 gating 与 commander 完整性校验；R5-C Evidence 摘要清洗与展开模型；R5-D 聊天主视图与 turn group 重排；R5-E 详情抽屉与 acceptance/replay 下沉；R5-F 多轮上下文与历史承接；R5-G 单测、Browser MCP 验证与自动化报告收口。详细任务清单见 `.automation/reports/GOAL-AGENT-002-R5-PLAN-DETAIL-20260324.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-A",
+      "title": "Copilot controlled loop backend",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "后端主切片。目标：把当前 `BuildDraftTurnAsync` 的纯草案模式升级为受控单轮 loop，明确 round budget、tool budget、external budget、time budget、stopReason、done/done_with_gaps/finalizing_answer 状态，并保证不再长期停留在 `needs_tool_execution`。同时要把用户提出的 `4000` 最大轮询收敛为状态推进预算，而不是 4000 次真实工具执行。2026-03-24 已完成开发与测试：`StockCopilotSessionService` 现已注入 `IStockCopilotMcpService`，在一次 draft 请求内自动执行已批准工具步骤，按 round/tool/external/time/polling budget 收口，并返回 `StockCopilotLoopBudgetDto` / `StockCopilotLoopExecutionDto`、已执行 `ToolResults` 和 grounded final answer。`StockAgentRuntimeModels.cs` 已扩展 loop budget/execution contract；`StockCopilotSessionServiceTests` 新增覆盖 grounded `done`、blocked search 仍保留 Local-First 约束、允许外部搜索时会执行 `StockSearchMcp`、以及弱证据场景收口到 `done_with_gaps`。验证命令：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~StockCopilotSessionServiceTests|FullyQualifiedName~StockCopilotAcceptanceServiceTests\"`，结果 6/6 通过。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-B",
+      "title": "Plan draft gating hardening",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "修复 `draft_trading_plan` 误放开问题。前后端都必须改为依赖 grounded final answer、完整 commander 结果和有效 history，不能只凭“已批准工具都执行完”就允许进入交易计划。需要覆盖 Bug 9 的复现路径。2026-03-24 已完成开发与测试：后端新增 `StockAgentHistoryValidation`，统一校验 `stock_news/sector_news/financial_analysis/trend_analysis/commander` 五类结果是否齐备且 commander 成功返回有效 data，并把该规则接入 `/api/stocks/agents/history` 保存、`/api/stocks/agents/history*` DTO 元数据以及 `TradingPlanDraftService.BuildDraftAsync(...)`；不完整 history 会被显式拒绝，不再被持久化成看似可用的 `analysisHistoryId`。前端 `StockInfoTab.vue` 已新增 grounded final answer 校验、selected history 完整性校验和本地 agentResults 完整性校验；`draft_trading_plan` 只有在 grounded `done` 且 history 满足 commander 完整性时才解锁，`runAgents()` 不再把部分结果直接保存成历史，`openTradingPlanDraft()` 也会二次阻止不完整结果落入 `/api/stocks/plans/draft`。测试：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~TradingPlanServicesTests\"` 19/19 通过；`npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 59/59 通过；Browser MCP 在 `http://localhost:5119/?tab=stock-info` 上完成了真实 symbol 查询与 Copilot draft 请求，`POST /api/stocks/copilot/turns/draft`、`POST /api/stocks/copilot/acceptance/baseline` 均返回 200，console 0 error，但现存 5119 运行态仍复用了旧 bundle 文案，说明若要把 copy-level 浏览器结果作为最终验收证据，仍需完整重启当前 backend-served runtime。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-C",
+      "title": "Evidence summary cleanup",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "修复 `Evidence / Source` 摘要噪音。优先使用结构化 `summary/excerpt/readStatus`，过滤站点导航、页头页脚和抓取残留，默认呈现 1-2 句可读摘要，并保留全文展开入口。需要覆盖 Bug 10。2026-03-24 已完成开发与测试：`LocalFactDisplayPolicy` 新增可复用的 evidence snippet 清洗逻辑，过滤 `财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金` 一类导航噪音，并从 `summary/excerpt/title` 中优先抽取可读片段；`StockCopilotMcpService` 已把本地新闻与外部搜索 evidence 的 `Excerpt/Summary` 统一切到清洗后的摘要；`StockCopilotSessionPanel.vue` 同步增加前端兜底清洗与 `snippet` 渲染，避免旧脏数据直接显示在用户面板。验证包括后端定向测试 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"StockCopilotMcpServiceTests\"` 5/5 通过，以及前端定向测试 `npm --prefix .\\frontend run test:unit -- .\\src\\modules\\stocks\\StockInfoTab.spec.js` 61/61 通过；新增回归分别锁定“导航噪音进入 DTO 前被清理”与“Evidence 面板只展示 clean summary 不展示导航脏文本”。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-D",
+      "title": "Chat-first Copilot main view",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "前端主切片。将 `StockCopilotSessionPanel.vue` 从卡片墙重排为聊天工作台：用户消息、状态头、结构化思维摘要、MCP 紧凑轨迹、证据摘要、最终回答、下一步动作，按 turn group 串成单一叙事流。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-E",
+      "title": "Detail drawer and metrics demotion",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "把 acceptance / replay / raw payload / degraded flags / 历史 turn 下沉到详情抽屉或折叠区，退出默认主舞台，但保留现有底座和可审计性。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-F",
+      "title": "Session continuity and follow-ups",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "补齐连续会话和多轮追问承接。要求 turn history 可继续引用前一轮证据/结果/结论，且 follow-up actions 与 final answer 一致，不再像独立卡片漂在主界面上。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R5-G",
+      "title": "R5 regression and browser acceptance",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "测试收口切片。包括后端单测锁定 loop/gating/evidence 清洗，前端单测锁定聊天消息流与动作 gating，最后用 Browser MCP 跑真实链路：提问 -> 自动/受控工具执行 -> 最终回答 -> 下一步动作 -> 交易计划入口。"
     },
     {
       "id": "GOAL-015",

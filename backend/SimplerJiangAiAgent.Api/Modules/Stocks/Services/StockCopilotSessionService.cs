@@ -10,17 +10,25 @@ public interface IStockCopilotSessionService
 
 public sealed class StockCopilotSessionService : IStockCopilotSessionService
 {
+    private const int DefaultMaxRounds = 3;
+    private const int DefaultMaxToolCalls = 6;
+    private const int DefaultMaxExternalSearchCalls = 2;
+    private const int DefaultMaxTotalLatencyMs = 12000;
+    private const int DefaultMaxPollingSteps = 4000;
+
     private static readonly string[] KlineKeywords = ["k线", "日k", "周k", "月k", "年k", "走势", "结构", "形态", "支撑", "压力"];
     private static readonly string[] MinuteKeywords = ["分时", "盘口", "承接", "早盘", "午后", "盘中", "vwap"];
     private static readonly string[] NewsKeywords = ["新闻", "公告", "消息", "研报", "催化", "事件", "资讯"];
     private static readonly string[] SearchKeywords = ["联网", "搜索", "外部", "网页", "网搜", "查一下"];
 
     private readonly IStockChatHistoryService _chatHistoryService;
+    private readonly IStockCopilotMcpService _copilotMcpService;
     private readonly IStockMarketContextService _marketContextService;
 
-    public StockCopilotSessionService(IStockChatHistoryService chatHistoryService, IStockMarketContextService marketContextService)
+    public StockCopilotSessionService(IStockChatHistoryService chatHistoryService, IStockCopilotMcpService copilotMcpService, IStockMarketContextService marketContextService)
     {
         _chatHistoryService = chatHistoryService;
+        _copilotMcpService = copilotMcpService;
         _marketContextService = marketContextService;
     }
 
@@ -39,9 +47,23 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
         var marketContext = await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken);
         var strategies = DetectStrategies(trimmedQuestion);
         var proposals = BuildToolProposals(normalizedSymbol, trimmedQuestion, strategies, request.AllowExternalSearch);
-        var planSteps = BuildPlanSteps(proposals, marketContext);
+        var loopBudget = new StockCopilotLoopBudgetDto(
+            DefaultMaxRounds,
+            DefaultMaxToolCalls,
+            DefaultMaxExternalSearchCalls,
+            DefaultMaxTotalLatencyMs,
+            DefaultMaxPollingSteps);
+        var loopResult = await ExecuteControlledLoopAsync(
+            normalizedSymbol,
+            trimmedQuestion,
+            strategies,
+            proposals,
+            request.TaskId,
+            loopBudget,
+            cancellationToken);
+        var planSteps = BuildPlanSteps(proposals, marketContext, loopResult.StepStatuses, loopResult.CommanderStepStatus);
         var toolCalls = BuildToolCalls(proposals);
-        var followUpActions = BuildFollowUpActions(proposals);
+        var followUpActions = BuildFollowUpActions(proposals, loopResult.FinalAnswer);
 
         var turn = new StockCopilotTurnDto(
             TurnId: $"turn-{Guid.NewGuid():N}",
@@ -49,15 +71,17 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             Symbol: normalizedSymbol,
             UserQuestion: trimmedQuestion,
             CreatedAt: DateTime.UtcNow,
-            Status: "draft",
+            Status: loopResult.TurnStatus,
             PlannerSummary: BuildPlannerSummary(proposals),
             GovernorSummary: BuildGovernorSummary(proposals),
             MarketContext: marketContext,
             PlanSteps: planSteps,
             ToolCalls: toolCalls,
-            ToolResults: Array.Empty<StockCopilotToolResultDto>(),
-            FinalAnswer: BuildPendingFinalAnswer(proposals),
-            FollowUpActions: followUpActions);
+            ToolResults: loopResult.ToolResults,
+            FinalAnswer: loopResult.FinalAnswer,
+            FollowUpActions: followUpActions,
+            LoopBudget: loopBudget,
+            LoopExecution: loopResult.LoopExecution);
 
         return new StockCopilotSessionDto(
             session.SessionKey,
@@ -117,7 +141,11 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             Constraints: constraints);
     }
 
-    private static IReadOnlyList<StockCopilotPlanStepDto> BuildPlanSteps(IReadOnlyList<ToolProposal> proposals, StockMarketContextDto? marketContext)
+    private static IReadOnlyList<StockCopilotPlanStepDto> BuildPlanSteps(
+        IReadOnlyList<ToolProposal> proposals,
+        StockMarketContextDto? marketContext,
+        IReadOnlyDictionary<string, string>? stepStatuses = null,
+        string commanderStatus = "pending_tool_results")
     {
         var steps = new List<StockCopilotPlanStepDto>
         {
@@ -128,17 +156,17 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 Description: marketContext is null
                     ? "先锁定问题意图，并在缺少市场上下文时走保守路径。"
                     : $"先锁定问题意图，并记录当前市场阶段={marketContext.StageLabel}、主线={marketContext.MainlineSectorName ?? "无"}。",
-                Status: "planned",
+                Status: stepStatuses?.GetValueOrDefault("planner-1") ?? "planned",
                 DependsOn: Array.Empty<string>(),
                 ToolName: null)
         };
 
-        steps.AddRange(proposals.Select((proposal, index) => new StockCopilotPlanStepDto(
-            StepId: $"tool-{index + 1}",
+        steps.AddRange(proposals.Select(proposal => new StockCopilotPlanStepDto(
+            StepId: proposal.StepId,
             Owner: proposal.ApprovalStatus == "blocked" ? "governor" : "planner",
             Title: proposal.StepTitle,
             Description: proposal.StepDescription,
-            Status: proposal.ApprovalStatus,
+            Status: stepStatuses?.GetValueOrDefault(proposal.StepId) ?? proposal.ApprovalStatus,
             DependsOn: ["planner-1"],
             ToolName: proposal.ToolName)));
 
@@ -147,7 +175,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             Owner: "commander",
             Title: "汇总工具结果并形成最终回答",
             Description: "commander 只能基于已返回 tool result、evidence 与 degradedFlags 形成最终判断。",
-            Status: "pending_tool_results",
+            Status: commanderStatus,
             DependsOn: steps.Where(step => step.ToolName is not null).Select(step => step.StepId).ToArray(),
             ToolName: null));
 
@@ -156,9 +184,9 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
 
     private static IReadOnlyList<StockCopilotToolCallDto> BuildToolCalls(IReadOnlyList<ToolProposal> proposals)
     {
-        return proposals.Select((proposal, index) => new StockCopilotToolCallDto(
-            CallId: $"call-{index + 1}",
-            StepId: $"tool-{index + 1}",
+        return proposals.Select(proposal => new StockCopilotToolCallDto(
+            CallId: proposal.CallId,
+            StepId: proposal.StepId,
             ToolName: proposal.ToolName,
             PolicyClass: proposal.PolicyClass,
             Purpose: proposal.Purpose,
@@ -167,7 +195,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             BlockedReason: proposal.BlockedReason)).ToArray();
     }
 
-    private static IReadOnlyList<StockCopilotFollowUpActionDto> BuildFollowUpActions(IReadOnlyList<ToolProposal> proposals)
+    private static IReadOnlyList<StockCopilotFollowUpActionDto> BuildFollowUpActions(IReadOnlyList<ToolProposal> proposals, StockCopilotFinalAnswerDto finalAnswer)
     {
         var actions = new List<StockCopilotFollowUpActionDto>();
 
@@ -191,7 +219,15 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             actions.Add(new StockCopilotFollowUpActionDto("action-news", "查看本地新闻证据", "inspect_news", "StockNewsMcp", "核对公告、消息与 article-read 状态。", true, null));
         }
 
-        actions.Add(new StockCopilotFollowUpActionDto("action-plan", "起草交易计划", "draft_trading_plan", null, "在有 grounded final answer 后再进入计划草稿。", false, "需要先完成工具执行并得到最终判断。"));
+        var planEnabled = string.Equals(finalAnswer.Status, "done", StringComparison.OrdinalIgnoreCase) && !finalAnswer.NeedsToolExecution;
+        actions.Add(new StockCopilotFollowUpActionDto(
+            "action-plan",
+            "起草交易计划",
+            "draft_trading_plan",
+            null,
+            "在有 grounded final answer 后再进入计划草稿。",
+            planEnabled,
+            planEnabled ? null : "需要先完成受控 loop 并得到 grounded final answer。"));
         return actions;
     }
 
@@ -200,9 +236,35 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
         var proposals = new List<ToolProposal>();
         var normalized = question.ToLowerInvariant();
 
+        void AddProposal(
+            string toolName,
+            string policyClass,
+            string stepTitle,
+            string stepDescription,
+            string purpose,
+            string inputSummary,
+            string approvalStatus,
+            string? blockedReason,
+            int round)
+        {
+            var sequence = proposals.Count + 1;
+            proposals.Add(new ToolProposal(
+                StepId: $"tool-{sequence}",
+                CallId: $"call-{sequence}",
+                Round: round,
+                ToolName: toolName,
+                PolicyClass: policyClass,
+                StepTitle: stepTitle,
+                StepDescription: stepDescription,
+                Purpose: purpose,
+                InputSummary: inputSummary,
+                ApprovalStatus: approvalStatus,
+                BlockedReason: blockedReason));
+        }
+
         if (ContainsAny(normalized, KlineKeywords) || strategies.Count > 0)
         {
-            proposals.Add(new ToolProposal(
+            AddProposal(
                 "StockKlineMcp",
                 "local_required",
                 "读取 K 线结构",
@@ -210,12 +272,13 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 "检查价格结构与关键位",
                 $"symbol={symbol}; interval=day; count=60",
                 "approved",
-                null));
+                null,
+                1);
         }
 
         if (ContainsAny(normalized, MinuteKeywords))
         {
-            proposals.Add(new ToolProposal(
+            AddProposal(
                 "StockMinuteMcp",
                 "local_required",
                 "读取分时结构",
@@ -223,12 +286,13 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 "检查盘中执行环境",
                 $"symbol={symbol}",
                 "approved",
-                null));
+                null,
+                1);
         }
 
         if (strategies.Count > 0)
         {
-            proposals.Add(new ToolProposal(
+            AddProposal(
                 "StockStrategyMcp",
                 "local_required",
                 "计算策略信号",
@@ -236,12 +300,13 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 "读取策略引擎结果",
                 $"symbol={symbol}; interval=day; strategies={string.Join(',', strategies)}",
                 "approved",
-                null));
+                null,
+                2);
         }
 
         if (ContainsAny(normalized, NewsKeywords) || !proposals.Any())
         {
-            proposals.Add(new ToolProposal(
+            AddProposal(
                 "StockNewsMcp",
                 "local_required",
                 "读取本地新闻证据",
@@ -249,12 +314,13 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 "读取 Local-First 证据链",
                 $"symbol={symbol}; level=stock",
                 "approved",
-                null));
+                null,
+                2);
         }
 
         if (ContainsAny(normalized, SearchKeywords))
         {
-            proposals.Add(new ToolProposal(
+            AddProposal(
                 "StockSearchMcp",
                 "external_gated",
                 "外部搜索兜底",
@@ -264,10 +330,459 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 "补充外部证据",
                 $"query={question.Trim()}",
                 allowExternalSearch ? "approved" : "blocked",
-                allowExternalSearch ? null : "external_gated 工具需要显式授权后才能执行。"));
+                allowExternalSearch ? null : "external_gated 工具需要显式授权后才能执行。",
+                3);
         }
 
         return proposals;
+    }
+
+    private async Task<ControlledLoopResult> ExecuteControlledLoopAsync(
+        string symbol,
+        string question,
+        IReadOnlyList<string> strategies,
+        IReadOnlyList<ToolProposal> proposals,
+        string? taskId,
+        StockCopilotLoopBudgetDto loopBudget,
+        CancellationToken cancellationToken)
+    {
+        var approvedProposals = proposals
+            .Where(item => string.Equals(item.ApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(item => item.Round)
+            .ThenBy(item => item.CallId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (approvedProposals.Length == 0)
+        {
+            return new ControlledLoopResult(
+                TurnStatus: "done_with_gaps",
+                ToolResults: Array.Empty<StockCopilotToolResultDto>(),
+                FinalAnswer: BuildPendingFinalAnswer(proposals) with
+                {
+                    Status = "done_with_gaps",
+                    Summary = "没有可执行的已批准工具步骤；当前只能返回受限回答。",
+                    GroundingMode = "gaps_only",
+                    NeedsToolExecution = false,
+                    ConfidenceScore = 0.18m,
+                    Constraints = [.. BuildPendingFinalAnswer(proposals).Constraints, "当前 turn 没有任何已批准工具，因此被强制收口。"]
+                },
+                StepStatuses: new Dictionary<string, string>
+                {
+                    ["planner-1"] = "completed"
+                },
+                CommanderStepStatus: "done_with_gaps",
+                LoopExecution: new StockCopilotLoopExecutionDto(0, 0, 0, 0, 1, "done_with_gaps", "no_approved_tools", true));
+        }
+
+        var stepStatuses = new Dictionary<string, string>
+        {
+            ["planner-1"] = "completed"
+        };
+        var toolResults = new List<StockCopilotToolResultDto>();
+        var snapshots = new List<ToolExecutionSnapshot>();
+        var totalLatencyMs = 0L;
+        var toolCallsExecuted = 0;
+        var externalSearchCallsExecuted = 0;
+        var completedRounds = 0;
+        var consumedPollingSteps = 1;
+        string? stopReason = null;
+        var forcedClose = false;
+
+        foreach (var roundGroup in approvedProposals.GroupBy(item => item.Round).OrderBy(group => group.Key))
+        {
+            if (roundGroup.Key > loopBudget.MaxRounds)
+            {
+                stopReason = "round_budget_reached";
+                forcedClose = true;
+                break;
+            }
+
+            foreach (var proposal in roundGroup)
+            {
+                if (toolCallsExecuted >= loopBudget.MaxToolCalls)
+                {
+                    stopReason = "tool_budget_reached";
+                    forcedClose = true;
+                    break;
+                }
+
+                if (totalLatencyMs >= loopBudget.MaxTotalLatencyMs)
+                {
+                    stopReason = "time_budget_reached";
+                    forcedClose = true;
+                    break;
+                }
+
+                if (string.Equals(proposal.PolicyClass, "external_gated", StringComparison.OrdinalIgnoreCase)
+                    && externalSearchCallsExecuted >= loopBudget.MaxExternalSearchCalls)
+                {
+                    stopReason = "external_search_budget_reached";
+                    forcedClose = true;
+                    break;
+                }
+
+                stepStatuses[proposal.StepId] = $"calling_tools_round_{roundGroup.Key}";
+                consumedPollingSteps += 1;
+
+                var outcome = await ExecuteProposalAsync(symbol, question, strategies, proposal, taskId, cancellationToken);
+                toolResults.Add(outcome.ToolResult);
+                snapshots.Add(outcome.Snapshot);
+                stepStatuses[proposal.StepId] = outcome.ToolResult.Status == "completed" ? "completed" : "failed";
+                totalLatencyMs += outcome.Snapshot.LatencyMs;
+                toolCallsExecuted += 1;
+                if (string.Equals(proposal.PolicyClass, "external_gated", StringComparison.OrdinalIgnoreCase))
+                {
+                    externalSearchCallsExecuted += 1;
+                }
+            }
+
+            completedRounds = roundGroup.Key;
+            if (forcedClose)
+            {
+                break;
+            }
+        }
+
+        consumedPollingSteps += 1;
+        var finalAnswer = BuildGroundedFinalAnswer(question, proposals, snapshots, stopReason, forcedClose);
+        var commanderStatus = string.Equals(finalAnswer.Status, "done", StringComparison.OrdinalIgnoreCase)
+            ? "done"
+            : string.Equals(finalAnswer.Status, "failed", StringComparison.OrdinalIgnoreCase)
+                ? "failed"
+                : "done_with_gaps";
+
+        return new ControlledLoopResult(
+            TurnStatus: finalAnswer.Status,
+            ToolResults: toolResults,
+            FinalAnswer: finalAnswer,
+            StepStatuses: stepStatuses,
+            CommanderStepStatus: commanderStatus,
+            LoopExecution: new StockCopilotLoopExecutionDto(
+                completedRounds,
+                toolCallsExecuted,
+                externalSearchCallsExecuted,
+                totalLatencyMs,
+                Math.Min(consumedPollingSteps, loopBudget.MaxPollingSteps),
+                finalAnswer.Status,
+                stopReason ?? (string.Equals(finalAnswer.Status, "done", StringComparison.OrdinalIgnoreCase) ? "evidence_sufficient" : "forced_close"),
+                forcedClose));
+    }
+
+    private async Task<ToolExecutionOutcome> ExecuteProposalAsync(
+        string symbol,
+        string question,
+        IReadOnlyList<string> strategies,
+        ToolProposal proposal,
+        string? taskId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var input = ParseInputSummary(proposal.InputSummary);
+            var toolTaskId = string.IsNullOrWhiteSpace(taskId) ? proposal.CallId : $"{taskId.Trim()}-{proposal.CallId}";
+
+            return proposal.ToolName switch
+            {
+                "StockKlineMcp" => MapOutcome(
+                    proposal,
+                    await _copilotMcpService.GetKlineAsync(
+                        symbol,
+                        input.GetValueOrDefault("interval", "day"),
+                        ParseInt(input, "count", 60),
+                        null,
+                        toolTaskId,
+                        cancellationToken)),
+                "StockMinuteMcp" => MapOutcome(
+                    proposal,
+                    await _copilotMcpService.GetMinuteAsync(symbol, null, toolTaskId, cancellationToken)),
+                "StockStrategyMcp" => MapOutcome(
+                    proposal,
+                    await _copilotMcpService.GetStrategyAsync(
+                        symbol,
+                        input.GetValueOrDefault("interval", "day"),
+                        ParseInt(input, "count", 90),
+                        null,
+                        strategies.Count == 0 ? null : strategies,
+                        toolTaskId,
+                        cancellationToken)),
+                "StockNewsMcp" => MapOutcome(
+                    proposal,
+                    await _copilotMcpService.GetNewsAsync(symbol, input.GetValueOrDefault("level", "stock"), toolTaskId, cancellationToken)),
+                "StockSearchMcp" => MapOutcome(
+                    proposal,
+                    await _copilotMcpService.SearchAsync(input.GetValueOrDefault("query", question), true, toolTaskId, cancellationToken)),
+                _ => BuildFailedOutcome(proposal, $"暂不支持工具 {proposal.ToolName} 的受控 loop 执行。")
+            };
+        }
+        catch (Exception ex)
+        {
+            return BuildFailedOutcome(proposal, ex.Message);
+        }
+    }
+
+    private static ToolExecutionOutcome MapOutcome(ToolProposal proposal, StockCopilotMcpEnvelopeDto<StockCopilotKlineDataDto> envelope)
+    {
+        var summary = $"K 线 {envelope.Data.WindowSize} 根，趋势={envelope.Data.TrendState}，5D={envelope.Data.Return5dPercent:0.##}% / 20D={envelope.Data.Return20dPercent:0.##}%。";
+        return BuildCompletedOutcome(
+            proposal,
+            envelope,
+            summary,
+            bullishHints: envelope.Data.Return5dPercent > 0m ? 1 : 0,
+            bearishHints: envelope.Data.Return5dPercent < 0m ? 1 : 0,
+            trendState: envelope.Data.TrendState,
+            newsItemCount: null,
+            searchResultCount: null);
+    }
+
+    private static ToolExecutionOutcome MapOutcome(ToolProposal proposal, StockCopilotMcpEnvelopeDto<StockCopilotMinuteDataDto> envelope)
+    {
+        var summary = $"分时 {envelope.Data.WindowSize} 个点位，session={envelope.Data.SessionPhase}，VWAP={FormatNumber(envelope.Data.Vwap)}。";
+        return BuildCompletedOutcome(
+            proposal,
+            envelope,
+            summary,
+            bullishHints: envelope.Data.AfternoonDriftPercent is > 0m ? 1 : 0,
+            bearishHints: envelope.Data.AfternoonDriftPercent is < 0m ? 1 : 0,
+            trendState: envelope.Data.SessionPhase,
+            newsItemCount: null,
+            searchResultCount: null);
+    }
+
+    private static ToolExecutionOutcome MapOutcome(ToolProposal proposal, StockCopilotMcpEnvelopeDto<StockCopilotStrategyDataDto> envelope)
+    {
+        var bullishHints = envelope.Data.Signals.Count(item => IsBullishSignal(item.Signal, item.State));
+        var bearishHints = envelope.Data.Signals.Count(item => IsBearishSignal(item.Signal, item.State));
+        var summary = $"策略信号 {envelope.Data.Signals.Count} 条，多头提示 {bullishHints} 条，空头提示 {bearishHints} 条。";
+        return BuildCompletedOutcome(
+            proposal,
+            envelope,
+            summary,
+            bullishHints,
+            bearishHints,
+            trendState: null,
+            newsItemCount: null,
+            searchResultCount: null);
+    }
+
+    private static ToolExecutionOutcome MapOutcome(ToolProposal proposal, StockCopilotMcpEnvelopeDto<StockCopilotNewsDataDto> envelope)
+    {
+        var summary = $"本地新闻 {envelope.Data.ItemCount} 条，最近发布时间 {envelope.Data.LatestPublishedAt:yyyy-MM-dd HH:mm:ss}。";
+        return BuildCompletedOutcome(
+            proposal,
+            envelope,
+            summary,
+            bullishHints: 0,
+            bearishHints: 0,
+            trendState: null,
+            newsItemCount: envelope.Data.ItemCount,
+            searchResultCount: null);
+    }
+
+    private static ToolExecutionOutcome MapOutcome(ToolProposal proposal, StockCopilotMcpEnvelopeDto<StockCopilotSearchDataDto> envelope)
+    {
+        var summary = $"外部搜索 provider={envelope.Data.Provider}，结果 {envelope.Data.ResultCount} 条。";
+        return BuildCompletedOutcome(
+            proposal,
+            envelope,
+            summary,
+            bullishHints: 0,
+            bearishHints: 0,
+            trendState: null,
+            newsItemCount: null,
+            searchResultCount: envelope.Data.ResultCount);
+    }
+
+    private static ToolExecutionOutcome BuildCompletedOutcome<T>(
+        ToolProposal proposal,
+        StockCopilotMcpEnvelopeDto<T> envelope,
+        string summary,
+        int bullishHints,
+        int bearishHints,
+        string? trendState,
+        int? newsItemCount,
+        int? searchResultCount)
+    {
+        return new ToolExecutionOutcome(
+            new StockCopilotToolResultDto(
+                proposal.CallId,
+                proposal.ToolName,
+                "completed",
+                envelope.TraceId,
+                envelope.Evidence.Count,
+                envelope.Features.Count,
+                envelope.Warnings,
+                envelope.DegradedFlags,
+                summary),
+            new ToolExecutionSnapshot(
+                proposal.CallId,
+                proposal.ToolName,
+                envelope.LatencyMs,
+                envelope.Evidence.Count,
+                envelope.Features.Count,
+                envelope.Warnings.Count,
+                envelope.DegradedFlags.Count,
+                bullishHints,
+                bearishHints,
+                trendState,
+                newsItemCount,
+                searchResultCount,
+                summary,
+                envelope.TraceId));
+    }
+
+    private static ToolExecutionOutcome BuildFailedOutcome(ToolProposal proposal, string message)
+    {
+        return new ToolExecutionOutcome(
+            new StockCopilotToolResultDto(
+                proposal.CallId,
+                proposal.ToolName,
+                "failed",
+                null,
+                0,
+                0,
+                [message],
+                Array.Empty<string>(),
+                $"{proposal.ToolName} 执行失败：{message}"),
+            new ToolExecutionSnapshot(
+                proposal.CallId,
+                proposal.ToolName,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                null,
+                null,
+                null,
+                message,
+                null));
+    }
+
+    private static StockCopilotFinalAnswerDto BuildGroundedFinalAnswer(
+        string question,
+        IReadOnlyList<ToolProposal> proposals,
+        IReadOnlyList<ToolExecutionSnapshot> snapshots,
+        string? stopReason,
+        bool forcedClose)
+    {
+        if (snapshots.Count == 0)
+        {
+            return BuildPendingFinalAnswer(proposals) with
+            {
+                Status = "failed",
+                Summary = "受控 loop 没有成功执行任何工具，当前无法形成 grounded final answer。",
+                GroundingMode = "failed",
+                ConfidenceScore = 0.05m,
+                NeedsToolExecution = false,
+                Constraints = [.. BuildPendingFinalAnswer(proposals).Constraints, "当前没有任何可用 tool result。"]
+            };
+        }
+
+        var completedCount = snapshots.Count(item => item.EvidenceCount > 0 || item.FeatureCount > 0 || !string.IsNullOrWhiteSpace(item.TraceId));
+        var totalEvidenceCount = snapshots.Sum(item => item.EvidenceCount);
+        var totalWarnings = snapshots.Sum(item => item.WarningCount);
+        var totalDegradedFlags = snapshots.Sum(item => item.DegradedFlagCount);
+        var bullishHints = snapshots.Sum(item => item.BullishHints);
+        var bearishHints = snapshots.Sum(item => item.BearishHints);
+        var trendState = snapshots.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item.TrendState))?.TrendState;
+        var newsItemCount = snapshots.Where(item => item.NewsItemCount.HasValue).Select(item => item.NewsItemCount!.Value).DefaultIfEmpty().Max();
+        var searchResultCount = snapshots.Where(item => item.SearchResultCount.HasValue).Select(item => item.SearchResultCount!.Value).DefaultIfEmpty().Max();
+
+        var direction = bullishHints > bearishHints
+            ? "中性偏多"
+            : bearishHints > bullishHints
+                ? "中性偏空"
+                : "中性";
+        var directionReason = trendState is null
+            ? "当前技术结构没有形成单边优势。"
+            : $"当前技术结构更接近 {trendState}。";
+        var newsReason = newsItemCount > 0
+            ? $"本地公告/新闻已命中 {newsItemCount} 条可核对证据。"
+            : "本地新闻证据较弱，结论主要依赖已返回的确定性特征。";
+        var searchReason = searchResultCount > 0
+            ? $"外部搜索补到了 {searchResultCount} 条兜底结果。"
+            : "本轮没有依赖额外外部搜索结果。";
+        var status = (!forcedClose && totalEvidenceCount > 0 && totalWarnings == 0)
+            ? "done"
+            : "done_with_gaps";
+        var confidence = Math.Max(0.12m, Math.Min(0.92m, decimal.Round(0.35m + totalEvidenceCount * 0.08m + completedCount * 0.05m - totalWarnings * 0.05m - totalDegradedFlags * 0.07m, 2)));
+        var summary = $"围绕“{question}”的受控 loop 已完成 {snapshots.Count} 个工具步骤。{directionReason}{newsReason}{searchReason} 当前方向判断为 {direction}。";
+
+        var constraints = new List<string>
+        {
+            "最终回答只基于本轮 tool result、traceId 与 evidence。",
+            $"本轮共拿到 {totalEvidenceCount} 条 evidence、{completedCount} 个可追溯结果。"
+        };
+
+        if (!string.IsNullOrWhiteSpace(stopReason))
+        {
+            constraints.Add($"当前 loop 收口原因：{stopReason}。");
+        }
+
+        if (totalWarnings > 0 || totalDegradedFlags > 0)
+        {
+            constraints.Add($"当前还有 {totalWarnings} 条 warning、{totalDegradedFlags} 条 degraded flag，结论已按保守路径收口。");
+        }
+
+        if (proposals.Any(item => item.ToolName == "StockSearchMcp" && string.Equals(item.ApprovalStatus, "blocked", StringComparison.OrdinalIgnoreCase)))
+        {
+            constraints.Add("外部搜索尚未获批，当前 grounded final answer 仍然只基于 Local-First 证据链。");
+        }
+
+        if (status == "done_with_gaps")
+        {
+            constraints.Add("当前回答已收口，但仍保留证据缺口或预算触顶说明。\n若要继续，需要进入下一轮会话或补充工具授权。".Replace("\\n", "\n"));
+        }
+
+        return new StockCopilotFinalAnswerDto(
+            Status: status,
+            Summary: summary,
+            GroundingMode: status == "done" ? "grounded" : "grounded_with_gaps",
+            ConfidenceScore: confidence,
+            NeedsToolExecution: false,
+            Constraints: constraints);
+    }
+
+    private static Dictionary<string, string> ParseInputSummary(string inputSummary)
+    {
+        return string.IsNullOrWhiteSpace(inputSummary)
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : inputSummary
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(item => item.Split('=', 2))
+                .Where(parts => parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[0]))
+                .ToDictionary(parts => parts[0].Trim(), parts => parts[1].Trim(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static int ParseInt(IReadOnlyDictionary<string, string> input, string key, int fallback)
+    {
+        return input.TryGetValue(key, out var value) && int.TryParse(value, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static bool IsBullishSignal(string signal, string? state)
+    {
+        return signal.Contains("golden", StringComparison.OrdinalIgnoreCase)
+            || signal.Contains("breakout", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, "bullish", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, "positive", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, "overbought_breakout", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBearishSignal(string signal, string? state)
+    {
+        return signal.Contains("death", StringComparison.OrdinalIgnoreCase)
+            || signal.Contains("breakdown", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, "bearish", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, "negative", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatNumber(decimal? value)
+    {
+        return value.HasValue ? value.Value.ToString("0.##") : "--";
     }
 
     private static IReadOnlyList<string> DetectStrategies(string question)
@@ -300,6 +815,9 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
     }
 
     private sealed record ToolProposal(
+        string StepId,
+        string CallId,
+        int Round,
         string ToolName,
         string PolicyClass,
         string StepTitle,
@@ -308,4 +826,32 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
         string InputSummary,
         string ApprovalStatus,
         string? BlockedReason);
+
+    private sealed record ToolExecutionSnapshot(
+        string CallId,
+        string ToolName,
+        long LatencyMs,
+        int EvidenceCount,
+        int FeatureCount,
+        int WarningCount,
+        int DegradedFlagCount,
+        int BullishHints,
+        int BearishHints,
+        string? TrendState,
+        int? NewsItemCount,
+        int? SearchResultCount,
+        string Summary,
+        string? TraceId);
+
+    private sealed record ToolExecutionOutcome(
+        StockCopilotToolResultDto ToolResult,
+        ToolExecutionSnapshot Snapshot);
+
+    private sealed record ControlledLoopResult(
+        string TurnStatus,
+        IReadOnlyList<StockCopilotToolResultDto> ToolResults,
+        StockCopilotFinalAnswerDto FinalAnswer,
+        IReadOnlyDictionary<string, string> StepStatuses,
+        string CommanderStepStatus,
+        StockCopilotLoopExecutionDto LoopExecution);
 }

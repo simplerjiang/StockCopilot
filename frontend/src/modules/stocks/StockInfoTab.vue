@@ -2,17 +2,99 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import StockCharts from './StockCharts.vue'
 import StockAgentPanels from './StockAgentPanels.vue'
-import StockSourceLoadProgress from './StockSourceLoadProgress.vue'
+import StockMarketNewsPanel from './StockMarketNewsPanel.vue'
+import StockNewsImpactPanel from './StockNewsImpactPanel.vue'
+import StockSearchToolbar from './StockSearchToolbar.vue'
+import StockTerminalSummary from './StockTerminalSummary.vue'
+import StockTopMarketOverview from './StockTopMarketOverview.vue'
+import StockTradingPlanBoard from './StockTradingPlanBoard.vue'
+import StockTradingPlanModal from './StockTradingPlanModal.vue'
+import StockTradingPlanSection from './StockTradingPlanSection.vue'
 import TerminalView from './TerminalView.vue'
 import CopilotPanel from './CopilotPanel.vue'
 import StockCopilotSessionPanel from './StockCopilotSessionPanel.vue'
 import ChatWindow from '../../components/ChatWindow.vue'
 import {
+  buildCopilotAcceptanceExecutions,
+  buildCopilotToolResult,
+  getCopilotApprovedToolCalls,
+  getCopilotExecutedToolCallIds,
+  getCopilotFinalAnswer,
+  getCopilotToolCalls,
+  getCopilotToolResults,
+  parseCopilotInputSummary
+} from './stockInfoTabCopilot'
+import { createStockInfoTabAgentRuntime } from './stockInfoTabAgentRuntime'
+import { createStockInfoTabCopilotRuntime } from './stockInfoTabCopilotRuntime'
+import { createStockInfoTabDataRequests } from './stockInfoTabDataRequests'
+import { createStockInfoTabQuoteRuntime } from './stockInfoTabQuoteRuntime'
+import {
+  getCopilotDraftPlanAvailability,
+  getSelectedCommanderHistoryAvailability,
+  inspectCommanderHistoryAgentResults,
+  isGroundedCopilotFinalAnswerReady
+} from './stockInfoTabPlanHelpers'
+import {
+  createStockLoadStages,
+  createStockWorkspace,
+  DOMESTIC_REALTIME_CONTEXT_SYMBOLS,
+  GLOBAL_REALTIME_CONTEXT_SYMBOLS,
+  STOCK_LOAD_STAGE_DEFINITIONS
+} from './stockInfoTabWorkspace'
+import {
+  formatDate,
+  formatImpactScore,
+  formatPlanPrice,
+  formatPlanScale,
+  formatRealtimeMoney,
+  formatSignedNumber,
+  formatSignedPercent,
+  formatSignedRealtimeAmount,
+  getChangeClass,
+  getHeadlineNewsImpactEvents,
+  getImpactCategoryValue,
+  getImpactClass,
+  getLocalNewsHeadline,
+  isDirectStockSymbol,
+  normalizePlanNumber,
+  normalizeStockSymbol
+} from './stockInfoTabFormatting'
+import {
+  fetchBackendGet,
+  isAbortError,
+  parseResponseMessage,
+  replaceAbortController
+} from './stockInfoTabRequestUtils'
+import {
+  buildRealtimeContextSymbols,
+  canEditTradingPlan,
+  canResumeTradingPlan,
+  createTradingPlanForm,
+  formatPlanAlertSummary,
+  getLatestPlanAlert,
+  getPlanAlertClass,
+  getPlanReviewHeadline,
+  getPlanReviewText,
+  normalizeMarketContext,
+  normalizeTradingPlan,
+  normalizeTradingPlanAlert
+} from './stockInfoTabTradingPlans'
+import {
+  buildStockContext,
+  extractTaggedPriceLevels,
+  formatPercent,
+  getHighClass,
+  getLowClass,
+  getPriceClass,
+  getSortValue,
+  normalizeNewsBucket,
+  normalizeOptionalText,
+  normalizeRealtimeOverview,
+  parseLevelNumber
+} from './stockInfoTabViewHelpers'
+import {
   formatTradingPlanStatus,
-  getTradingPlanReviewText,
   getTradingPlanStatusClass,
-  normalizeTradingPlanStatus,
-  parseTradingPlanAlertMetadata
 } from './tradingPlanReview'
 
 const symbol = ref('')
@@ -23,6 +105,7 @@ const sources = ref([])
 const selectedSource = ref(localStorage.getItem('stock_source') || '')
 let refreshTimer = null
 let planRefreshTimer = null
+let minuteTdSequentialRefreshTimer = null
 const selectedSymbol = ref('')
 const searchResults = ref([])
 const searchOpen = ref(false)
@@ -48,136 +131,12 @@ const stockRealtimeLoading = ref(false)
 const stockRealtimeError = ref('')
 const stockRealtimeSymbol = ref('')
 let stockRealtimeAbortController = null
+const chartActiveView = ref('day')
+const minuteTdSequentialEnabled = ref(false)
 const chatWindowRefs = new Map()
-const DOMESTIC_REALTIME_CONTEXT_SYMBOLS = ['sh000001', 'sz399001', 'sz399006']
-const GLOBAL_REALTIME_CONTEXT_SYMBOLS = ['hsi', 'hstech', 'n225', 'ndx', 'spx', 'ftse', 'ks11']
-
-const STOCK_LOAD_STAGE_DEFINITIONS = [
-  {
-    key: 'cache',
-    label: '缓存回显',
-    messages: {
-      idle: '等待查询',
-      pending: '读取本地快照',
-      success: '已处理缓存结果',
-      error: '缓存不可用，继续实时加载'
-    }
-  },
-  {
-    key: 'detail',
-    label: 'K线/分时图表',
-    messages: {
-      idle: '等待查询',
-      pending: '请求实时图表数据',
-      success: '实时图表数据已返回',
-      error: '图表数据请求失败'
-    }
-  },
-  {
-    key: 'tencent',
-    label: '腾讯行情',
-    messages: {
-      idle: '等待查询',
-      pending: '请求腾讯实时行情',
-      success: '腾讯实时行情已返回',
-      error: '腾讯接口请求失败'
-    }
-  },
-  {
-    key: 'eastmoney',
-    label: '东方财富基本面',
-    messages: {
-      idle: '等待查询',
-      pending: '请求东财基本面快照',
-      success: '东财基本面已返回',
-      error: '东财接口请求失败'
-    }
-  }
-]
-
-const createStockLoadStages = () => Object.fromEntries(
-  STOCK_LOAD_STAGE_DEFINITIONS.map(stage => [
-    stage.key,
-    {
-      key: stage.key,
-      label: stage.label,
-      status: 'idle',
-      message: stage.messages.idle
-    }
-  ])
-)
-
-const createWorkspace = symbolKey => reactive({
-  symbolKey,
-  detail: null,
-  loading: false,
-  error: '',
-  sourceLoadStages: createStockLoadStages(),
-  pendingFundamentalSnapshot: undefined,
-  quoteRequestToken: 0,
-  detailAbortController: null,
-  chatSessions: [],
-  chatSessionsLoading: false,
-  chatSessionsError: '',
-  selectedChatSession: '',
-  chatSessionsLoaded: false,
-  chatSessionsRequestToken: 0,
-  chatSessionsAbortController: null,
-  agentResults: [],
-  agentLoading: false,
-  agentError: '',
-  agentUpdatedAt: '',
-  agentHistoryList: [],
-  agentHistoryLoading: false,
-  agentHistoryError: '',
-  selectedAgentHistoryId: '',
-  agentHistoryLoaded: false,
-  agentHistoryRequestToken: 0,
-  agentHistoryAbortController: null,
-  newsImpact: null,
-  newsImpactLoading: false,
-  newsImpactError: '',
-  newsImpactLoaded: false,
-  newsImpactRequestToken: 0,
-  newsImpactAbortController: null,
-  localNewsBuckets: { stock: null, sector: null, market: null },
-  localNewsLoading: false,
-  localNewsError: '',
-  localNewsLoaded: false,
-  localNewsRequestToken: 0,
-  localNewsAbortController: null,
-  planDraftLoading: false,
-  planSaving: false,
-  planError: '',
-  planModalOpen: false,
-  planForm: null,
-  planList: [],
-  planAlerts: [],
-  planListLoading: false,
-  planAlertsLoading: false,
-  planListLoaded: false,
-  planAlertsLoaded: false,
-  planListRequestToken: 0,
-  planAlertsRequestToken: 0,
-  planListAbortController: null,
-  planAlertsAbortController: null,
-  copilotQuestion: '',
-  copilotAllowExternalSearch: false,
-  copilotLoading: false,
-  copilotError: '',
-  copilotSessionKey: '',
-  copilotSessionTitle: '',
-  copilotCurrentTurnId: '',
-  copilotReplayTurns: [],
-  copilotDraftAbortController: null,
-  copilotToolAbortController: null,
-  copilotToolBusyCallId: '',
-  copilotFocusSection: '',
-  copilotChartFocusView: 'day'
-})
 
 const stockWorkspaces = reactive({})
-const rootWorkspace = createWorkspace('__root__')
+const rootWorkspace = createStockWorkspace('__root__')
 const currentStockKey = ref('')
 
 const getWorkspace = symbolKey => {
@@ -186,7 +145,7 @@ const getWorkspace = symbolKey => {
     return null
   }
   if (!stockWorkspaces[normalized]) {
-    stockWorkspaces[normalized] = createWorkspace(normalized)
+    stockWorkspaces[normalized] = createStockWorkspace(normalized)
   }
   return stockWorkspaces[normalized]
 }
@@ -250,11 +209,21 @@ const newsImpactError = bindWorkspaceField('newsImpactError', '')
 const localNewsBuckets = bindWorkspaceField('localNewsBuckets', { stock: null, sector: null, market: null })
 const localNewsLoading = bindWorkspaceField('localNewsLoading', false)
 const localNewsError = bindWorkspaceField('localNewsError', '')
+const planDraftLoading = bindWorkspaceField('planDraftLoading', false)
+const planSaving = bindWorkspaceField('planSaving', false)
+const planError = bindWorkspaceField('planError', '')
+const planList = bindWorkspaceField('planList', [])
+const planAlerts = bindWorkspaceField('planAlerts', [])
+const planListLoading = bindWorkspaceField('planListLoading', false)
+const planAlertsLoading = bindWorkspaceField('planAlertsLoading', false)
 const copilotQuestion = bindWorkspaceField('copilotQuestion', '')
 const copilotAllowExternalSearch = bindWorkspaceField('copilotAllowExternalSearch', false)
 const copilotLoading = bindWorkspaceField('copilotLoading', false)
 const copilotError = bindWorkspaceField('copilotError', '')
 const copilotReplayTurns = bindWorkspaceField('copilotReplayTurns', [])
+const copilotAcceptanceBaseline = bindWorkspaceField('copilotAcceptanceBaseline', null)
+const copilotAcceptanceLoading = bindWorkspaceField('copilotAcceptanceLoading', false)
+const copilotAcceptanceError = bindWorkspaceField('copilotAcceptanceError', '')
 const copilotToolBusyCallId = bindWorkspaceField('copilotToolBusyCallId', '')
 const marketNewsBucket = computed(() => rootWorkspace.localNewsBuckets.market ?? null)
 const marketNewsLoading = computed(() => rootWorkspace.localNewsLoading)
@@ -341,73 +310,6 @@ const sidebarNewsSections = [
   { key: 'sector', title: '板块上下文' }
 ]
 
-const isAbortError = err => err?.name === 'AbortError'
-const createAbortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' })
-
-const isRetryableFetchError = err => {
-  if (isAbortError(err)) {
-    return false
-  }
-
-  const message = String(err?.message || '')
-  return err instanceof TypeError
-    || /failed to fetch|networkerror|load failed|connection refused|fetch failed/i.test(message)
-}
-
-const waitForRetryDelay = (delayMs, signal) => new Promise((resolve, reject) => {
-  if (!delayMs || delayMs <= 0) {
-    resolve()
-    return
-  }
-
-  if (signal?.aborted) {
-    reject(createAbortError())
-    return
-  }
-
-  const abortHandler = () => {
-    clearTimeout(timer)
-    reject(createAbortError())
-  }
-
-  const timer = setTimeout(() => {
-    signal?.removeEventListener?.('abort', abortHandler)
-    resolve()
-  }, delayMs)
-
-  signal?.addEventListener('abort', abortHandler, { once: true })
-})
-
-const fetchWithRetry = async (url, options = {}, retryOptions = {}) => {
-  const retries = Math.max(0, retryOptions.retries ?? 0)
-  const retryDelayMs = retryOptions.retryDelayMs ?? 300
-
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await fetch(url, options)
-    } catch (err) {
-      if (attempt >= retries || !isRetryableFetchError(err)) {
-        throw err
-      }
-
-      const delayMs = typeof retryDelayMs === 'function'
-        ? retryDelayMs(attempt + 1)
-        : retryDelayMs * (attempt + 1)
-      await waitForRetryDelay(delayMs, options.signal)
-    }
-  }
-}
-
-const fetchBackendGet = (url, options = {}) => fetchWithRetry(url, options, {
-  retries: 2,
-  retryDelayMs: attempt => attempt * 300
-})
-
-const replaceAbortController = currentController => {
-  currentController?.abort()
-  return new AbortController()
-}
-
 const getStockLoadStageDefinition = key => STOCK_LOAD_STAGE_DEFINITIONS.find(stage => stage.key === key)
 
 const resetStockLoadStages = workspace => {
@@ -462,22 +364,6 @@ const upsertAgentResult = result => {
   agentResults.value = list
 }
 
-const normalizeStockSymbol = value => {
-  const trimmed = String(value || '').trim().toLowerCase()
-  if (!trimmed) {
-    return ''
-  }
-  if (/^(sh|sz)\d{6}$/.test(trimmed)) {
-    return trimmed
-  }
-  if (/^\d{6}$/.test(trimmed)) {
-    return trimmed.startsWith('6') ? `sh${trimmed}` : `sz${trimmed}`
-  }
-  return trimmed
-}
-
-const isDirectStockSymbol = value => /^(sh|sz)\d{6}$/.test(normalizeStockSymbol(value))
-
 const applyHistorySymbol = item => {
   const rawSymbol = item.symbol || item.Symbol || item.code || item.Code || ''
   const normalizedSymbol = normalizeStockSymbol(rawSymbol)
@@ -504,8 +390,9 @@ const buildChartQuery = (targetSymbol, options = {}) => {
     symbol: targetSymbol,
     interval: interval.value
   })
+  const shouldIncludeMinute = options.includeMinute ?? (interval.value === 'day' || chartActiveView.value === 'minute')
   params.set('includeQuote', options.includeQuote ? 'true' : 'false')
-  params.set('includeMinute', interval.value === 'day' ? 'true' : 'false')
+  params.set('includeMinute', shouldIncludeMinute ? 'true' : 'false')
   if (selectedSource.value) {
     params.set('source', selectedSource.value)
   }
@@ -564,98 +451,6 @@ const applyFundamentalSnapshot = (workspace, requestToken, snapshot) => {
   return true
 }
 
-
-const cnDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false
-})
-
-const formatDate = value => {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return cnDateTimeFormatter.format(date)
-}
-
-const formatImpactScore = value => {
-  if (value == null || Number.isNaN(Number(value))) return ''
-  const num = Number(value)
-  return num > 0 ? `+${num}` : `${num}`
-}
-
-const getImpactClass = category => {
-  if (category === '利好') return 'impact-positive'
-  if (category === '利空') return 'impact-negative'
-  return 'impact-neutral'
-}
-
-const getImpactCategoryValue = item => item?.category ?? item?.Category ?? '中性'
-
-const getImpactScoreValue = item => Number(item?.impactScore ?? item?.ImpactScore ?? 0)
-
-const getImpactPublishedAtValue = item => {
-  const rawValue = item?.publishedAt ?? item?.PublishedAt
-  if (!rawValue) {
-    return 0
-  }
-  const timestamp = Date.parse(rawValue)
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
-
-const getHeadlineNewsImpactEvents = impact => {
-  const events = Array.isArray(impact?.events ?? impact?.Events) ? (impact.events ?? impact.Events) : []
-  const directionalEvents = events.filter(item => {
-    const category = getImpactCategoryValue(item)
-    return category === '利好' || category === '利空'
-  })
-
-  if (!directionalEvents.length) {
-    return []
-  }
-
-  const cutoff = Date.now() - 72 * 60 * 60 * 1000
-  const recentDirectionalEvents = directionalEvents.filter(item => getImpactPublishedAtValue(item) >= cutoff)
-  const prioritizedEvents = (recentDirectionalEvents.length ? recentDirectionalEvents : directionalEvents)
-    .slice()
-    .sort((left, right) => {
-      const publishedAtDelta = getImpactPublishedAtValue(right) - getImpactPublishedAtValue(left)
-      if (publishedAtDelta !== 0) {
-        return publishedAtDelta
-      }
-
-      const scoreDelta = Math.abs(getImpactScoreValue(right)) - Math.abs(getImpactScoreValue(left))
-      if (scoreDelta !== 0) {
-        return scoreDelta
-      }
-
-      return String(left?.title ?? left?.Title ?? '').localeCompare(String(right?.title ?? right?.Title ?? ''))
-    })
-
-  return prioritizedEvents.slice(0, 6)
-}
-
-const normalizeLocalNewsItem = item => ({
-  title: item?.title ?? item?.Title ?? '',
-  translatedTitle: item?.translatedTitle ?? item?.TranslatedTitle ?? '',
-  source: item?.source ?? item?.Source ?? '',
-  sourceTag: item?.sourceTag ?? item?.SourceTag ?? '',
-  category: item?.category ?? item?.Category ?? '',
-  sentiment: item?.sentiment ?? item?.Sentiment ?? '中性',
-  publishTime: item?.publishTime ?? item?.PublishTime ?? '',
-  crawledAt: item?.crawledAt ?? item?.CrawledAt ?? '',
-  url: item?.url ?? item?.Url ?? '',
-  aiTarget: item?.aiTarget ?? item?.AiTarget ?? '',
-  aiTags: Array.isArray(item?.aiTags ?? item?.AiTags) ? (item.aiTags ?? item.AiTags) : []
-})
-
-const getLocalNewsHeadline = item => item?.translatedTitle || item?.title || ''
-
 const openMarketNewsModal = () => {
   marketNewsModalOpen.value = true
 }
@@ -664,243 +459,9 @@ const closeMarketNewsModal = () => {
   marketNewsModalOpen.value = false
 }
 
-const normalizeNewsBucket = (level, payload) => ({
-  level,
-  symbol: payload?.symbol ?? payload?.Symbol ?? '',
-  sectorName: payload?.sectorName ?? payload?.SectorName ?? '',
-  items: Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items).map(normalizeLocalNewsItem) : []
-})
-
-const normalizeRealtimeQuote = item => ({
-  symbol: item?.symbol ?? item?.Symbol ?? '',
-  name: item?.name ?? item?.Name ?? '',
-  price: Number(item?.price ?? item?.Price ?? 0),
-  change: Number(item?.change ?? item?.Change ?? 0),
-  changePercent: Number(item?.changePercent ?? item?.ChangePercent ?? 0),
-  turnoverAmount: Number(item?.turnoverAmount ?? item?.TurnoverAmount ?? 0),
-  timestamp: item?.timestamp ?? item?.Timestamp ?? ''
-})
-
-const normalizeRealtimeOverviewSection = (payload, legacyPayload) => {
-  const source = payload ?? legacyPayload
-  if (!source) {
-    return null
-  }
-
-  return {
-    snapshotTime: source?.snapshotTime ?? source?.SnapshotTime ?? '',
-    amountUnit: source?.amountUnit ?? source?.AmountUnit ?? '亿元',
-    mainNetInflow: Number(source?.mainNetInflow ?? source?.MainNetInflow ?? 0),
-    superLargeOrderNetInflow: Number(source?.superLargeOrderNetInflow ?? source?.SuperLargeOrderNetInflow ?? 0),
-    totalNetInflow: Number(source?.totalNetInflow ?? source?.TotalNetInflow ?? 0),
-    shanghaiNetInflow: Number(source?.shanghaiNetInflow ?? source?.ShanghaiNetInflow ?? 0),
-    shenzhenNetInflow: Number(source?.shenzhenNetInflow ?? source?.ShenzhenNetInflow ?? 0),
-    tradingDate: source?.tradingDate ?? source?.TradingDate ?? '',
-    advancers: Number(source?.advancers ?? source?.Advancers ?? 0),
-    decliners: Number(source?.decliners ?? source?.Decliners ?? 0),
-    flatCount: Number(source?.flatCount ?? source?.FlatCount ?? 0),
-    limitUpCount: Number(source?.limitUpCount ?? source?.LimitUpCount ?? 0),
-    limitDownCount: Number(source?.limitDownCount ?? source?.LimitDownCount ?? 0)
-  }
-}
-
-const normalizeRealtimeOverview = payload => payload ? ({
-  snapshotTime: payload?.snapshotTime ?? payload?.SnapshotTime ?? '',
-  indices: Array.isArray(payload?.indices ?? payload?.Indices) ? (payload.indices ?? payload.Indices).map(normalizeRealtimeQuote) : [],
-  mainCapitalFlow: normalizeRealtimeOverviewSection(payload?.mainCapitalFlow, payload?.MainCapitalFlow),
-  northboundFlow: normalizeRealtimeOverviewSection(payload?.northboundFlow, payload?.NorthboundFlow),
-  breadth: normalizeRealtimeOverviewSection(payload?.breadth, payload?.Breadth)
-}) : null
-
-const normalizePlanNumber = value => {
-  if (value === '' || value == null) return null
-  const number = Number(value)
-  return Number.isFinite(number) ? number : null
-}
-
-const normalizeTradingPlan = item => ({
-  id: item?.id ?? item?.Id ?? '',
-  symbol: item?.symbol ?? item?.Symbol ?? '',
-  name: item?.name ?? item?.Name ?? '',
-  direction: item?.direction ?? item?.Direction ?? 'Long',
-  status: normalizeTradingPlanStatus(item?.status ?? item?.Status),
-  triggerPrice: normalizePlanNumber(item?.triggerPrice ?? item?.TriggerPrice),
-  invalidPrice: normalizePlanNumber(item?.invalidPrice ?? item?.InvalidPrice),
-  stopLossPrice: normalizePlanNumber(item?.stopLossPrice ?? item?.StopLossPrice),
-  takeProfitPrice: normalizePlanNumber(item?.takeProfitPrice ?? item?.TakeProfitPrice),
-  targetPrice: normalizePlanNumber(item?.targetPrice ?? item?.TargetPrice),
-  expectedCatalyst: item?.expectedCatalyst ?? item?.ExpectedCatalyst ?? '',
-  invalidConditions: item?.invalidConditions ?? item?.InvalidConditions ?? '',
-  riskLimits: item?.riskLimits ?? item?.RiskLimits ?? '',
-  analysisSummary: item?.analysisSummary ?? item?.AnalysisSummary ?? '',
-  analysisHistoryId: item?.analysisHistoryId ?? item?.AnalysisHistoryId ?? '',
-  sourceAgent: item?.sourceAgent ?? item?.SourceAgent ?? 'commander',
-  userNote: item?.userNote ?? item?.UserNote ?? '',
-  createdAt: item?.createdAt ?? item?.CreatedAt ?? '',
-  updatedAt: item?.updatedAt ?? item?.UpdatedAt ?? '',
-  watchlistEnsured: item?.watchlistEnsured ?? item?.WatchlistEnsured ?? null,
-  marketContext: normalizeMarketContext(item?.marketContext ?? item?.MarketContext ?? null),
-  marketContextAtCreation: normalizeMarketContext(item?.marketContextAtCreation ?? item?.MarketContextAtCreation ?? null),
-  currentMarketContext: normalizeMarketContext(item?.currentMarketContext ?? item?.CurrentMarketContext ?? null)
-})
-
-const normalizeMarketContext = item => item ? ({
-  stageLabel: item?.stageLabel ?? item?.StageLabel ?? '混沌',
-  stageConfidence: normalizePlanNumber(item?.stageConfidence ?? item?.StageConfidence) ?? 0,
-  stockSectorName: item?.stockSectorName ?? item?.StockSectorName ?? '',
-  mainlineSectorName: item?.mainlineSectorName ?? item?.MainlineSectorName ?? '',
-  sectorCode: item?.sectorCode ?? item?.SectorCode ?? '',
-  mainlineScore: normalizePlanNumber(item?.mainlineScore ?? item?.MainlineScore) ?? 0,
-  suggestedPositionScale: normalizePlanNumber(item?.suggestedPositionScale ?? item?.SuggestedPositionScale) ?? 0,
-  executionFrequencyLabel: item?.executionFrequencyLabel ?? item?.ExecutionFrequencyLabel ?? '',
-  counterTrendWarning: Boolean(item?.counterTrendWarning ?? item?.CounterTrendWarning ?? false),
-  isMainlineAligned: Boolean(item?.isMainlineAligned ?? item?.IsMainlineAligned ?? false)
-}) : null
-
-const normalizeTradingPlanAlert = item => ({
-  id: item?.id ?? item?.Id ?? '',
-  planId: item?.planId ?? item?.PlanId ?? '',
-  symbol: item?.symbol ?? item?.Symbol ?? '',
-  eventType: item?.eventType ?? item?.EventType ?? '',
-  severity: item?.severity ?? item?.Severity ?? 'Info',
-  message: item?.message ?? item?.Message ?? '',
-  snapshotPrice: normalizePlanNumber(item?.snapshotPrice ?? item?.SnapshotPrice),
-  metadataJson: item?.metadataJson ?? item?.MetadataJson ?? '',
-  occurredAt: item?.occurredAt ?? item?.OccurredAt ?? ''
-})
-
-const createTradingPlanForm = item => ({
-  id: item?.id ?? '',
-  symbol: item?.symbol ?? '',
-  name: item?.name ?? '',
-  direction: item?.direction ?? 'Long',
-  triggerPrice: item?.triggerPrice ?? '',
-  invalidPrice: item?.invalidPrice ?? '',
-  stopLossPrice: item?.stopLossPrice ?? '',
-  takeProfitPrice: item?.takeProfitPrice ?? '',
-  targetPrice: item?.targetPrice ?? '',
-  expectedCatalyst: item?.expectedCatalyst ?? '',
-  invalidConditions: item?.invalidConditions ?? '',
-  riskLimits: item?.riskLimits ?? '',
-  analysisSummary: item?.analysisSummary ?? '',
-  analysisHistoryId: item?.analysisHistoryId ?? '',
-  sourceAgent: item?.sourceAgent ?? 'commander',
-  userNote: item?.userNote ?? '',
-  marketContext: normalizeMarketContext(item?.marketContext ?? item?.marketContextAtCreation ?? item?.currentMarketContext ?? null)
-})
-
-const normalizeOptionalText = value => {
-  const result = String(value ?? '').trim()
-  return result || null
-}
-
-const formatPlanPrice = value => {
-  const number = normalizePlanNumber(value)
-  return Number.isFinite(number) ? Number(number).toFixed(2) : '待补录'
-}
-
-const formatPlanScale = value => {
-  const number = normalizePlanNumber(value)
-  return Number.isFinite(number) ? `${(number * 100).toFixed(0)}%` : '--'
-}
-
-const formatRealtimeMoney = value => {
-  const number = Number(value ?? 0)
-  const abs = Math.abs(number)
-  if (abs >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
-  if (abs >= 10000) return `${(number / 10000).toFixed(2)} 万`
-  return number.toFixed(0)
-}
-
-const formatSignedRealtimeAmount = value => {
-  const number = Number(value ?? 0)
-  return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
-}
-
-const formatSignedNumber = (value, digits = 2) => {
-  const number = Number(value)
-  if (Number.isNaN(number)) {
-    return ''
-  }
-
-  return `${number >= 0 ? '+' : ''}${number.toFixed(digits)}`
-}
-
-const formatSignedPercent = value => {
-  const formatted = formatSignedNumber(value, 2)
-  return formatted ? `${formatted}%` : ''
-}
-
-const buildRealtimeContextSymbols = symbolKey => {
-  return [symbolKey, ...DOMESTIC_REALTIME_CONTEXT_SYMBOLS, ...GLOBAL_REALTIME_CONTEXT_SYMBOLS]
-    .map(normalizeStockSymbol)
-    .filter(Boolean)
-    .filter((item, index, list) => list.indexOf(item) === index)
-}
-
-const getLatestPlanAlert = (workspace, planId) => {
-  if (!workspace || !planId) return null
-  return (Array.isArray(workspace.planAlerts) ? workspace.planAlerts : []).find(item => String(item.planId) === String(planId)) || null
-}
-
-const getPlanAlertClass = severity => {
-  if (severity === 'Critical') return 'plan-alert-critical'
-  if (severity === 'Warning') return 'plan-alert-warning'
-  return 'plan-alert-info'
-}
-
-const formatPlanAlertSummary = alert => {
-  if (!alert) return ''
-  const occurredAt = formatDate(alert.occurredAt)
-  return occurredAt ? `${alert.message} · ${occurredAt}` : alert.message
-}
-
-const getPlanReviewText = alert => getTradingPlanReviewText(alert)
-
-const getPlanReviewHeadline = alert => {
-  const metadata = parseTradingPlanAlertMetadata(alert?.metadataJson)
-  return metadata?.newsTitle || ''
-}
-
-const canEditTradingPlan = item => ['Pending', 'ReviewRequired'].includes(normalizeTradingPlanStatus(item?.status))
-
-const canResumeTradingPlan = item => normalizeTradingPlanStatus(item?.status) === 'ReviewRequired'
-
-const parseResponseMessage = async (response, fallback) => {
-  try {
-    const text = await response.text()
-    if (!text) {
-      return fallback
-    }
-    const payload = JSON.parse(text)
-    return payload?.message || fallback
-  } catch {
-    return fallback
-  }
-}
-
 const openExternal = url => {
   if (!url) return
   window.open(url, '_blank', 'noopener,noreferrer')
-}
-
-const buildStockContext = currentDetail => {
-  const quote = currentDetail?.quote
-  if (!quote) return ''
-  const name = quote.name ?? ''
-  const symbol = quote.symbol ?? ''
-  const price = quote.price ?? ''
-  const change = quote.change ?? ''
-  const changePercent = quote.changePercent ?? ''
-  const high = quote.high ?? ''
-  const low = quote.low ?? ''
-  const peRatio = quote.peRatio ?? ''
-  const floatMarketCap = quote.floatMarketCap ?? ''
-  const volumeRatio = quote.volumeRatio ?? ''
-  const shareholderCount = quote.shareholderCount ?? ''
-  const sectorName = quote.sectorName ?? ''
-  const timestamp = quote.timestamp ?? ''
-  return `股票：${name}（${symbol}）\n价格：${price}\n涨跌：${change}（${changePercent}%）\n高：${high} 低：${low}\n市盈率：${peRatio}\n流通市值：${floatMarketCap}\n量比：${volumeRatio}\n股东户数：${shareholderCount}\n所属板块：${sectorName}\n时间：${formatDate(timestamp)}`
 }
 
 const chatSymbolKey = computed(() => {
@@ -911,827 +472,6 @@ const chatSymbolKey = computed(() => {
 
 const getChatSessionOptions = workspace => (Array.isArray(workspace?.chatSessions) ? workspace.chatSessions : [])
 const getChatHistoryKey = workspace => workspace?.selectedChatSession || ''
-
-const getCurrentCopilotTurn = workspace => {
-  if (!workspace) {
-    return null
-  }
-
-  const turns = Array.isArray(workspace.copilotReplayTurns) ? workspace.copilotReplayTurns : []
-  if (!turns.length) {
-    return null
-  }
-
-  return turns.find(item => item.turnId === workspace.copilotCurrentTurnId) ?? turns[0] ?? null
-}
-
-const getCopilotToolCalls = turn => (Array.isArray(turn?.toolCalls ?? turn?.ToolCalls) ? (turn.toolCalls ?? turn.ToolCalls) : [])
-
-const getCopilotToolResults = turn => (Array.isArray(turn?.toolResults ?? turn?.ToolResults) ? (turn.toolResults ?? turn.ToolResults) : [])
-
-const getCopilotApprovedToolCalls = turn => getCopilotToolCalls(turn)
-  .filter(item => (item?.approvalStatus ?? item?.ApprovalStatus) === 'approved')
-
-const getCopilotExecutedToolCallIds = turn => new Set(
-  getCopilotToolResults(turn)
-    .map(item => item?.callId ?? item?.CallId ?? '')
-    .filter(Boolean)
-)
-
-const getCopilotDraftPlanAvailability = (workspace, turn) => {
-  const approvedToolCalls = getCopilotApprovedToolCalls(turn)
-  const executedCallIds = getCopilotExecutedToolCallIds(turn)
-  const executedApprovedCount = approvedToolCalls.filter(item => executedCallIds.has(item.callId ?? item.CallId ?? '')).length
-  const pendingApprovedCount = approvedToolCalls.length - executedApprovedCount
-
-  if (!approvedToolCalls.length) {
-    return {
-      enabled: false,
-      blockedReason: '当前草案没有可承接到交易计划的工具结果。'
-    }
-  }
-
-  if (executedApprovedCount <= 0) {
-    return {
-      enabled: false,
-      blockedReason: '至少先执行一张已批准的 Copilot 工具卡。'
-    }
-  }
-
-  if (pendingApprovedCount > 0) {
-    return {
-      enabled: false,
-      blockedReason: `还有 ${pendingApprovedCount} 张已批准工具卡未执行，先补齐再起草交易计划。`
-    }
-  }
-
-  if (!workspace?.detail?.quote?.symbol) {
-    return {
-      enabled: false,
-      blockedReason: '当前没有绑定股票上下文。'
-    }
-  }
-
-  return {
-    enabled: true,
-    blockedReason: workspace?.selectedAgentHistoryId || workspace?.agentResults?.length
-      ? ''
-      : '已具备 Copilot 证据，可继续联动多Agent后生成交易计划草稿。'
-  }
-}
-
-const buildEffectiveCopilotAction = (workspace, turn, action) => {
-  const actionType = action?.actionType ?? action?.ActionType ?? ''
-  if (actionType !== 'draft_trading_plan') {
-    return action
-  }
-
-  const availability = getCopilotDraftPlanAvailability(workspace, turn)
-  return {
-    ...action,
-    enabled: availability.enabled,
-    blockedReason: availability.blockedReason
-  }
-}
-
-const buildEffectiveCopilotTurn = workspace => {
-  const turn = getCurrentCopilotTurn(workspace)
-  if (!turn) {
-    return null
-  }
-
-  const followUpActions = Array.isArray(turn.followUpActions ?? turn.FollowUpActions)
-    ? (turn.followUpActions ?? turn.FollowUpActions)
-    : []
-
-  return {
-    ...turn,
-    followUpActions: followUpActions.map(action => buildEffectiveCopilotAction(workspace, turn, action))
-  }
-}
-
-const currentCopilotTurn = computed(() => buildEffectiveCopilotTurn(currentWorkspace.value))
-
-const parseCopilotInputSummary = summary => {
-  return String(summary || '')
-    .split(';')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .reduce((result, item) => {
-      const index = item.indexOf('=')
-      if (index < 0) {
-        return result
-      }
-
-      const key = item.slice(0, index).trim()
-      const value = item.slice(index + 1).trim()
-      if (key) {
-        result[key] = value
-      }
-      return result
-    }, {})
-}
-
-const summarizeCopilotToolPayload = (toolName, payload) => {
-  if (!payload) {
-    return '工具未返回结果。'
-  }
-
-  const data = payload.data ?? payload.Data ?? {}
-  if (toolName === 'StockKlineMcp') {
-    const bars = Array.isArray(data.bars ?? data.Bars) ? (data.bars ?? data.Bars) : []
-    const levels = data.keyLevels ?? data.KeyLevels ?? {}
-    const resistance = Array.isArray(levels.resistanceLevels ?? levels.ResistanceLevels) ? (levels.resistanceLevels ?? levels.ResistanceLevels) : []
-    const support = Array.isArray(levels.supportLevels ?? levels.SupportLevels) ? (levels.supportLevels ?? levels.SupportLevels) : []
-    return `K 线 ${bars.length} 根，压力位 ${resistance.length} 个，支撑位 ${support.length} 个。`
-  }
-
-  if (toolName === 'StockMinuteMcp') {
-    const points = Array.isArray(data.points ?? data.Points) ? (data.points ?? data.Points) : []
-    const sessionPhase = data.sessionPhase ?? data.SessionPhase ?? 'unknown'
-    return `分时 ${points.length} 个点位，当前 session=${sessionPhase}。`
-  }
-
-  if (toolName === 'StockStrategyMcp') {
-    const signals = Array.isArray(data.signals ?? data.Signals) ? (data.signals ?? data.Signals) : []
-    const topSignals = signals.slice(0, 3).map(item => item.strategy ?? item.Strategy ?? '').filter(Boolean)
-    return `策略信号 ${signals.length} 条${topSignals.length ? `，首批=${topSignals.join('/')}` : ''}。`
-  }
-
-  if (toolName === 'StockNewsMcp') {
-    const itemCount = Number(data.itemCount ?? data.ItemCount ?? 0)
-    const latestPublishedAt = data.latestPublishedAt ?? data.LatestPublishedAt ?? ''
-    return `本地新闻 ${itemCount} 条${latestPublishedAt ? `，最近时间 ${formatDate(latestPublishedAt)}` : ''}。`
-  }
-
-  if (toolName === 'StockSearchMcp') {
-    const resultCount = Number(data.resultCount ?? data.ResultCount ?? 0)
-    const provider = data.provider ?? data.Provider ?? 'unknown'
-    return `外部搜索 provider=${provider}，结果 ${resultCount} 条。`
-  }
-
-  return '工具已执行。'
-}
-
-const buildCopilotToolResult = (callId, toolName, payload) => ({
-  callId,
-  toolName,
-  status: 'completed',
-  traceId: payload?.traceId ?? payload?.TraceId ?? '',
-  evidenceCount: Array.isArray(payload?.evidence ?? payload?.Evidence) ? (payload.evidence ?? payload.Evidence).length : 0,
-  featureCount: Array.isArray(payload?.features ?? payload?.Features) ? (payload.features ?? payload.Features).length : 0,
-  warnings: Array.isArray(payload?.warnings ?? payload?.Warnings) ? (payload.warnings ?? payload.Warnings) : [],
-  degradedFlags: Array.isArray(payload?.degradedFlags ?? payload?.DegradedFlags) ? (payload.degradedFlags ?? payload.DegradedFlags) : [],
-  summary: summarizeCopilotToolPayload(toolName, payload)
-})
-
-const buildCopilotToolUrl = (turn, toolCall) => {
-  const toolName = toolCall?.toolName ?? toolCall?.ToolName ?? ''
-  const inputSummary = parseCopilotInputSummary(toolCall?.inputSummary ?? toolCall?.InputSummary ?? '')
-  const symbolKey = normalizeStockSymbol(inputSummary.symbol || turn?.symbol || turn?.Symbol || currentStockKey.value)
-  const taskId = toolCall?.callId ?? toolCall?.CallId ?? `stock-copilot-${Date.now()}`
-
-  if (toolName === 'StockKlineMcp') {
-    const params = new URLSearchParams({
-      symbol: symbolKey,
-      interval: inputSummary.interval || 'day',
-      count: inputSummary.count || '60',
-      taskId
-    })
-    return `/api/stocks/mcp/kline?${params.toString()}`
-  }
-
-  if (toolName === 'StockMinuteMcp') {
-    const params = new URLSearchParams({
-      symbol: symbolKey,
-      taskId
-    })
-    return `/api/stocks/mcp/minute?${params.toString()}`
-  }
-
-  if (toolName === 'StockStrategyMcp') {
-    const params = new URLSearchParams({
-      symbol: symbolKey,
-      interval: inputSummary.interval || 'day',
-      count: inputSummary.count || '60',
-      strategies: inputSummary.strategies || 'ma,macd,rsi,kdj,vwap,td,breakout,gap',
-      taskId
-    })
-    return `/api/stocks/mcp/strategy?${params.toString()}`
-  }
-
-  if (toolName === 'StockNewsMcp') {
-    const params = new URLSearchParams({
-      symbol: symbolKey,
-      level: inputSummary.level || 'stock',
-      taskId
-    })
-    return `/api/stocks/mcp/news?${params.toString()}`
-  }
-
-  if (toolName === 'StockSearchMcp') {
-    const params = new URLSearchParams({
-      q: inputSummary.query || turn?.userQuestion || turn?.UserQuestion || '',
-      trustedOnly: 'true',
-      taskId
-    })
-    return `/api/stocks/mcp/search?${params.toString()}`
-  }
-
-  return ''
-}
-
-const upsertCopilotTurn = (workspace, session, turn) => {
-  if (!workspace || !session || !turn) {
-    return
-  }
-
-  const normalizedTurn = {
-    ...turn,
-    toolPayloads: turn.toolPayloads ?? {},
-    toolResults: Array.isArray(turn.toolResults ?? turn.ToolResults) ? [...(turn.toolResults ?? turn.ToolResults)] : []
-  }
-
-  const replayTurns = Array.isArray(workspace.copilotReplayTurns) ? workspace.copilotReplayTurns : []
-  workspace.copilotSessionKey = session.sessionKey ?? session.SessionKey ?? workspace.copilotSessionKey
-  workspace.copilotSessionTitle = session.title ?? session.Title ?? workspace.copilotSessionTitle
-  workspace.copilotCurrentTurnId = normalizedTurn.turnId ?? normalizedTurn.TurnId ?? ''
-  workspace.copilotReplayTurns = [
-    normalizedTurn,
-    ...replayTurns.filter(item => (item.turnId ?? item.TurnId) !== (normalizedTurn.turnId ?? normalizedTurn.TurnId))
-  ].slice(0, 6)
-}
-
-const submitCopilotDraft = async (symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace?.detail?.quote?.symbol) {
-    if (workspace) {
-      workspace.copilotError = '请先选择股票'
-    }
-    return
-  }
-
-  const question = String(workspace.copilotQuestion || '').trim()
-  if (!question) {
-    workspace.copilotError = '请输入问题'
-    return
-  }
-
-  const controller = replaceAbortController(workspace.copilotDraftAbortController)
-  workspace.copilotDraftAbortController = controller
-  workspace.copilotLoading = true
-  workspace.copilotError = ''
-  try {
-    const response = await fetch('/api/stocks/copilot/turns/draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        symbol: workspace.detail.quote.symbol,
-        question,
-        sessionKey: workspace.copilotSessionKey || null,
-        sessionTitle: workspace.copilotSessionTitle || `${workspace.detail.quote.name} Copilot`,
-        taskId: `stock-copilot-draft-${workspace.symbolKey}`,
-        allowExternalSearch: Boolean(workspace.copilotAllowExternalSearch)
-      })
-    })
-    if (!response.ok) {
-      throw new Error(await parseResponseMessage(response, 'Copilot 草案生成失败'))
-    }
-
-    const session = await response.json()
-    const turn = Array.isArray(session?.turns ?? session?.Turns) ? (session.turns ?? session.Turns)[0] : null
-    if (!turn) {
-      throw new Error('Copilot 草案为空')
-    }
-
-    upsertCopilotTurn(workspace, session, turn)
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.copilotError = err.message || 'Copilot 草案生成失败'
-  } finally {
-    workspace.copilotLoading = false
-    if (workspace.copilotDraftAbortController === controller) {
-      workspace.copilotDraftAbortController = null
-    }
-  }
-}
-
-const selectCopilotReplayTurn = (turnId, symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace) {
-    return
-  }
-
-  workspace.copilotCurrentTurnId = turnId
-}
-
-const executeCopilotToolCall = async (callId, symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey)
-  const turn = getCurrentCopilotTurn(workspace)
-  if (!workspace || !turn) {
-    return
-  }
-
-  const toolCall = (turn.toolCalls ?? turn.ToolCalls ?? []).find(item => (item.callId ?? item.CallId) === callId)
-  if (!toolCall) {
-    return
-  }
-
-  if ((toolCall.approvalStatus ?? toolCall.ApprovalStatus) !== 'approved') {
-    workspace.copilotError = toolCall.blockedReason ?? toolCall.BlockedReason ?? '该工具当前未获批执行。'
-    return
-  }
-
-  const url = buildCopilotToolUrl(turn, toolCall)
-  if (!url) {
-    workspace.copilotError = '暂不支持该工具的前端执行。'
-    return
-  }
-
-  const controller = replaceAbortController(workspace.copilotToolAbortController)
-  workspace.copilotToolAbortController = controller
-  workspace.copilotToolBusyCallId = callId
-  workspace.copilotError = ''
-  try {
-    const response = await fetchBackendGet(url, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error(await parseResponseMessage(response, '工具执行失败'))
-    }
-
-    const payload = await response.json()
-    turn.toolPayloads = {
-      ...(turn.toolPayloads || {}),
-      [callId]: payload
-    }
-    const nextResult = buildCopilotToolResult(callId, toolCall.toolName ?? toolCall.ToolName ?? '', payload)
-    const existing = Array.isArray(turn.toolResults ?? turn.ToolResults) ? (turn.toolResults ?? turn.ToolResults) : []
-    turn.toolResults = [
-      nextResult,
-      ...existing.filter(item => (item.callId ?? item.CallId) !== callId)
-    ]
-
-    const toolName = toolCall.toolName ?? toolCall.ToolName ?? ''
-    if (toolName === 'StockNewsMcp') {
-      fetchNewsImpact(symbolKey, { force: true })
-      fetchLocalNews(symbolKey, { force: true })
-    }
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.copilotError = err.message || '工具执行失败'
-  } finally {
-    workspace.copilotToolBusyCallId = ''
-    if (workspace.copilotToolAbortController === controller) {
-      workspace.copilotToolAbortController = null
-    }
-  }
-}
-
-const focusCopilotWorkspaceSection = async (symbolKey, section, options = {}) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace) {
-    return
-  }
-
-  workspace.copilotFocusSection = section || ''
-  if (options.chartView) {
-    workspace.copilotChartFocusView = options.chartView
-  }
-
-  await nextTick()
-  const selectorMap = {
-    chart: '.stock-chart-section',
-    news: '.stock-news-impact-section',
-    strategy: '.stock-agent-section',
-    plan: '.stock-plan-section'
-  }
-  const selector = selectorMap[section]
-  if (!selector) {
-    return
-  }
-
-  const element = document.querySelector(selector)
-  element?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' })
-}
-
-const activateCopilotAction = async (actionId, symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey)
-  const turn = buildEffectiveCopilotTurn(workspace)
-  if (!workspace || !turn) {
-    return
-  }
-
-  const action = (turn.followUpActions ?? turn.FollowUpActions ?? []).find(item => (item.actionId ?? item.ActionId) === actionId)
-  if (!action) {
-    return
-  }
-
-  if (!(action.enabled ?? action.Enabled)) {
-    workspace.copilotError = action.blockedReason ?? action.BlockedReason ?? '该动作当前不可执行。'
-    return
-  }
-
-  const actionType = action.actionType ?? action.ActionType ?? ''
-  const toolName = action.toolName ?? action.ToolName ?? ''
-  const shouldExecuteApprovedTool = Boolean(toolName)
-
-  if (actionType === 'draft_trading_plan') {
-    await focusCopilotWorkspaceSection(symbolKey, 'plan')
-    if (!workspace.selectedAgentHistoryId && !workspace.agentResults.length) {
-      await runAgents(symbolKey)
-    }
-    await openTradingPlanDraft(symbolKey)
-    return
-  }
-
-  const toolCall = getCopilotApprovedToolCalls(turn).find(item => (item.toolName ?? item.ToolName) === toolName)
-  if (toolCall && shouldExecuteApprovedTool) {
-    await executeCopilotToolCall(toolCall.callId ?? toolCall.CallId ?? '', symbolKey)
-  }
-
-  if (actionType === 'inspect_chart') {
-    interval.value = parseCopilotInputSummary(toolCall?.inputSummary ?? toolCall?.InputSummary ?? '').interval || 'day'
-    await focusCopilotWorkspaceSection(symbolKey, 'chart', { chartView: interval.value })
-    await refreshChartData(symbolKey)
-    return
-  }
-
-  if (actionType === 'inspect_intraday') {
-    interval.value = 'day'
-    await focusCopilotWorkspaceSection(symbolKey, 'chart', { chartView: 'minute' })
-    await refreshChartData(symbolKey)
-    return
-  }
-
-  if (actionType === 'inspect_strategy') {
-    await focusCopilotWorkspaceSection(symbolKey, 'strategy')
-    if (!workspace.agentResults.length && !workspace.agentLoading) {
-      await runAgents(symbolKey)
-    } else if (!workspace.agentHistoryLoaded && !workspace.agentHistoryLoading) {
-      await fetchAgentHistory(symbolKey, { force: true })
-    }
-    return
-  }
-
-  if (actionType === 'inspect_news') {
-    await focusCopilotWorkspaceSection(symbolKey, 'news')
-    fetchNewsImpact(symbolKey, { force: true })
-    fetchLocalNews(symbolKey, { force: true })
-  }
-}
-
-const setChatRef = symbolKey => instance => {
-  if (!symbolKey) {
-    return
-  }
-  if (instance) {
-    chatWindowRefs.set(symbolKey, instance)
-    return
-  }
-  chatWindowRefs.delete(symbolKey)
-}
-
-const fetchChatSessions = async (symbolKey = chatSymbolKey.value, options = {}) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace || !symbolKey) {
-    return
-  }
-  const force = Boolean(options.force)
-  if (!force && (workspace.chatSessionsLoaded || workspace.chatSessionsLoading)) {
-    return
-  }
-
-  const requestToken = ++workspace.chatSessionsRequestToken
-  const controller = replaceAbortController(workspace.chatSessionsAbortController)
-  workspace.chatSessionsAbortController = controller
-  workspace.chatSessionsLoading = true
-  workspace.chatSessionsError = ''
-  try {
-    const params = new URLSearchParams({ symbol: symbolKey })
-    const response = await fetchBackendGet(`/api/stocks/chat/sessions?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error('聊天历史加载失败')
-    }
-    const list = await response.json()
-    if (requestToken !== workspace.chatSessionsRequestToken) {
-      return
-    }
-    workspace.chatSessions = Array.isArray(list) ? list.map(item => ({
-      key: item.sessionKey ?? item.SessionKey,
-      label: item.title ?? item.Title
-    })) : []
-    if (!workspace.chatSessions.length) {
-      await createChatSession(symbolKey)
-      workspace.chatSessionsLoaded = true
-      return
-    }
-    if (!workspace.chatSessions.some(item => item.key === workspace.selectedChatSession)) {
-      workspace.selectedChatSession = workspace.chatSessions[0]?.key || ''
-    }
-    workspace.chatSessionsLoaded = true
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.chatSessionsError = err.message || '聊天历史加载失败'
-    workspace.chatSessions = []
-    workspace.chatSessionsLoaded = false
-  } finally {
-    if (requestToken === workspace.chatSessionsRequestToken) {
-      workspace.chatSessionsLoading = false
-      if (workspace.chatSessionsAbortController === controller) {
-        workspace.chatSessionsAbortController = null
-      }
-    }
-  }
-}
-
-const createChatSession = async (symbolKey = chatSymbolKey.value) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace || !symbolKey) return
-  const timestamp = new Date()
-  const label = `${timestamp.getFullYear()}-${String(timestamp.getMonth() + 1).padStart(2, '0')}-${String(
-    timestamp.getDate()
-  ).padStart(2, '0')} ${String(timestamp.getHours()).padStart(2, '0')}:${String(timestamp.getMinutes()).padStart(2, '0')}`
-  const response = await fetch('/api/stocks/chat/sessions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ symbol: symbolKey, title: label })
-  })
-  if (!response.ok) {
-    throw new Error('创建会话失败')
-  }
-  const session = await response.json()
-  const entry = { key: session.sessionKey ?? session.SessionKey, label: session.title ?? session.Title }
-  workspace.chatSessions = [entry, ...workspace.chatSessions]
-  workspace.selectedChatSession = entry.key
-  workspace.chatSessionsLoaded = true
-}
-
-const startNewChat = async (symbolKey = currentStockKey.value) => {
-  try {
-    await createChatSession(symbolKey)
-  } catch (err) {
-    const workspace = getWorkspace(symbolKey)
-    if (workspace) {
-      workspace.chatSessionsError = err.message || '创建会话失败'
-    }
-    return
-  }
-  await nextTick()
-  chatWindowRefs.get(symbolKey)?.createNewChat()
-}
-
-const chatHistoryAdapter = {
-  load: async key => {
-    if (!key) return []
-    const response = await fetch(`/api/stocks/chat/sessions/${encodeURIComponent(key)}/messages`)
-    if (!response.ok) return []
-    const list = await response.json()
-    if (!Array.isArray(list)) return []
-    return list.map(item => ({
-      role: item.role ?? item.Role,
-      content: item.content ?? item.Content,
-      timestamp: item.timestamp ?? item.Timestamp
-    }))
-  },
-  save: async (key, messages) => {
-    if (!key) return
-    await fetch(`/api/stocks/chat/sessions/${encodeURIComponent(key)}/messages`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages })
-    })
-  }
-}
-
-const fetchAgentHistory = async (symbolKey = chatSymbolKey.value, options = {}) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace || !symbolKey) {
-    return
-  }
-  const force = Boolean(options.force)
-  if (!force && (workspace.agentHistoryLoaded || workspace.agentHistoryLoading)) {
-    return
-  }
-  const requestToken = ++workspace.agentHistoryRequestToken
-  const controller = replaceAbortController(workspace.agentHistoryAbortController)
-  workspace.agentHistoryAbortController = controller
-  workspace.agentHistoryLoading = true
-  workspace.agentHistoryError = ''
-  try {
-    const params = new URLSearchParams({ symbol: symbolKey })
-    const response = await fetchBackendGet(`/api/stocks/agents/history?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error('多Agent历史加载失败')
-    }
-    const list = await response.json()
-    if (requestToken !== workspace.agentHistoryRequestToken) {
-      return
-    }
-    workspace.agentHistoryList = Array.isArray(list) ? list : []
-    workspace.agentHistoryLoaded = true
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.agentHistoryError = err.message || '多Agent历史加载失败'
-    workspace.agentHistoryList = []
-    workspace.agentHistoryLoaded = false
-  } finally {
-    if (requestToken === workspace.agentHistoryRequestToken) {
-      workspace.agentHistoryLoading = false
-      if (workspace.agentHistoryAbortController === controller) {
-        workspace.agentHistoryAbortController = null
-      }
-    }
-  }
-}
-
-const agentHistoryOptions = computed(() => {
-  return agentHistoryList.value.map(item => {
-    const id = item.id ?? item.Id
-    const symbol = item.symbol ?? item.Symbol
-    const createdAt = item.createdAt ?? item.CreatedAt
-    const label = `${symbol} - ${formatDate(createdAt)}`
-    return { value: id, label }
-  })
-})
-
-const loadAgentHistoryDetail = async (historyId, symbolKey = currentStockKey.value) => {
-  if (!historyId) return
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace) return
-  workspace.agentHistoryLoading = true
-  workspace.agentHistoryError = ''
-  try {
-    const response = await fetch(`/api/stocks/agents/history/${historyId}`)
-    if (!response.ok) {
-      throw new Error('历史详情加载失败')
-    }
-    const historyDetail = await response.json()
-    const result = historyDetail.result ?? historyDetail.Result
-    workspace.agentResults = result?.agents ?? result?.Agents ?? []
-    workspace.agentUpdatedAt = formatDate(historyDetail.createdAt ?? historyDetail.CreatedAt)
-  } catch (err) {
-    workspace.agentHistoryError = err.message || '历史详情加载失败'
-  } finally {
-    workspace.agentHistoryLoading = false
-  }
-}
-
-const saveAgentHistory = async (symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
-  if (!workspace?.detail?.quote?.symbol) return
-  const payload = {
-    symbol: workspace.detail.quote.symbol,
-    name: workspace.detail.quote.name,
-    interval: interval.value,
-    source: selectedSource.value || null,
-    provider: null,
-    model: null,
-    useInternet: true,
-    result: {
-      symbol: workspace.detail.quote.symbol,
-      name: workspace.detail.quote.name,
-      timestamp: new Date().toISOString(),
-      agents: workspace.agentResults
-    }
-  }
-  const response = await fetch('/api/stocks/agents/history', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-  if (!response.ok) {
-    throw new Error('保存多Agent历史失败')
-  }
-  const saved = await response.json()
-  workspace.selectedAgentHistoryId = saved.id ?? saved.Id ?? ''
-  workspace.agentHistoryLoaded = false
-}
-
-const fetchTradingPlans = async (symbolKey = currentStockKey.value, options = {}) => {
-  const isBoard = Boolean(options.global)
-  const workspace = isBoard ? rootWorkspace : getWorkspace(symbolKey)
-  const symbolValue = isBoard ? '' : (workspace?.detail?.quote?.symbol ?? symbolKey)
-  if (!workspace || (!isBoard && !symbolValue)) {
-    return
-  }
-
-  const force = Boolean(options.force)
-  if (!force && (workspace.planListLoaded || workspace.planListLoading)) {
-    return
-  }
-
-  const requestToken = ++workspace.planListRequestToken
-  const controller = replaceAbortController(workspace.planListAbortController)
-  workspace.planListAbortController = controller
-  workspace.planListLoading = true
-  workspace.planError = ''
-  try {
-    const params = new URLSearchParams()
-    if (symbolValue) {
-      params.set('symbol', symbolValue)
-    }
-    if (options.take) {
-      params.set('take', String(options.take))
-    }
-    const response = await fetchBackendGet(`/api/stocks/plans?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error(await parseResponseMessage(response, '交易计划加载失败'))
-    }
-    const list = await response.json()
-    if (requestToken !== workspace.planListRequestToken) {
-      return
-    }
-    workspace.planList = Array.isArray(list) ? list.map(normalizeTradingPlan) : []
-    workspace.planListLoaded = true
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.planError = err.message || '交易计划加载失败'
-    workspace.planList = []
-    workspace.planListLoaded = false
-  } finally {
-    if (requestToken === workspace.planListRequestToken) {
-      workspace.planListLoading = false
-      if (workspace.planListAbortController === controller) {
-        workspace.planListAbortController = null
-      }
-    }
-  }
-}
-
-const fetchTradingPlanAlerts = async (symbolKey = currentStockKey.value, options = {}) => {
-  const isBoard = Boolean(options.global)
-  const workspace = isBoard ? rootWorkspace : getWorkspace(symbolKey)
-  const symbolValue = isBoard ? '' : (workspace?.detail?.quote?.symbol ?? symbolKey)
-  if (!workspace || (!isBoard && !symbolValue)) {
-    return
-  }
-
-  const force = Boolean(options.force)
-  if (!force && (workspace.planAlertsLoaded || workspace.planAlertsLoading)) {
-    return
-  }
-
-  const requestToken = ++workspace.planAlertsRequestToken
-  const controller = replaceAbortController(workspace.planAlertsAbortController)
-  workspace.planAlertsAbortController = controller
-  workspace.planAlertsLoading = true
-  try {
-    const params = new URLSearchParams()
-    if (symbolValue) {
-      params.set('symbol', symbolValue)
-    }
-    if (options.planId) {
-      params.set('planId', String(options.planId))
-    }
-    if (options.take) {
-      params.set('take', String(options.take))
-    }
-    const response = await fetchBackendGet(`/api/stocks/plans/alerts?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error(await parseResponseMessage(response, '交易计划告警加载失败'))
-    }
-    const list = await response.json()
-    if (requestToken !== workspace.planAlertsRequestToken) {
-      return
-    }
-    workspace.planAlerts = Array.isArray(list) ? list.map(normalizeTradingPlanAlert) : []
-    workspace.planAlertsLoaded = true
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.planError = err.message || '交易计划告警加载失败'
-    workspace.planAlerts = []
-    workspace.planAlertsLoaded = false
-  } finally {
-    if (requestToken === workspace.planAlertsRequestToken) {
-      workspace.planAlertsLoading = false
-      if (workspace.planAlertsAbortController === controller) {
-        workspace.planAlertsAbortController = null
-      }
-    }
-  }
-}
-
-const refreshTradingPlanBoard = async (force = false) => {
-  await fetchTradingPlans('', { force, global: true, take: 20 })
-  await fetchTradingPlanAlerts('', { force, global: true, take: 20 })
-}
-
-const refreshTradingPlanSection = async (symbolKey = currentStockKey.value, force = false) => {
-  await fetchTradingPlans(symbolKey, { force })
-  await fetchTradingPlanAlerts(symbolKey, { force, take: 20 })
-}
 
 const closeTradingPlanModal = symbolKey => {
   const workspace = getWorkspace(symbolKey)
@@ -1761,13 +501,20 @@ const openTradingPlanDraft = async (symbolKey = currentStockKey.value) => {
   workspace.planDraftLoading = true
   workspace.planError = ''
   try {
-    let historyId = workspace.selectedAgentHistoryId
+    let historyAvailability = getSelectedCommanderHistoryAvailability(workspace)
+    let historyId = historyAvailability.ready ? workspace.selectedAgentHistoryId : ''
     if (!historyId) {
-      if (!Array.isArray(workspace.agentResults) || !workspace.agentResults.length) {
-        throw new Error('请先完成多Agent分析')
+      const resultAvailability = inspectCommanderHistoryAgentResults(workspace.agentResults)
+      if (!resultAvailability.isComplete) {
+        throw new Error(resultAvailability.blockedReason || '请先完成完整的 commander 多Agent 分析')
       }
+
       await saveAgentHistory(symbolKey)
       await fetchAgentHistory(symbolKey, { force: true })
+      historyAvailability = getSelectedCommanderHistoryAvailability(workspace)
+      if (!historyAvailability.ready) {
+        throw new Error(historyAvailability.blockedReason || '多Agent 历史未达到 commander 完整性要求')
+      }
       historyId = workspace.selectedAgentHistoryId
     }
 
@@ -1964,26 +711,6 @@ const currentStockLabel = computed(() => {
 const getAgentId = agent => agent?.agentId ?? agent?.AgentId ?? ''
 const getAgentData = agent => agent?.data ?? agent?.Data ?? null
 
-const parseLevelNumber = value => {
-  const number = Number(value)
-  return Number.isFinite(number) ? number : null
-}
-
-const extractTaggedPriceLevels = (value, patterns) => {
-  const text = String(value || '')
-  const results = []
-  patterns.forEach(pattern => {
-    const matches = text.matchAll(pattern)
-    for (const match of matches) {
-      const number = Number(match[1])
-      if (Number.isFinite(number)) {
-        results.push(number)
-      }
-    }
-  })
-  return results
-}
-
 const aiLevels = computed(() => {
   const list = Array.isArray(agentResults.value) ? agentResults.value : []
   const commanderData = getAgentData(list.find(item => getAgentId(item) === 'commander'))
@@ -2022,67 +749,6 @@ const aiLevels = computed(() => {
 
 const marketNewsItems = computed(() => marketNewsBucket.value?.items ?? [])
 const marketNewsPreviewItems = computed(() => marketNewsItems.value.slice(0, 3))
-
-const getChangeClass = value => {
-  const number = Number(value)
-  if (Number.isNaN(number)) return ''
-  if (number > 0) return 'text-rise'
-  if (number < 0) return 'text-fall'
-  return ''
-}
-
-const getPriceClass = item => {
-  const change = item.changePercent ?? item.ChangePercent ?? 0
-  return getChangeClass(change)
-}
-
-const getHighClass = item => {
-  const price = Number(item.price ?? item.Price)
-  const high = Number(item.high ?? item.High)
-  if (Number.isNaN(price) || Number.isNaN(high)) return ''
-  return high >= price ? 'text-rise' : 'text-fall'
-}
-
-const getLowClass = item => {
-  const price = Number(item.price ?? item.Price)
-  const low = Number(item.low ?? item.Low)
-  if (Number.isNaN(price) || Number.isNaN(low)) return ''
-  return low <= price ? 'text-fall' : 'text-rise'
-}
-
-const formatPercent = value => {
-  if (value === null || value === undefined || value === '') return ''
-  return `${value}%`
-}
-
-const getSortValue = (item, key) => {
-  switch (key) {
-    case 'id':
-      return Number(item.id ?? item.Id ?? 0)
-    case 'symbol':
-      return String(item.symbol ?? item.Symbol ?? '')
-    case 'name':
-      return String(item.name ?? item.Name ?? '')
-    case 'price':
-      return Number(item.price ?? item.Price ?? 0)
-    case 'changePercent':
-      return Number(item.changePercent ?? item.ChangePercent ?? 0)
-    case 'turnoverRate':
-      return Number(item.turnoverRate ?? item.TurnoverRate ?? 0)
-    case 'peRatio':
-      return Number(item.peRatio ?? item.PeRatio ?? 0)
-    case 'speed':
-      return Number(item.speed ?? item.Speed ?? 0)
-    case 'high':
-      return Number(item.high ?? item.High ?? 0)
-    case 'low':
-      return Number(item.low ?? item.Low ?? 0)
-    case 'updatedAt':
-      return new Date(item.updatedAt ?? item.UpdatedAt ?? 0).getTime()
-    default:
-      return 0
-  }
-}
 
 const sortedHistoryList = computed(() => {
   const list = [...historyList.value]
@@ -2137,526 +803,100 @@ const deleteHistoryItem = async () => {
   }
 }
 
-const fetchQuote = async () => {
-  const query = symbol.value.trim()
-  if (!query) {
-    error.value = '请输入股票代码'
+const appendRecordedHistory = async quote => {
+  if (!quote?.symbol && !quote?.Symbol) {
     return
   }
 
-  const normalizedQuery = normalizeStockSymbol(query)
-  const targetSymbol = normalizeStockSymbol(selectedSymbol.value || normalizedQuery)
-
-  if (!isDirectStockSymbol(targetSymbol)) {
-    searchStocks(query)
-    return
+  const payload = {
+    symbol: quote.symbol ?? quote.Symbol ?? '',
+    name: quote.name ?? quote.Name ?? '',
+    price: Number(quote.price ?? quote.Price ?? 0),
+    changePercent: Number(quote.changePercent ?? quote.ChangePercent ?? 0),
+    turnoverRate: Number(quote.turnoverRate ?? quote.TurnoverRate ?? 0),
+    peRatio: Number(quote.peRatio ?? quote.PeRatio ?? 0),
+    high: Number(quote.high ?? quote.High ?? 0),
+    low: Number(quote.low ?? quote.Low ?? 0),
+    speed: Number(quote.speed ?? quote.Speed ?? 0)
   }
 
-  selectedSymbol.value = targetSymbol
-  symbol.value = targetSymbol
-  currentStockKey.value = targetSymbol
-
-  const workspace = getWorkspace(targetSymbol)
-  if (!workspace) {
-    return
-  }
-
-  const requestToken = ++workspace.quoteRequestToken
-  const controller = replaceAbortController(workspace.detailAbortController)
-  workspace.detailAbortController = controller
-  workspace.loading = true
-  workspace.error = ''
-  workspace.pendingFundamentalSnapshot = undefined
-  resetStockLoadStages(workspace)
-  setStockLoadStage(workspace, requestToken, 'cache', 'pending')
-  setStockLoadStage(workspace, requestToken, 'detail', 'pending')
-  setStockLoadStage(workspace, requestToken, 'tencent', 'pending')
-  setStockLoadStage(workspace, requestToken, 'eastmoney', 'pending')
-  // 保留已有数据，避免页面闪烁
-
-  const tencentQuoteProgressPromise = (async () => {
-    try {
-      const params = new URLSearchParams({ symbol: targetSymbol, source: '腾讯' })
-      const response = await fetchBackendGet(`/api/stocks/quote?${params.toString()}`, { signal: controller.signal })
-      if (!response.ok) {
-        throw new Error('腾讯接口请求失败')
-      }
-      await response.json()
-      setStockLoadStage(workspace, requestToken, 'tencent', 'success')
-    } catch (err) {
-      if (isAbortError(err)) {
-        return
-      }
-      setStockLoadStage(workspace, requestToken, 'tencent', 'error', err.message || '腾讯接口请求失败')
-    }
-  })()
-
-  const fundamentalSnapshotPromise = (async () => {
-    try {
-      const params = new URLSearchParams({ symbol: targetSymbol })
-      const response = await fetchBackendGet(`/api/stocks/fundamental-snapshot?${params.toString()}`, { signal: controller.signal })
-      if (response.status === 404) {
-        applyFundamentalSnapshot(workspace, requestToken, null)
-        setStockLoadStage(workspace, requestToken, 'eastmoney', 'success', '东财暂未返回可用基本面')
-        return
-      }
-      if (!response.ok) {
-        throw new Error('东财接口请求失败')
-      }
-      const snapshot = await response.json()
-      applyFundamentalSnapshot(workspace, requestToken, snapshot)
-      const factCount = Array.isArray(snapshot?.facts ?? snapshot?.Facts) ? (snapshot.facts ?? snapshot.Facts).length : 0
-      setStockLoadStage(
-        workspace,
-        requestToken,
-        'eastmoney',
-        'success',
-        factCount ? `东财已返回 ${factCount} 条基本面字段` : '东财基本面已返回'
-      )
-    } catch (err) {
-      if (isAbortError(err)) {
-        return
-      }
-      setStockLoadStage(workspace, requestToken, 'eastmoney', 'error', err.message || '东财接口请求失败')
-    }
-  })()
-
-  try {
-    const stockRealtimePromise = fetchStockRealtimeOverview(targetSymbol, { force: true })
-    const params = buildDetailQuery(targetSymbol)
-    const chartParams = buildChartQuery(targetSymbol, {
-      includeQuote: !workspace.detail?.quote
-    })
-
-    const cachePromise = (async () => {
-      try {
-        const cacheResponse = await fetchBackendGet(`/api/stocks/detail/cache?${params.toString()}`, { signal: controller.signal })
-        if (!cacheResponse.ok) {
-          setStockLoadStage(workspace, requestToken, 'cache', 'success', '未命中缓存，继续实时加载')
-          return
-        }
-
-        const cacheDetail = await cacheResponse.json()
-        if (workspace.sourceLoadStages?.detail?.status !== 'success') {
-          applyLatestDetail(workspace, requestToken, cacheDetail)
-          setStockLoadStage(workspace, requestToken, 'cache', 'success', '已显示缓存快照')
-          return
-        }
-
-        setStockLoadStage(workspace, requestToken, 'cache', 'success', '缓存返回较晚，已忽略')
-      } catch (err) {
-        if (isAbortError(err)) {
-          return
-        }
-        setStockLoadStage(workspace, requestToken, 'cache', 'error', err.message || '缓存读取失败')
-      }
-    })()
-
-    const liveChartPromise = (async () => {
-      const response = await fetchBackendGet(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
-      if (!response.ok) {
-        throw new Error('接口请求失败')
-      }
-
-      return response.json()
-    })()
-
-    const liveMessagesPromise = (async () => {
-      try {
-        const messageParams = new URLSearchParams({ symbol: targetSymbol })
-        if (selectedSource.value) {
-          messageParams.set('source', selectedSource.value)
-        }
-        const response = await fetchBackendGet(`/api/stocks/messages?${messageParams.toString()}`, { signal: controller.signal })
-        if (!response.ok) {
-          throw new Error('盘中消息加载失败')
-        }
-
-        const messages = await response.json()
-        applyLatestMessages(workspace, requestToken, messages)
-      } catch (err) {
-        if (isAbortError(err)) {
-          return
-        }
-      }
-    })()
-
-    const liveChart = await liveChartPromise
-    applyLatestDetail(workspace, requestToken, liveChart)
-    const klineCount = Array.isArray(liveChart?.kLines ?? liveChart?.KLines) ? (liveChart.kLines ?? liveChart.KLines).length : 0
-    const minuteCount = Array.isArray(liveChart?.minuteLines ?? liveChart?.MinuteLines) ? (liveChart.minuteLines ?? liveChart.MinuteLines).length : 0
-    setStockLoadStage(
-      workspace,
-      requestToken,
-      'detail',
-      'success',
-      `已返回 ${klineCount} 根K线 / ${minuteCount} 条分时`
-    )
-
-    if (requestToken === workspace.quoteRequestToken) {
-      workspace.loading = false
-      if (workspace.detailAbortController === controller) {
-        workspace.detailAbortController = null
-      }
-    }
-
-    await Promise.allSettled([cachePromise, tencentQuoteProgressPromise, fundamentalSnapshotPromise, stockRealtimePromise, liveMessagesPromise])
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    if (requestToken === workspace.quoteRequestToken) {
-      workspace.error = err.message || '请求失败'
-      setStockLoadStage(workspace, requestToken, 'detail', 'error', err.message || '图表数据请求失败')
-    }
-  } finally {
-    if (requestToken === workspace.quoteRequestToken && workspace.loading) {
-      workspace.loading = false
-      if (workspace.detailAbortController === controller) {
-        workspace.detailAbortController = null
-      }
-    }
-  }
-}
-
-const refreshChartData = async (symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey)
-  const targetSymbol = normalizeStockSymbol(symbolKey || workspace?.detail?.quote?.symbol)
-  if (!workspace || !targetSymbol || !workspace.detail) {
-    return
-  }
-
-  const requestToken = ++workspace.quoteRequestToken
-  const controller = replaceAbortController(workspace.detailAbortController)
-  workspace.detailAbortController = controller
-  workspace.loading = true
-  workspace.error = ''
-  resetStockLoadStages(workspace)
-  setStockLoadStage(workspace, requestToken, 'cache', 'success', '沿用当前详情')
-  setStockLoadStage(workspace, requestToken, 'detail', 'pending')
-  const chartParams = buildChartQuery(targetSymbol, {
-    includeQuote: false
+  const response = await fetch('/api/stocks/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
   })
 
-  try {
-    const chartResponse = await fetchBackendGet(`/api/stocks/chart?${chartParams.toString()}`, { signal: controller.signal })
-    if (!chartResponse.ok) {
-      throw new Error('图表数据请求失败')
-    }
-
-    const chartPayload = await chartResponse.json()
-    applyLatestDetail(workspace, requestToken, chartPayload)
-    const klineCount = Array.isArray(chartPayload?.kLines ?? chartPayload?.KLines) ? (chartPayload.kLines ?? chartPayload.KLines).length : 0
-    const minuteCount = Array.isArray(chartPayload?.minuteLines ?? chartPayload?.MinuteLines) ? (chartPayload.minuteLines ?? chartPayload.MinuteLines).length : 0
-    setStockLoadStage(workspace, requestToken, 'detail', 'success', `已返回 ${klineCount} 根K线 / ${minuteCount} 条分时`)
-
-    if (requestToken === workspace.quoteRequestToken) {
-      workspace.loading = false
-      if (workspace.detailAbortController === controller) {
-        workspace.detailAbortController = null
-      }
-    }
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    if (requestToken === workspace.quoteRequestToken) {
-      workspace.error = err.message || '图表数据请求失败'
-      setStockLoadStage(workspace, requestToken, 'detail', 'error', err.message || '图表数据请求失败')
-    }
-  } finally {
-    if (requestToken === workspace.quoteRequestToken && workspace.loading) {
-      workspace.loading = false
-      if (workspace.detailAbortController === controller) {
-        workspace.detailAbortController = null
-      }
-    }
+  if (!response.ok) {
+    throw new Error(await parseResponseMessage(response, '历史记录保存失败'))
   }
+
+  const saved = await response.json()
+  const savedId = String(saved?.id ?? saved?.Id ?? '')
+  const savedSymbol = String(saved?.symbol ?? saved?.Symbol ?? '').toLowerCase()
+  const currentList = Array.isArray(historyList.value) ? historyList.value : []
+
+  historyList.value = [
+    saved,
+    ...currentList.filter(item => {
+      const itemId = String(item?.id ?? item?.Id ?? '')
+      const itemSymbol = String(item?.symbol ?? item?.Symbol ?? '').toLowerCase()
+      if (savedId && itemId) {
+        return itemId !== savedId
+      }
+      return !savedSymbol || itemSymbol !== savedSymbol
+    })
+  ]
 }
 
-const fetchNewsImpact = async (symbolKey = currentStockKey.value, options = {}) => {
-  const workspace = getWorkspace(symbolKey)
-  const symbolValue = workspace?.detail?.quote?.symbol
-  if (!workspace || !symbolValue) {
-    return
-  }
-  const force = Boolean(options.force)
-  if (!force && (workspace.newsImpactLoaded || workspace.newsImpactLoading)) {
-    return
-  }
-
-  const requestToken = ++workspace.newsImpactRequestToken
-  const controller = replaceAbortController(workspace.newsImpactAbortController)
-  workspace.newsImpactAbortController = controller
-  workspace.newsImpactLoading = true
-  workspace.newsImpactError = ''
-  try {
-    const params = new URLSearchParams({ symbol: symbolValue })
-    if (selectedSource.value) {
-      params.set('source', selectedSource.value)
-    }
-    const response = await fetchBackendGet(`/api/stocks/news/impact?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error('资讯影响加载失败')
-    }
-    const payload = await response.json()
-    if (requestToken !== workspace.newsImpactRequestToken) {
-      return
-    }
-    workspace.newsImpact = payload
-    workspace.newsImpactLoaded = true
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    workspace.newsImpactError = err.message || '资讯影响加载失败'
-    workspace.newsImpact = null
-    workspace.newsImpactLoaded = false
-  } finally {
-    if (requestToken === workspace.newsImpactRequestToken) {
-      workspace.newsImpactLoading = false
-      if (workspace.newsImpactAbortController === controller) {
-        workspace.newsImpactAbortController = null
-      }
-    }
-  }
+const historySaveFailed = err => {
+  historyError.value = err?.message || '历史记录保存失败'
 }
 
-const fetchMarketNews = async (options = {}) => {
-  const force = Boolean(options.force)
-  if (!force && (rootWorkspace.localNewsBuckets.market || rootWorkspace.localNewsLoading)) {
-    return
-  }
-  const requestToken = ++rootWorkspace.localNewsRequestToken
-  const controller = replaceAbortController(rootWorkspace.localNewsAbortController)
-  rootWorkspace.localNewsAbortController = controller
-  rootWorkspace.localNewsLoading = true
-  rootWorkspace.localNewsError = ''
-
-  try {
-    const response = await fetchBackendGet('/api/news?level=market', { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error('大盘资讯加载失败')
-    }
-
-    const payload = await response.json()
-    if (requestToken !== rootWorkspace.localNewsRequestToken) {
-      return
-    }
-
-    rootWorkspace.localNewsBuckets = {
-      ...rootWorkspace.localNewsBuckets,
-      market: normalizeNewsBucket('market', payload)
-    }
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    rootWorkspace.localNewsError = err.message || '大盘资讯加载失败'
-  } finally {
-    if (requestToken === rootWorkspace.localNewsRequestToken) {
-      rootWorkspace.localNewsLoading = false
-      if (rootWorkspace.localNewsAbortController === controller) {
-        rootWorkspace.localNewsAbortController = null
-      }
-    }
-  }
-}
-
-const fetchStockRealtimeOverview = async (symbolKey = currentStockKey.value, options = {}) => {
-  if (typeof fetch !== 'function') {
-    return
-  }
-
-  const normalizedSymbol = normalizeStockSymbol(symbolKey || detail.value?.quote?.symbol)
-  const effectiveSymbol = normalizedSymbol || ''
-
-  const force = Boolean(options.force)
-  if (!stockRealtimeOverviewEnabled.value && !force) {
-    return
-  }
-
-  if (!force && stockRealtimeLoading.value) {
-    return
-  }
-
-  if (!force && stockRealtimeOverview.value && stockRealtimeSymbol.value === effectiveSymbol) {
-    return
-  }
-
-  const controller = replaceAbortController(stockRealtimeAbortController)
-  stockRealtimeAbortController = controller
-  stockRealtimeLoading.value = true
-  stockRealtimeError.value = ''
-
-  try {
-    const params = new URLSearchParams({ symbols: buildRealtimeContextSymbols(effectiveSymbol).join(',') })
-    const response = await fetchBackendGet(`/api/market/realtime/overview?${params.toString()}`, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error('市场实时总览加载失败')
-    }
-
-    const payload = await response.json()
-    stockRealtimeOverview.value = normalizeRealtimeOverview(payload)
-    stockRealtimeSymbol.value = effectiveSymbol
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    stockRealtimeError.value = err.message || '市场实时总览加载失败'
-  } finally {
-    if (stockRealtimeAbortController === controller) {
-      stockRealtimeAbortController = null
-    }
-    stockRealtimeLoading.value = false
-  }
-}
-
-const fetchLocalNews = async (symbolKey = currentStockKey.value, options = {}) => {
-  const workspace = symbolKey ? getWorkspace(symbolKey) : null
-  const symbolValue = workspace?.detail?.quote?.symbol
-  if (!workspace || !symbolValue) {
-    return
-  }
-  const force = Boolean(options.force)
-  if (!force && (workspace.localNewsLoaded || workspace.localNewsLoading)) {
-    return
-  }
-
-  const targetWorkspace = workspace
-  const requestToken = ++targetWorkspace.localNewsRequestToken
-  const controller = replaceAbortController(targetWorkspace.localNewsAbortController)
-  targetWorkspace.localNewsAbortController = controller
-  targetWorkspace.localNewsLoading = true
-  targetWorkspace.localNewsError = ''
-  try {
-    const buckets = await Promise.all(
-      sidebarNewsSections.map(async section => {
-        const params = new URLSearchParams({ level: section.key })
-        params.set('symbol', symbolValue)
-        const response = await fetchBackendGet(`/api/news?${params.toString()}`, { signal: controller.signal })
-        if (!response.ok) {
-          throw new Error('本地新闻加载失败')
-        }
-        const payload = await response.json()
-        return [section.key, normalizeNewsBucket(section.key, payload)]
-      })
-    )
-
-    if (requestToken !== targetWorkspace.localNewsRequestToken) {
-      return
-    }
-
-    targetWorkspace.localNewsBuckets = {
-      ...targetWorkspace.localNewsBuckets,
-      stock: Object.fromEntries(buckets).stock ?? null,
-      sector: Object.fromEntries(buckets).sector ?? null
-    }
-    targetWorkspace.localNewsLoaded = true
-  } catch (err) {
-    if (isAbortError(err)) {
-      return
-    }
-    targetWorkspace.localNewsError = err.message || '本地新闻加载失败'
-    targetWorkspace.localNewsBuckets = {
-      ...targetWorkspace.localNewsBuckets,
-      stock: null,
-      sector: null
-    }
-    targetWorkspace.localNewsLoaded = false
-  } finally {
-    if (requestToken === targetWorkspace.localNewsRequestToken) {
-      targetWorkspace.localNewsLoading = false
-      if (targetWorkspace.localNewsAbortController === controller) {
-        targetWorkspace.localNewsAbortController = null
-      }
-    }
-  }
-}
-
-const runAgents = async (symbolKey = currentStockKey.value, isPro = false) => {
-  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
-  if (!workspace?.detail?.quote?.symbol) {
-    if (workspace) {
-      workspace.agentError = '请先选择股票'
-    }
-    return
-  }
-
-  workspace.agentLoading = true
-  workspace.agentError = ''
-  try {
-    workspace.agentResults = []
-    workspace.selectedAgentHistoryId = ''
-    const order = ['stock_news', 'sector_news', 'financial_analysis', 'trend_analysis', 'commander']
-    for (const agentId of order) {
-      const payload = {
-        symbol: workspace.detail.quote.symbol,
-        agentId,
-        interval: interval.value,
-        count: workspace.detail.kLines?.length || 60,
-        source: selectedSource.value || null,
-        provider: null,
-        useInternet: true,
-        dependencyResults: agentId === 'commander' ? workspace.agentResults : [],
-        isPro
-      }
-
-      try {
-        const response = await fetch('/api/stocks/agents/single', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        })
-        if (!response.ok) {
-          const message = await response.text()
-          throw new Error(message || `${agentId} 请求失败`)
-        }
-        const result = await response.json()
-        if (currentWorkspace.value?.symbolKey === workspace.symbolKey) {
-          upsertAgentResult(result)
-        } else {
-          const agentIdValue = result?.agentId ?? result?.AgentId ?? ''
-          const list = [...workspace.agentResults]
-          const index = list.findIndex(item => (item.agentId ?? item.AgentId) === agentIdValue)
-          if (index >= 0) {
-            list[index] = result
-          } else {
-            list.push(result)
-          }
-          workspace.agentResults = list
-        }
-      } catch (err) {
-        const failedResult = {
-          agentId,
-          agentName: agentId,
-          success: false,
-          error: err.message || `${agentId} 请求失败`,
-          data: null,
-          rawContent: null
-        }
-        if (currentWorkspace.value?.symbolKey === workspace.symbolKey) {
-          upsertAgentResult(failedResult)
-        } else {
-          workspace.agentResults = [...workspace.agentResults, failedResult]
-        }
-      }
-
-      workspace.agentUpdatedAt = formatDate(new Date().toISOString())
-    }
-
-    try {
-      await saveAgentHistory(workspace.symbolKey)
-      await fetchAgentHistory(workspace.symbolKey, { force: true })
-    } catch (err) {
-      workspace.agentHistoryError = err.message || '保存多Agent历史失败'
-    }
-  } catch (err) {
-    workspace.agentError = err.message || '多Agent请求失败'
-  } finally {
-    workspace.agentLoading = false
-  }
-}
+const {
+  fetchHistory,
+  fetchLocalNews,
+  fetchMarketNews,
+  fetchNewsImpact,
+  fetchSources,
+  fetchStockRealtimeOverview,
+  fetchTradingPlanAlerts,
+  fetchTradingPlans,
+  refreshHistory,
+  refreshTradingPlanBoard,
+  refreshTradingPlanSection
+} = createStockInfoTabDataRequests({
+  buildRealtimeContextSymbols,
+  currentStockKey,
+  detail,
+  DOMESTIC_REALTIME_CONTEXT_SYMBOLS,
+  fetchBackendGet,
+  getStockRealtimeAbortController: () => stockRealtimeAbortController,
+  getWorkspace,
+  GLOBAL_REALTIME_CONTEXT_SYMBOLS,
+  historyError,
+  historyList,
+  historyLoading,
+  isAbortError,
+  normalizeNewsBucket,
+  normalizeRealtimeOverview,
+  normalizeStockSymbol,
+  normalizeTradingPlan,
+  normalizeTradingPlanAlert,
+  parseResponseMessage,
+  replaceAbortController,
+  rootWorkspace,
+  selectedSource,
+  setStockRealtimeAbortController: value => {
+    stockRealtimeAbortController = value
+  },
+  sidebarNewsSections,
+  sources,
+  stockRealtimeError,
+  stockRealtimeLoading,
+  stockRealtimeOverview,
+  stockRealtimeOverviewEnabled,
+  stockRealtimeSymbol
+})
 
 const searchStocks = async query => {
   searchLoading.value = true
@@ -2720,53 +960,104 @@ const closeSearch = () => {
   searchOpen.value = false
 }
 
-const fetchSources = async () => {
-  try {
-    const response = await fetchBackendGet('/api/stocks/sources')
-    if (response.ok) {
-      sources.value = await response.json()
-    }
-  } catch {
-    // 忽略来源加载失败
+const saveAgentHistoryRequest = async payload => {
+  const response = await fetch('/api/stocks/agents/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+  if (!response.ok) {
+    throw new Error('保存多Agent历史失败')
   }
+  return response.json()
 }
 
-const fetchHistory = async () => {
-  historyLoading.value = true
-  historyError.value = ''
-  try {
-    const response = await fetchBackendGet('/api/stocks/history')
-    if (!response.ok) {
-      throw new Error('历史记录请求失败')
-    }
-    historyList.value = await response.json()
-  } catch (err) {
-    historyError.value = err.message || '历史记录请求失败'
-  } finally {
-    historyLoading.value = false
-  }
-}
+const {
+  fetchQuote,
+  refreshChartData
+} = createStockInfoTabQuoteRuntime({
+  applyFundamentalSnapshot,
+  appendRecordedHistory,
+  currentStockKey,
+  fetchBackendGet,
+  fetchStockRealtimeOverview,
+  getSelectedSource: () => selectedSource.value,
+  getWorkspace,
+  historySaveFailed,
+  isAbortError,
+  isDirectStockSymbol,
+  normalizeStockSymbol,
+  replaceAbortController,
+  searchStocks,
+  selectedSymbol,
+  setStockLoadStage,
+  resetStockLoadStages,
+  symbol,
+  buildDetailQuery,
+  buildChartQuery,
+  applyLatestDetail,
+  applyLatestMessages,
+  error
+})
 
-const refreshHistory = async () => {
-  historyLoading.value = true
-  historyError.value = ''
-  try {
-    const params = new URLSearchParams()
-    if (selectedSource.value) {
-      params.set('source', selectedSource.value)
-    }
-    const url = params.toString() ? `/api/stocks/history/refresh?${params.toString()}` : '/api/stocks/history/refresh'
-    const response = await fetch(url, { method: 'POST' })
-    if (!response.ok) {
-      throw new Error('历史记录刷新失败')
-    }
-    historyList.value = await response.json()
-  } catch (err) {
-    historyError.value = err.message || '历史记录刷新失败'
-  } finally {
-    historyLoading.value = false
-  }
-}
+const {
+  fetchAgentHistory,
+  loadAgentHistoryDetail,
+  runAgents,
+  saveAgentHistory
+} = createStockInfoTabAgentRuntime({
+  chatSymbolKey,
+  currentStockKey,
+  currentWorkspace,
+  formatDate,
+  getWorkspace,
+  interval,
+  inspectCommanderHistoryAgentResults,
+  replaceAbortController,
+  saveAgentHistoryRequest,
+  fetchBackendGet,
+  isAbortError,
+  selectedSource,
+  upsertAgentResult
+})
+
+const {
+  activateCopilotAction,
+  chatHistoryAdapter,
+  currentCopilotTurn,
+  executeCopilotToolCall,
+  fetchChatSessions,
+  fetchCopilotAcceptanceBaseline,
+  selectCopilotReplayTurn,
+  setChatRef,
+  startNewChat,
+  submitCopilotDraft
+} = createStockInfoTabCopilotRuntime({
+  chatSymbolKey,
+  chatWindowRefs,
+  currentStockKey,
+  currentWorkspace,
+  fetchAgentHistory,
+  fetchBackendGet,
+  fetchLocalNews,
+  fetchNewsImpact,
+  formatDate,
+  getCopilotApprovedToolCalls,
+  getCopilotDraftPlanAvailability,
+  getSelectedCommanderHistoryAvailability,
+  getWorkspace,
+  interval,
+  isAbortError,
+  nextTick,
+  openTradingPlanDraft,
+  parseCopilotInputSummary,
+  parseResponseMessage,
+  refreshChartData,
+  replaceAbortController,
+  runAgents,
+  buildCopilotAcceptanceExecutions,
+  buildCopilotToolResult
+})
 
 const setupHistoryRefresh = () => {
   if (historyTimer) {
@@ -2822,6 +1113,46 @@ const setupPlanRefresh = () => {
   }
 }
 
+const resolveActiveChartSymbolKey = () => normalizeStockSymbol(
+  currentStockKey.value || detail.value?.quote?.symbol || selectedSymbol.value || symbol.value
+)
+
+const minuteTdSequentialRefreshEligible = computed(() => (
+  chartActiveView.value === 'minute'
+  && minuteTdSequentialEnabled.value
+  && Boolean(resolveActiveChartSymbolKey())
+))
+
+const setupMinuteTdSequentialRefresh = () => {
+  if (minuteTdSequentialRefreshTimer) {
+    clearInterval(minuteTdSequentialRefreshTimer)
+    minuteTdSequentialRefreshTimer = null
+  }
+
+  if (!minuteTdSequentialRefreshEligible.value) {
+    return
+  }
+
+  minuteTdSequentialRefreshTimer = setInterval(() => {
+    const symbolKey = resolveActiveChartSymbolKey()
+    if (!symbolKey || loading.value || currentWorkspace.value?.detailAbortController) {
+      return
+    }
+    refreshChartData(symbolKey)
+  }, 1000)
+}
+
+const handleChartViewChange = viewId => {
+  chartActiveView.value = viewId || 'day'
+}
+
+const handleChartStrategyVisibilityChange = payload => {
+  if (payload?.viewId !== 'minute' || payload?.strategyId !== 'minuteTdSequential') {
+    return
+  }
+  minuteTdSequentialEnabled.value = payload.active === true
+}
+
 watch(interval, value => {
   localStorage.setItem('stock_interval', value)
   if (symbol.value.trim()) {
@@ -2871,6 +1202,10 @@ watch(historyAutoRefresh, value => {
   setupHistoryRefresh()
 })
 
+watch(minuteTdSequentialRefreshEligible, () => {
+  setupMinuteTdSequentialRefresh()
+})
+
 onMounted(() => {
   fetchSources()
   setupRefresh()
@@ -2889,6 +1224,9 @@ onUnmounted(() => {
   }
   if (planRefreshTimer) {
     clearInterval(planRefreshTimer)
+  }
+  if (minuteTdSequentialRefreshTimer) {
+    clearInterval(minuteTdSequentialRefreshTimer)
   }
   if (historyTimer) {
     clearInterval(historyTimer)
@@ -2965,404 +1303,93 @@ watch(currentStockKey, () => {
         </button>
       </div>
     </div>
-    <div class="compact-toolbar">
-      <section class="toolbar-shell sticky-toolbar">
-        <div class="toolbar-main-row">
-          <div class="toolbar-title">
-            <strong>标的查询</strong>
-            <span class="muted">顶部快速切换，不再占用图表纵向空间。</span>
-          </div>
+    <StockSearchToolbar
+      :symbol="symbol"
+      :selected-source="selectedSource"
+      :refresh-seconds="refreshSeconds"
+      :auto-refresh="autoRefresh"
+      :sources="sources"
+      :search-open="searchOpen"
+      :search-results="searchResults"
+      :search-loading="searchLoading"
+      :search-error="searchError"
+      :is-blocking-quote-load="isBlockingQuoteLoad"
+      :is-background-quote-refresh="isBackgroundQuoteRefresh"
+      :error="error"
+      :history-auto-refresh="historyAutoRefresh"
+      :history-refresh-seconds="historyRefreshSeconds"
+      :history-loading="historyLoading"
+      :history-error="historyError"
+      :history-list="historyList"
+      :sorted-history-list="sortedHistoryList"
+      :context-menu="contextMenu"
+      :get-change-class="getChangeClass"
+      :format-percent="formatPercent"
+      @update:symbol="symbol = $event"
+      @update:selected-source="selectedSource = $event"
+      @update:refresh-seconds="refreshSeconds = $event"
+      @update:auto-refresh="autoRefresh = $event"
+      @update:history-refresh-seconds="historyRefreshSeconds = $event"
+      @update:history-auto-refresh="historyAutoRefresh = $event"
+      @symbol-input="onSymbolInput"
+      @symbol-enter="onSymbolEnter"
+      @fetch-quote="fetchQuote"
+      @close-search="closeSearch"
+      @select-search-result="selectSearchResult($event)"
+      @refresh-history="refreshHistory"
+      @apply-history-symbol="applyHistorySymbol($event)"
+      @open-context-menu="openContextMenu"
+      @delete-history-item="deleteHistoryItem"
+    />
 
-          <div class="field search-field toolbar-search-field">
-            <input
-              v-model="symbol"
-              placeholder="输入股票代码/名称/拼音缩写"
-              @input="onSymbolInput"
-              @keydown.enter.prevent="onSymbolEnter"
-            />
-            <button @click="fetchQuote" :disabled="isBlockingQuoteLoad">查询</button>
-            <div v-if="searchOpen" class="search-dropdown">
-              <div class="search-modal-header">
-                <span>搜索结果</span>
-                <button class="close-btn" @click="closeSearch">关闭</button>
-              </div>
-              <p v-if="searchError" class="muted">{{ searchError }}</p>
-              <p v-else-if="searchLoading" class="muted">搜索中...</p>
-              <ul v-else class="search-list">
-                <li
-                  v-for="item in searchResults"
-                  :key="item.symbol || item.Symbol"
-                  @click="selectSearchResult(item)"
-                >
-                  <div class="result-name">{{ item.name ?? item.Name }}</div>
-                  <div class="result-code">{{ item.symbol ?? item.Symbol }}</div>
-                </li>
-              </ul>
-              <p v-if="!searchLoading && !searchError && !searchResults.length" class="muted">暂无匹配结果</p>
-            </div>
-          </div>
+    <StockTopMarketOverview
+      :enabled="stockRealtimeOverviewEnabled"
+      :loading="stockRealtimeLoading"
+      :error="stockRealtimeError"
+      :overview="stockRealtimeOverview"
+      :detail="detail"
+      :current-stock-realtime-quote="currentStockRealtimeQuote"
+      :stock-realtime-domestic-indices="stockRealtimeDomesticIndices"
+      :stock-realtime-global-indices="stockRealtimeGlobalIndices"
+      :stock-realtime-relative-strength="stockRealtimeRelativeStrength"
+      :stock-realtime-breadth-bias="stockRealtimeBreadthBias"
+      :format-date="formatDate"
+      :get-change-class="getChangeClass"
+      :format-signed-number="formatSignedNumber"
+      :format-signed-percent="formatSignedPercent"
+      :format-signed-realtime-amount="formatSignedRealtimeAmount"
+      :format-realtime-money="formatRealtimeMoney"
+      @refresh="fetchStockRealtimeOverview(currentStockKey || '', { force: true })"
+      @toggle="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled"
+    />
 
-          <div class="toolbar-settings">
-            <div class="toolbar-select-group">
-              <label class="muted">来源</label>
-              <select v-model="selectedSource">
-                <option value="">自动</option>
-                <option v-for="item in sources" :key="item" :value="item">{{ item }}</option>
-              </select>
-            </div>
-
-            <div class="toolbar-select-group narrow-group">
-              <label class="muted">刷新</label>
-              <input type="number" min="5" v-model.number="refreshSeconds" />
-            </div>
-
-            <label class="muted inline-check toolbar-check">
-              <input type="checkbox" v-model="autoRefresh" /> 自动
-            </label>
-          </div>
-        </div>
-
-        <div class="toolbar-sub-row">
-          <p class="muted toolbar-status">
-            数据刷新：{{ autoRefresh ? `每 ${refreshSeconds} 秒` : '手动刷新' }}
-          </p>
-          <p v-if="error" class="muted toolbar-status error-text">{{ error }}</p>
-          <p v-else-if="isBlockingQuoteLoad" class="muted toolbar-status">查询中...</p>
-          <p v-else-if="isBackgroundQuoteRefresh" class="muted toolbar-status">后台刷新中...</p>
-
-          <div class="toolbar-history-actions">
-            <span class="muted">历史：{{ historyAutoRefresh ? `每 ${historyRefreshSeconds} 秒` : '手动' }}</span>
-            <select v-model.number="historyRefreshSeconds">
-              <option :value="10">10 秒</option>
-              <option :value="15">15 秒</option>
-              <option :value="30">30 秒</option>
-              <option :value="60">60 秒</option>
-            </select>
-            <label class="muted inline-check toolbar-check">
-              <input type="checkbox" v-model="historyAutoRefresh" /> 自动更新
-            </label>
-            <button @click="refreshHistory" :disabled="historyLoading">刷新历史</button>
-          </div>
-        </div>
-
-        <div class="history-ribbon">
-          <p class="muted history-ribbon-title">最近查询</p>
-          <div v-if="historyList.length" class="history-chip-row">
-            <button
-              v-for="item in sortedHistoryList"
-              :key="item.id || item.Id"
-              class="history-chip"
-              @click="applyHistorySymbol(item)"
-              @contextmenu="openContextMenu($event, item)"
-            >
-              <span>{{ item.name ?? item.Name }}</span>
-              <strong>{{ item.symbol ?? item.Symbol }}</strong>
-              <small :class="getChangeClass(item.changePercent ?? item.ChangePercent)">
-                {{ formatPercent(item.changePercent ?? item.ChangePercent) || '0%' }}
-              </small>
-            </button>
-          </div>
-          <p v-else class="muted">暂无历史数据。</p>
-          <p v-if="historyError" class="muted error-text">{{ historyError }}</p>
-          <p v-if="historyLoading && !historyList.length" class="muted">历史数据刷新中...</p>
-        </div>
-
-        <div
-          v-if="contextMenu.visible"
-          class="context-menu"
-          :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
-        >
-          <button @click="deleteHistoryItem">删除</button>
-        </div>
-      </section>
-    </div>
-
-    <section class="copilot-card page-top-market-overview-belt">
-      <div class="market-overview-belt-header">
-        <div>
-          <p class="market-overview-kicker">Top Market Tape</p>
-          <h3>顶部市场总览带</h3>
-          <p class="muted">把当前标的、A 股主场、全球指数和资金温度压成一屏，开页先看这里。</p>
-        </div>
-        <div class="stock-realtime-actions">
-          <button @click="fetchStockRealtimeOverview(currentStockKey || '', { force: true })" :disabled="stockRealtimeLoading">刷新市场</button>
-          <button @click="stockRealtimeOverviewEnabled = !stockRealtimeOverviewEnabled">
-            {{ stockRealtimeOverviewEnabled ? '隐藏' : '显示' }}
-          </button>
-        </div>
-      </div>
-
-      <div class="market-overview-belt-content">
-        <p v-if="!stockRealtimeOverviewEnabled" class="muted">顶部市场总览带已隐藏，可随时重新展开。</p>
-        <template v-else>
-          <p v-if="stockRealtimeError" class="muted error">{{ stockRealtimeError }}</p>
-          <p v-else-if="stockRealtimeLoading && !stockRealtimeOverview" class="muted">加载中...</p>
-          <template v-else-if="stockRealtimeOverview">
-            <div class="market-overview-meta">
-              <span>{{ formatDate(stockRealtimeOverview.snapshotTime) }}</span>
-              <span v-if="detail?.quote?.symbol">当前 {{ detail.quote.symbol }}</span>
-              <span>涨红跌绿</span>
-            </div>
-
-            <div class="market-overview-grid">
-              <article class="market-overview-hero" :class="{ 'is-placeholder': !currentStockRealtimeQuote }">
-                <div class="market-overview-hero-head">
-                  <div class="market-overview-hero-name">
-                    <p class="muted">当前标的</p>
-                    <strong>{{ currentStockRealtimeQuote?.name ?? detail?.quote?.name ?? '未选股票' }}</strong>
-                    <small>{{ currentStockRealtimeQuote?.symbol ?? detail?.quote?.symbol ?? '先搜索股票即可加入对照' }}</small>
-                  </div>
-                  <div v-if="currentStockRealtimeQuote" class="market-overview-hero-price">
-                    <strong :class="getChangeClass(currentStockRealtimeQuote.changePercent)">{{ currentStockRealtimeQuote.price.toFixed(2) }}</strong>
-                    <small :class="getChangeClass(currentStockRealtimeQuote.changePercent)">
-                      {{ formatSignedNumber(currentStockRealtimeQuote.change) }} / {{ formatSignedPercent(currentStockRealtimeQuote.changePercent) }}
-                    </small>
-                  </div>
-                </div>
-                <p v-if="currentStockRealtimeQuote" class="market-overview-hero-summary">
-                  成交额 {{ formatRealtimeMoney(currentStockRealtimeQuote.turnoverAmount) }}
-                </p>
-                <p v-else class="market-overview-hero-summary muted">
-                  未选个股时，这里会保留市场全局快照，选股后自动补入个股强弱对照。
-                </p>
-                <div class="market-overview-tag-row">
-                  <span v-if="stockRealtimeRelativeStrength" class="market-overview-tag" :class="getChangeClass(stockRealtimeRelativeStrength.spread)">
-                    {{ stockRealtimeRelativeStrength.label }} {{ formatSignedPercent(stockRealtimeRelativeStrength.spread) }}
-                  </span>
-                  <span class="market-overview-tag" :class="getChangeClass(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow)">
-                    主力 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}
-                  </span>
-                  <span class="market-overview-tag" :class="getChangeClass(stockRealtimeOverview.northboundFlow?.totalNetInflow)">
-                    北向 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}
-                  </span>
-                </div>
-              </article>
-
-              <section class="market-overview-cluster">
-                <div class="market-overview-cluster-head">
-                  <strong>A 股主场</strong>
-                  <small>三大指数与当前市场底色</small>
-                </div>
-                <div v-if="stockRealtimeDomesticIndices.length" class="market-overview-quote-list">
-                  <article v-for="item in stockRealtimeDomesticIndices" :key="`domestic-${item.symbol}`" class="market-overview-quote-card">
-                    <div class="market-overview-quote-card-head">
-                      <div>
-                        <strong>{{ item.name }}</strong>
-                        <small>{{ item.symbol }}</small>
-                      </div>
-                      <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
-                    </div>
-                    <div class="market-overview-quote-card-foot">
-                      <small :class="getChangeClass(item.changePercent)">{{ formatSignedPercent(item.changePercent) }}</small>
-                      <small :class="getChangeClass(item.change)">{{ formatSignedNumber(item.change) }}</small>
-                    </div>
-                  </article>
-                </div>
-                <p v-else class="muted">暂无 A 股指数数据。</p>
-              </section>
-
-              <section class="market-overview-cluster market-overview-cluster-global">
-                <div class="market-overview-cluster-head">
-                  <strong>全球指数</strong>
-                  <small>港股、日股、美股、欧洲与亚洲联动</small>
-                </div>
-                <div v-if="stockRealtimeGlobalIndices.length" class="market-overview-quote-list market-overview-quote-list-global">
-                  <article v-for="item in stockRealtimeGlobalIndices" :key="`global-${item.symbol}`" class="market-overview-quote-card">
-                    <div class="market-overview-quote-card-head">
-                      <div>
-                        <strong>{{ item.name }}</strong>
-                        <small>{{ item.symbol }}</small>
-                      </div>
-                      <strong :class="getChangeClass(item.changePercent)">{{ item.price.toFixed(2) }}</strong>
-                    </div>
-                    <div class="market-overview-quote-card-foot">
-                      <small :class="getChangeClass(item.changePercent)">{{ formatSignedPercent(item.changePercent) }}</small>
-                      <small :class="getChangeClass(item.change)">{{ formatSignedNumber(item.change) }}</small>
-                    </div>
-                  </article>
-                </div>
-                <p v-else class="muted">暂无全球指数数据。</p>
-              </section>
-            </div>
-
-            <div class="market-overview-pulse-grid">
-              <article class="market-overview-pulse-card">
-                <span>主力净流</span>
-                <strong :class="getChangeClass(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow)">{{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.mainNetInflow) }}</strong>
-                <small>
-                  超大单 {{ formatSignedRealtimeAmount(stockRealtimeOverview.mainCapitalFlow?.superLargeOrderNetInflow) }}
-                </small>
-              </article>
-
-              <article class="market-overview-pulse-card">
-                <span>北向净流</span>
-                <strong :class="getChangeClass(stockRealtimeOverview.northboundFlow?.totalNetInflow)">{{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.totalNetInflow) }}</strong>
-                <small>
-                  沪 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.shanghaiNetInflow) }} / 深 {{ formatSignedRealtimeAmount(stockRealtimeOverview.northboundFlow?.shenzhenNetInflow) }}
-                </small>
-              </article>
-
-              <article class="market-overview-pulse-card">
-                <span>市场广度</span>
-                <strong :class="getChangeClass(stockRealtimeBreadthBias?.delta)">
-                  {{ stockRealtimeOverview.breadth?.advancers ?? 0 }} / {{ stockRealtimeOverview.breadth?.decliners ?? 0 }}
-                </strong>
-                <small>
-                  {{ stockRealtimeBreadthBias?.label ?? '多空拉锯' }} · 平盘 {{ stockRealtimeOverview.breadth?.flatCount ?? 0 }}
-                </small>
-              </article>
-
-              <article class="market-overview-pulse-card">
-                <span>封板温度</span>
-                <strong :class="getChangeClass((stockRealtimeOverview.breadth?.limitUpCount ?? 0) - (stockRealtimeOverview.breadth?.limitDownCount ?? 0))">
-                  {{ stockRealtimeOverview.breadth?.limitUpCount ?? 0 }} / {{ stockRealtimeOverview.breadth?.limitDownCount ?? 0 }}
-                </strong>
-                <small>涨停 / 跌停</small>
-              </article>
-
-              <article class="market-overview-pulse-card">
-                <span>个股对照</span>
-                <strong :class="getChangeClass(stockRealtimeRelativeStrength?.spread)">
-                  {{ stockRealtimeRelativeStrength ? `${stockRealtimeRelativeStrength.label} ${formatSignedPercent(stockRealtimeRelativeStrength.spread)}` : '未选标的' }}
-                </strong>
-                <small v-if="currentStockRealtimeQuote">
-                  {{ currentStockRealtimeQuote.name }} {{ formatSignedPercent(currentStockRealtimeQuote.changePercent) }}
-                </small>
-                <small v-else>搜索股票后自动加入比较</small>
-              </article>
-            </div>
-          </template>
-          <p v-else class="muted">暂无市场实时总览数据。</p>
-        </template>
-      </div>
-    </section>
-
-    <section class="market-news-panel" :class="{ empty: !detail && !marketNewsLoading && !marketNewsError && !marketNewsItems.length }">
-      <div class="market-news-header">
-        <div>
-          <p class="market-news-kicker">Market Wire</p>
-          <h3>大盘资讯</h3>
-        </div>
-        <div class="market-news-actions">
-          <button class="market-news-button" @click="fetchMarketNews({ force: true })" :disabled="marketNewsLoading">刷新</button>
-          <button class="market-news-button" @click="openMarketNewsModal" :disabled="!marketNewsItems.length">展开阅读</button>
-        </div>
-      </div>
-
-      <p v-if="marketNewsError" class="muted error-text">{{ marketNewsError }}</p>
-      <p v-else-if="marketNewsLoading" class="muted">大盘资讯加载中...</p>
-      <div v-else-if="marketNewsItems.length" class="market-news-preview-list">
-        <article v-for="item in marketNewsPreviewItems" :key="`market-${item.title}-${item.publishTime}`" class="market-news-item">
-          <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
-          <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">
-            {{ getLocalNewsHeadline(item) }}
-          </a>
-          <span v-else>{{ getLocalNewsHeadline(item) }}</span>
-          <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
-          <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
-            <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
-            <span v-for="tag in item.aiTags" :key="`market-tag-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
-          </div>
-          <small>{{ item.source }} · {{ formatDate(item.publishTime) }}</small>
-        </article>
-      </div>
-      <p v-else class="muted">暂无可展示的大盘资讯。</p>
-    </section>
-
-    <div v-if="marketNewsModalOpen" class="market-news-modal-backdrop" @click.self="closeMarketNewsModal">
-      <section class="market-news-modal" role="dialog" aria-modal="true" aria-label="大盘资讯详情">
-        <div class="market-news-header">
-          <div>
-            <p class="market-news-kicker">Expanded Reader</p>
-            <h3>大盘资讯详情</h3>
-          </div>
-          <button class="market-news-button" @click="closeMarketNewsModal">关闭</button>
-        </div>
-        <div class="market-news-modal-list">
-          <article v-for="item in marketNewsItems" :key="`market-modal-${item.title}-${item.publishTime}`" class="market-news-item">
-            <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
-            <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">
-              {{ getLocalNewsHeadline(item) }}
-            </a>
-            <span v-else>{{ getLocalNewsHeadline(item) }}</span>
-            <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
-            <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
-              <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
-              <span v-for="tag in item.aiTags" :key="`market-modal-tag-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
-            </div>
-            <small>{{ item.source }} · {{ formatDate(item.publishTime) }}</small>
-          </article>
-        </div>
-      </section>
-    </div>
+    <StockMarketNewsPanel
+      :detail="detail"
+      :loading="marketNewsLoading"
+      :error="marketNewsError"
+      :items="marketNewsItems"
+      :preview-items="marketNewsPreviewItems"
+      :modal-open="marketNewsModalOpen"
+      :get-impact-class="getImpactClass"
+      :get-local-news-headline="getLocalNewsHeadline"
+      :format-date="formatDate"
+      @refresh="fetchMarketNews({ force: true })"
+      @open-modal="openMarketNewsModal"
+      @close-modal="closeMarketNewsModal"
+    />
 
     <div class="workspace-grid" :class="{ focused: !copilotPanelOpen }">
       <TerminalView :quote="detail?.quote ?? null" :monochrome="monochromeMode">
         <template #summary>
-          <div v-if="detail" class="terminal-summary-grid">
-            <div class="quote-card">
-              <p><strong>{{ detail.quote.name }}</strong>（{{ detail.quote.symbol }}）</p>
-              <p>当前价：{{ detail.quote.price }}</p>
-              <p>涨跌：{{ detail.quote.change }}（{{ detail.quote.changePercent }}%）</p>
-              <p class="muted">更新时间：{{ formatDate(detail.quote.timestamp) }}</p>
-              <StockSourceLoadProgress
-                v-if="showSourceLoadProgress"
-                :title="sourceLoadProgressTitle"
-                :progress-percent="sourceLoadProgressPercent"
-                :stages="visibleSourceLoadStages"
-              />
-            </div>
-
-            <div class="quote-card">
-              <div class="quote-card-header">
-                <h4>基本面快照</h4>
-                <span class="muted">Step 3</span>
-              </div>
-              <p>流通市值：{{ detail.quote.floatMarketCap ? `${(Number(detail.quote.floatMarketCap) / 100000000).toFixed(2)} 亿` : '-' }}</p>
-              <p>市盈率：{{ detail.quote.peRatio ?? '-' }}</p>
-              <p>量比：{{ detail.quote.volumeRatio ?? '-' }}</p>
-              <p>股东户数：{{ detail.quote.shareholderCount ? Number(detail.quote.shareholderCount).toLocaleString('zh-CN') : '-' }}</p>
-              <p>所属板块：{{ detail.quote.sectorName || '-' }}</p>
-              <p v-if="detail.fundamentalSnapshot?.updatedAt" class="muted">快照刷新：{{ formatDate(detail.fundamentalSnapshot.updatedAt) }}</p>
-              <ul v-if="detail.fundamentalSnapshot?.facts?.length" class="fundamental-facts">
-                <li v-for="fact in detail.fundamentalSnapshot.facts.slice(0, 8)" :key="`fundamental-${fact.label}-${fact.value}`">
-                  <strong>{{ fact.label }}：</strong>{{ fact.value }}
-                </li>
-              </ul>
-            </div>
-
-            <div class="quote-card tape-card">
-              <div class="quote-card-header">
-                <h4>盘中消息带</h4>
-                <span class="muted">{{ detail.messages.length }} 条</span>
-              </div>
-              <ul v-if="detail.messages.length" class="messages">
-                <li
-                  v-for="item in detail.messages"
-                  :key="`${item.title}-${item.publishedAt ?? item.PublishedAt ?? ''}`"
-                  :class="{ clickable: !!(item.url ?? item.Url) }"
-                  @click="openExternal(item.url ?? item.Url)"
-                >
-                  <span>{{ item.title }}</span>
-                  <small>{{ item.source }} · {{ formatDate(item.publishedAt ?? item.PublishedAt) }}</small>
-                </li>
-              </ul>
-              <p v-else class="muted">暂无盘中消息。</p>
-            </div>
-          </div>
-
-          <div v-else class="terminal-empty">
-            <h4>等待加载股票</h4>
-            <p>主视区只保留价格、分时、K 线、量价指标与消息带。</p>
-            <p class="muted">数据来源：腾讯 / 新浪 / 百度（后端爬虫占位）</p>
-            <StockSourceLoadProgress
-              v-if="showSourceLoadProgress"
-              :title="sourceLoadProgressTitle"
-              :progress-percent="sourceLoadProgressPercent"
-              :stages="visibleSourceLoadStages"
-              empty
-            />
-          </div>
+          <StockTerminalSummary
+            :detail="detail"
+            :show-source-load-progress="showSourceLoadProgress"
+            :source-load-progress-title="sourceLoadProgressTitle"
+            :source-load-progress-percent="sourceLoadProgressPercent"
+            :visible-source-load-stages="visibleSourceLoadStages"
+            :format-date="formatDate"
+            @open-external="openExternal($event)"
+          />
         </template>
 
         <template #chart>
@@ -3376,6 +1403,8 @@ watch(currentStockKey, () => {
               :interval="interval"
               :focused-view="currentWorkspace.copilotChartFocusView"
               @update:interval="interval = $event"
+              @view-change="handleChartViewChange"
+              @strategy-visibility-change="handleChartStrategyVisibilityChange"
             />
             <div v-else class="chart-placeholder">
               <p>查询股票后，这里会以终端视图显示 K 线、分时、成交量和均线。</p>
@@ -3395,6 +1424,9 @@ watch(currentStockKey, () => {
           :turn="currentCopilotTurn"
           :session-title="currentWorkspace.copilotSessionTitle"
           :replay-turns="copilotReplayTurns"
+          :acceptance-baseline="copilotAcceptanceBaseline"
+          :acceptance-loading="copilotAcceptanceLoading"
+          :acceptance-error="copilotAcceptanceError"
           :busy-call-id="copilotToolBusyCallId"
           @update:question="copilotQuestion = $event"
           @toggle-external-search="copilotAllowExternalSearch = $event"
@@ -3404,59 +1436,20 @@ watch(currentStockKey, () => {
           @activate-action="activateCopilotAction($event, currentStockKey)"
         />
 
-        <section class="copilot-card trading-plan-card trading-plan-board-card">
-          <div class="trading-plan-header">
-            <div>
-              <h3>交易计划总览</h3>
-              <p class="muted">不选股也能直接查看最近交易计划，并快速跳转到对应标的。</p>
-            </div>
-            <button class="market-news-button plan-refresh-button" @click="refreshTradingPlanBoard(true)" :disabled="rootWorkspace.planListLoading || rootWorkspace.planAlertsLoading">
-              刷新
-            </button>
-          </div>
-
-          <p v-if="rootWorkspace.planError" class="muted error">{{ rootWorkspace.planError }}</p>
-          <p v-else-if="rootWorkspace.planListLoading && !rootWorkspace.planList.length" class="muted">加载中...</p>
-          <ul v-else-if="rootWorkspace.planList.length" class="plan-list plan-board-list">
-            <li v-for="item in rootWorkspace.planList" :key="`plan-board-${item.id}`" class="plan-item plan-item-compact">
-              <div class="plan-item-header">
-                <div class="plan-item-title">
-                  <strong>{{ item.name }} · {{ formatTradingPlanStatus(item.status) }}</strong>
-                  <small>{{ item.symbol }}</small>
-                </div>
-                <button class="plan-link-button" @click="jumpToPlanSymbol(item.symbol)">查看股票</button>
-              </div>
-              <div class="plan-status-row">
-                <span class="plan-status-badge" :class="getTradingPlanStatusClass(item.status)">{{ formatTradingPlanStatus(item.status) }}</span>
-                  <span v-if="item.marketContextAtCreation" class="plan-pill">建立时 {{ item.marketContextAtCreation.stageLabel }}</span>
-                  <span v-if="item.currentMarketContext" class="plan-pill">当前 {{ item.currentMarketContext.stageLabel }}</span>
-              </div>
-              <p>{{ item.analysisSummary || item.expectedCatalyst || '等待补充计划摘要' }}</p>
-              <div v-if="item.marketContextAtCreation || item.currentMarketContext" class="plan-market-context">
-                <span v-if="item.marketContextAtCreation">建立时：{{ item.marketContextAtCreation.mainlineSectorName || '无主线' }} / 建议仓位 {{ formatPlanScale(item.marketContextAtCreation.suggestedPositionScale) }}</span>
-                <span v-if="item.currentMarketContext">当前：{{ item.currentMarketContext.executionFrequencyLabel || '中性' }} / {{ item.currentMarketContext.mainlineSectorName || '无主线' }}</span>
-              </div>
-              <div
-                v-if="getLatestPlanAlert(rootWorkspace, item.id)"
-                class="plan-alert"
-                :class="getPlanAlertClass(getLatestPlanAlert(rootWorkspace, item.id).severity)"
-              >
-                <strong>{{ getLatestPlanAlert(rootWorkspace, item.id).eventType }}</strong>
-                <span>{{ formatPlanAlertSummary(getLatestPlanAlert(rootWorkspace, item.id)) }}</span>
-                <small v-if="getPlanReviewHeadline(getLatestPlanAlert(rootWorkspace, item.id))">关联新闻：{{ getPlanReviewHeadline(getLatestPlanAlert(rootWorkspace, item.id)) }}</small>
-                <small v-if="getPlanReviewText(getLatestPlanAlert(rootWorkspace, item.id))">复核结论：{{ getPlanReviewText(getLatestPlanAlert(rootWorkspace, item.id)) }}</small>
-              </div>
-              <div class="plan-pill-row">
-                <span class="plan-pill">方向 {{ item.direction }}</span>
-                <span class="plan-pill">触发 {{ formatPlanPrice(item.triggerPrice) }}</span>
-                <span class="plan-pill">止损 {{ formatPlanPrice(item.stopLossPrice) }}</span>
-                <span class="plan-pill">止盈 {{ formatPlanPrice(item.takeProfitPrice) }}</span>
-                <span class="plan-pill">目标 {{ formatPlanPrice(item.targetPrice) }}</span>
-              </div>
-            </li>
-          </ul>
-          <p v-else class="muted">暂无交易计划，可从 commander 分析一键起草。</p>
-        </section>
+        <StockTradingPlanBoard
+          :workspace="rootWorkspace"
+          :format-trading-plan-status="formatTradingPlanStatus"
+          :get-trading-plan-status-class="getTradingPlanStatusClass"
+          :format-plan-scale="formatPlanScale"
+          :format-plan-price="formatPlanPrice"
+          :get-latest-plan-alert="getLatestPlanAlert"
+          :get-plan-alert-class="getPlanAlertClass"
+          :format-plan-alert-summary="formatPlanAlertSummary"
+          :get-plan-review-headline="getPlanReviewHeadline"
+          :get-plan-review-text="getPlanReviewText"
+          @refresh="refreshTradingPlanBoard(true)"
+          @jump="jumpToPlanSymbol($event)"
+        />
 
         <template v-if="sidebarWorkspaces.length">
           <div
@@ -3465,74 +1458,17 @@ watch(currentStockKey, () => {
             v-show="workspace.symbolKey === currentStockKey"
             class="sidebar-workspace"
           >
-            <section class="copilot-card news-impact stock-news-impact-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'news' }">
-              <div class="news-impact-header">
-                <div>
-                  <h3>资讯影响</h3>
-                  <p class="muted">事件信号在右侧集中查看，不遮挡 K 线。</p>
-                </div>
-                <button @click="fetchNewsImpact(workspace.symbolKey, { force: true })" :disabled="workspace.newsImpactLoading || !workspace.detail">刷新</button>
-              </div>
-
-              <div v-if="workspace.detail" class="news-impact-content">
-                <p v-if="workspace.newsImpactError" class="muted error">{{ workspace.newsImpactError }}</p>
-                <p v-else-if="workspace.newsImpactLoading" class="muted">分析中...</p>
-                <div v-else-if="workspace.newsImpact" class="news-impact-summary">
-                  <span>利好 {{ workspace.newsImpact.summary.positive }}</span>
-                  <span>中性 {{ workspace.newsImpact.summary.neutral }}</span>
-                  <span>利空 {{ workspace.newsImpact.summary.negative }}</span>
-                  <span class="overall">总体：{{ workspace.newsImpact.summary.overall }}</span>
-                </div>
-                <p v-else class="muted">资讯影响待生成。</p>
-
-                <div class="news-buckets">
-                  <article v-for="section in sidebarNewsSections" :key="section.key" class="news-bucket-card">
-                    <div class="news-bucket-header">
-                      <strong>{{ section.title }}</strong>
-                      <span v-if="section.key === 'sector' && workspace.localNewsBuckets[section.key]?.sectorName" class="muted">
-                        {{ workspace.localNewsBuckets[section.key]?.sectorName }}
-                      </span>
-                    </div>
-
-                    <p v-if="workspace.localNewsLoading" class="muted">加载中...</p>
-                    <ul v-else-if="workspace.localNewsBuckets[section.key]?.items?.length" class="news-bucket-list">
-                      <li v-for="item in workspace.localNewsBuckets[section.key].items" :key="`${section.key}-${item.title}-${item.publishTime}`">
-                        <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
-                        <a v-if="item.url ?? item.Url" :href="item.url ?? item.Url" target="_blank" rel="noreferrer">
-                          {{ getLocalNewsHeadline(item) }}
-                        </a>
-                        <span v-else>{{ getLocalNewsHeadline(item) }}</span>
-                        <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
-                        <div v-if="item.aiTags?.length || item.aiTarget" class="local-news-meta-row">
-                          <span v-if="item.aiTarget" class="local-news-target">{{ item.aiTarget }}</span>
-                          <span v-for="tag in item.aiTags" :key="`${section.key}-${item.title}-${tag}`" class="local-news-tag">{{ tag }}</span>
-                        </div>
-                        <small>
-                          {{ item.source }} · {{ formatDate(item.publishTime) }}
-                        </small>
-                      </li>
-                    </ul>
-                    <p v-else class="muted">暂无匹配资讯。</p>
-                  </article>
-                </div>
-
-                <p v-if="workspace.localNewsError" class="muted error">{{ workspace.localNewsError }}</p>
-
-                <ul v-if="getHeadlineNewsImpactEvents(workspace.newsImpact).length" class="news-impact-list">
-                  <li
-                    v-for="item in getHeadlineNewsImpactEvents(workspace.newsImpact)"
-                    :key="`${item.title ?? item.Title}-${item.publishedAt ?? item.PublishedAt ?? ''}`"
-                  >
-                    <span class="impact-tag" :class="getImpactClass(getImpactCategoryValue(item))">{{ getImpactCategoryValue(item) }}</span>
-                    <span class="impact-title">{{ item.title ?? item.Title }}</span>
-                    <span class="impact-score">{{ formatImpactScore(item.impactScore ?? item.ImpactScore) }}</span>
-                  </li>
-                </ul>
-                <p v-else-if="!workspace.newsImpactLoading" class="muted">暂无资讯影响数据。</p>
-              </div>
-
-              <p v-else class="muted">选择股票后在此查看事件影响。</p>
-            </section>
+            <StockNewsImpactPanel
+              :workspace="workspace"
+              :sidebar-news-sections="sidebarNewsSections"
+              :get-impact-class="getImpactClass"
+              :get-local-news-headline="getLocalNewsHeadline"
+              :format-date="formatDate"
+              :get-headline-news-impact-events="getHeadlineNewsImpactEvents"
+              :get-impact-category-value="getImpactCategoryValue"
+              :format-impact-score="formatImpactScore"
+              @refresh="fetchNewsImpact(workspace.symbolKey, { force: true })"
+            />
 
             <div class="stock-agent-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'strategy' }">
               <StockAgentPanels
@@ -3550,74 +1486,27 @@ watch(currentStockKey, () => {
               />
             </div>
 
-            <section class="copilot-card trading-plan-card stock-plan-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'plan' || workspace.planModalOpen }">
-              <div class="trading-plan-header">
-                <div>
-                  <h3>当前交易计划</h3>
-                  <p class="muted">当前股票的全部交易计划都可在这里编辑或删除。</p>
-                </div>
-                <button class="market-news-button plan-refresh-button" @click="refreshTradingPlanSection(workspace.symbolKey, true)" :disabled="workspace.planListLoading || workspace.planAlertsLoading || !workspace.detail">
-                  刷新
-                </button>
-              </div>
-
-              <p v-if="workspace.planError" class="muted error">{{ workspace.planError }}</p>
-              <p v-else-if="workspace.planListLoading && !workspace.planList.length" class="muted">加载中...</p>
-              <ul v-else-if="workspace.planList.length" class="plan-list">
-                <li v-for="item in workspace.planList" :key="`plan-${item.id}`" class="plan-item">
-                  <div class="plan-item-header">
-                    <div class="plan-item-title">
-                      <strong>{{ item.name }} · {{ formatTradingPlanStatus(item.status) }}</strong>
-                      <small class="muted">{{ formatDate(item.updatedAt || item.createdAt) }}</small>
-                    </div>
-                    <div class="plan-item-actions">
-                      <button v-if="canEditTradingPlan(item)" class="plan-link-button" @click="editTradingPlan(workspace.symbolKey, item)">编辑</button>
-                      <button
-                        v-if="canResumeTradingPlan(item)"
-                        class="plan-link-button"
-                        @click="resumeTradingPlan(workspace.symbolKey, item)"
-                        :disabled="resumingPlanId === String(item.id)"
-                      >
-                        {{ resumingPlanId === String(item.id) ? '恢复中...' : '恢复观察' }}
-                      </button>
-                      <button class="plan-danger-button" @click="deleteTradingPlan(workspace.symbolKey, item)" :disabled="deletingPlanId === String(item.id)">
-                        {{ deletingPlanId === String(item.id) ? '删除中...' : '删除' }}
-                      </button>
-                    </div>
-                  </div>
-                  <div class="plan-status-row">
-                    <span class="plan-status-badge" :class="getTradingPlanStatusClass(item.status)">{{ formatTradingPlanStatus(item.status) }}</span>
-                    <span v-if="item.marketContextAtCreation" class="plan-pill">建立时 {{ item.marketContextAtCreation.stageLabel }}</span>
-                    <span v-if="item.currentMarketContext" class="plan-pill">当前 {{ item.currentMarketContext.stageLabel }}</span>
-                  </div>
-                  <p>{{ item.analysisSummary || item.expectedCatalyst || '等待补充计划摘要' }}</p>
-                  <div v-if="item.marketContextAtCreation || item.currentMarketContext" class="plan-market-context">
-                    <span v-if="item.marketContextAtCreation">建立时：{{ item.marketContextAtCreation.mainlineSectorName || '无主线' }} / 仓位 {{ formatPlanScale(item.marketContextAtCreation.suggestedPositionScale) }}</span>
-                    <span v-if="item.currentMarketContext">当前：{{ item.currentMarketContext.executionFrequencyLabel || '中性' }} / {{ item.currentMarketContext.counterTrendWarning ? '逆势提示' : '顺势观察' }}</span>
-                  </div>
-                  <div
-                    v-if="getLatestPlanAlert(workspace, item.id)"
-                    class="plan-alert"
-                    :class="getPlanAlertClass(getLatestPlanAlert(workspace, item.id).severity)"
-                  >
-                    <strong>{{ getLatestPlanAlert(workspace, item.id).eventType }}</strong>
-                    <span>{{ formatPlanAlertSummary(getLatestPlanAlert(workspace, item.id)) }}</span>
-                    <small v-if="getPlanReviewHeadline(getLatestPlanAlert(workspace, item.id))">关联新闻：{{ getPlanReviewHeadline(getLatestPlanAlert(workspace, item.id)) }}</small>
-                    <small v-if="getPlanReviewText(getLatestPlanAlert(workspace, item.id))">复核结论：{{ getPlanReviewText(getLatestPlanAlert(workspace, item.id)) }}</small>
-                  </div>
-                  <div class="plan-pill-row">
-                    <span class="plan-pill">方向 {{ item.direction }}</span>
-                    <span class="plan-pill">触发 {{ formatPlanPrice(item.triggerPrice) }}</span>
-                    <span class="plan-pill">失效 {{ formatPlanPrice(item.invalidPrice) }}</span>
-                    <span class="plan-pill">止损 {{ formatPlanPrice(item.stopLossPrice) }}</span>
-                    <span class="plan-pill">止盈 {{ formatPlanPrice(item.takeProfitPrice) }}</span>
-                    <span class="plan-pill">目标 {{ formatPlanPrice(item.targetPrice) }}</span>
-                  </div>
-                  <small>{{ item.riskLimits || '风险摘要待补充' }}</small>
-                </li>
-              </ul>
-              <p v-else class="muted">暂无交易计划，可从 commander 分析一键起草。</p>
-            </section>
+            <StockTradingPlanSection
+              :workspace="workspace"
+              :deleting-plan-id="deletingPlanId"
+              :resuming-plan-id="resumingPlanId"
+              :format-trading-plan-status="formatTradingPlanStatus"
+              :format-date="formatDate"
+              :get-trading-plan-status-class="getTradingPlanStatusClass"
+              :format-plan-scale="formatPlanScale"
+              :format-plan-price="formatPlanPrice"
+              :get-latest-plan-alert="getLatestPlanAlert"
+              :get-plan-alert-class="getPlanAlertClass"
+              :format-plan-alert-summary="formatPlanAlertSummary"
+              :get-plan-review-headline="getPlanReviewHeadline"
+              :get-plan-review-text="getPlanReviewText"
+              :can-edit-trading-plan="canEditTradingPlan"
+              :can-resume-trading-plan="canResumeTradingPlan"
+              @refresh="refreshTradingPlanSection(workspace.symbolKey, true)"
+              @edit="editTradingPlan(workspace.symbolKey, $event)"
+              @resume="resumeTradingPlan(workspace.symbolKey, $event)"
+              @delete="deleteTradingPlan(workspace.symbolKey, $event)"
+            />
 
             <div class="copilot-card">
               <ChatWindow
@@ -3661,102 +1550,12 @@ watch(currentStockKey, () => {
           </div>
         </div>
 
-        <div v-if="activePlanModalWorkspace?.planModalOpen && activePlanModalWorkspace?.planForm" class="plan-modal-backdrop" @click.self="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)">
-          <section class="plan-modal" role="dialog" aria-modal="true" aria-label="交易计划草稿">
-            <div class="search-modal-header">
-              <div>
-                <strong>交易计划草稿</strong>
-                <p class="muted">后端基于 commander 历史生成，用户确认后才会入库。</p>
-              </div>
-              <button class="market-news-button" @click="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)">关闭</button>
-            </div>
-
-            <p v-if="activePlanModalWorkspace.planError" class="muted error">{{ activePlanModalWorkspace.planError }}</p>
-
-            <section v-if="activePlanModalWorkspace.planForm.marketContext" class="plan-market-box">
-              <strong>市场上下文</strong>
-              <div class="plan-pill-row">
-                <span class="plan-pill">阶段 {{ activePlanModalWorkspace.planForm.marketContext.stageLabel }}</span>
-                <span class="plan-pill">置信 {{ Number(activePlanModalWorkspace.planForm.marketContext.stageConfidence || 0).toFixed(0) }}</span>
-                <span class="plan-pill">主线 {{ activePlanModalWorkspace.planForm.marketContext.mainlineSectorName || '暂无' }}</span>
-                <span class="plan-pill">建议仓位 {{ formatPlanScale(activePlanModalWorkspace.planForm.marketContext.suggestedPositionScale) }}</span>
-                <span class="plan-pill">节奏 {{ activePlanModalWorkspace.planForm.marketContext.executionFrequencyLabel || '中性' }}</span>
-              </div>
-              <p class="muted">
-                {{ activePlanModalWorkspace.planForm.marketContext.isMainlineAligned ? '当前股票与主线方向一致。' : '当前股票未明显对齐主线。' }}
-                <span v-if="activePlanModalWorkspace.planForm.marketContext.counterTrendWarning"> 存在逆势提示，建议降低执行频率。</span>
-              </p>
-            </section>
-
-            <div class="plan-form-grid">
-              <label class="plan-field">
-                <span>股票</span>
-                <input v-model="activePlanModalWorkspace.planForm.symbol" disabled>
-              </label>
-              <label class="plan-field">
-                <span>名称</span>
-                <input v-model="activePlanModalWorkspace.planForm.name">
-              </label>
-              <label class="plan-field">
-                <span>方向</span>
-                <select v-model="activePlanModalWorkspace.planForm.direction">
-                  <option value="Long">Long</option>
-                  <option value="Short">Short</option>
-                </select>
-              </label>
-              <label class="plan-field">
-                <span>触发价</span>
-                <input v-model="activePlanModalWorkspace.planForm.triggerPrice" type="number" step="0.01" placeholder="可为空，后补录">
-              </label>
-              <label class="plan-field">
-                <span>失效价</span>
-                <input v-model="activePlanModalWorkspace.planForm.invalidPrice" type="number" step="0.01" placeholder="可为空，后补录">
-              </label>
-              <label class="plan-field">
-                <span>止损价</span>
-                <input v-model="activePlanModalWorkspace.planForm.stopLossPrice" type="number" step="0.01" placeholder="可为空">
-              </label>
-              <label class="plan-field">
-                <span>止盈价</span>
-                <input v-model="activePlanModalWorkspace.planForm.takeProfitPrice" type="number" step="0.01" placeholder="优先取指挥/机构目标">
-              </label>
-              <label class="plan-field">
-                <span>目标价</span>
-                <input v-model="activePlanModalWorkspace.planForm.targetPrice" type="number" step="0.01" placeholder="优先取指挥/趋势目标">
-              </label>
-              <label class="plan-field plan-field-wide">
-                <span>预期催化</span>
-                <textarea v-model="activePlanModalWorkspace.planForm.expectedCatalyst" rows="2"></textarea>
-              </label>
-              <label class="plan-field plan-field-wide">
-                <span>失效条件</span>
-                <textarea v-model="activePlanModalWorkspace.planForm.invalidConditions" rows="2"></textarea>
-              </label>
-              <label class="plan-field plan-field-wide">
-                <span>风险上限</span>
-                <textarea v-model="activePlanModalWorkspace.planForm.riskLimits" rows="2"></textarea>
-              </label>
-              <label class="plan-field plan-field-wide">
-                <span>分析摘要</span>
-                <textarea v-model="activePlanModalWorkspace.planForm.analysisSummary" rows="3"></textarea>
-              </label>
-              <label class="plan-field plan-field-wide">
-                <span>用户备注</span>
-                <textarea v-model="activePlanModalWorkspace.planForm.userNote" rows="2" placeholder="可补充执行纪律、仓位、观察点"></textarea>
-              </label>
-            </div>
-
-            <div class="plan-modal-actions">
-              <span class="muted">{{ activePlanModalWorkspace.planForm.id ? `编辑计划 #${activePlanModalWorkspace.planForm.id}` : `AnalysisHistory #${activePlanModalWorkspace.planForm.analysisHistoryId}` }}</span>
-              <div class="plan-modal-buttons">
-                <button class="market-news-button" @click="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)">取消</button>
-                <button class="plan-save-button" @click="saveTradingPlan(activePlanModalWorkspace.symbolKey)" :disabled="activePlanModalWorkspace.planSaving || activePlanModalWorkspace.planDraftLoading">
-                  {{ activePlanModalWorkspace.planSaving ? '保存中...' : (activePlanModalWorkspace.planForm.id ? '保存修改' : '保存为 Pending 计划') }}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
+        <StockTradingPlanModal
+          :workspace="activePlanModalWorkspace"
+          :format-plan-scale="formatPlanScale"
+          @close="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)"
+          @save="saveTradingPlan(activePlanModalWorkspace.symbolKey)"
+        />
       </CopilotPanel>
     </div>
   </section>
@@ -3834,372 +1633,8 @@ watch(currentStockKey, () => {
   color: #f8fafc;
 }
 
-.toolbar-shell,
-.quote-card-header {
-  display: flex;
-  display: grid;
-  gap: 0.75rem;
-}
-
-.compact-toolbar {
-  position: relative;
-}
-
-.sticky-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  padding: 0.85rem 1rem;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
-}
-
-.toolbar-main-row,
-.toolbar-sub-row {
-  display: grid;
-  grid-template-columns: auto minmax(320px, 1fr) auto;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.toolbar-title {
-  display: grid;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
-.toolbar-title strong {
-  color: #0f172a;
-}
-
-.toolbar-search-field {
-  margin-bottom: 0;
-}
-
-.toolbar-search-field input {
-  min-width: 0;
-  flex: 1 1 260px;
-}
-
-.toolbar-settings {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.toolbar-select-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.toolbar-select-group select,
-.toolbar-select-group input {
-  width: auto;
-  min-width: 86px;
-}
-
-.narrow-group input {
-  max-width: 84px;
-}
-
-.toolbar-check {
-  white-space: nowrap;
-}
-
-.toolbar-sub-row {
-  grid-template-columns: auto 1fr auto;
-}
-
-.toolbar-status {
-  margin: 0;
-}
-
-.toolbar-history-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.history-ribbon {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.history-ribbon-title {
-  margin: 0;
-}
-
-.history-chip-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
-  gap: 0.5rem;
-  max-height: 10.5rem;
-  overflow-y: auto;
-  padding-right: 0.25rem;
-}
-
-.history-chip {
-  display: grid;
-  gap: 0.1rem;
-  min-width: 124px;
-  padding: 0.5rem 0.65rem;
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(248, 250, 252, 0.96);
-  text-align: left;
-}
-
-.history-chip span,
-.history-chip strong,
-.history-chip small {
-  display: block;
-}
-
-.history-chip strong {
-  color: #0f172a;
-}
-
-.page-top-market-overview-belt {
-  display: grid;
-  gap: 0.9rem;
-  margin: 1rem 0;
-  padding: 1rem 1.1rem;
-  border-radius: 24px;
-  border: 1px solid rgba(251, 146, 60, 0.2);
-  background:
-    radial-gradient(circle at top left, rgba(248, 113, 113, 0.14), transparent 24%),
-    radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 22%),
-    linear-gradient(145deg, rgba(255, 250, 245, 0.98), rgba(248, 250, 252, 0.98));
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.09);
-}
-
-.market-overview-belt-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.market-overview-belt-header h3 {
-  margin: 0;
-  color: #0f172a;
-}
-
-.market-overview-kicker {
-  margin: 0 0 0.2rem;
-  font-size: 0.68rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #b45309;
-}
-
-.market-overview-belt-content {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.market-overview-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  font-size: 0.82rem;
-  color: #64748b;
-}
-
-.market-overview-grid {
-  display: grid;
-  gap: 0.8rem;
-  grid-template-columns: minmax(240px, 1.05fr) minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.market-overview-hero,
-.market-overview-cluster,
-.market-overview-pulse-card {
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: rgba(255, 255, 255, 0.88);
-}
-
-.market-overview-hero {
-  display: grid;
-  gap: 0.8rem;
-  padding: 0.9rem;
-  background:
-    radial-gradient(circle at top left, rgba(254, 215, 170, 0.32), transparent 35%),
-    linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
-}
-
-.market-overview-hero.is-placeholder {
-  opacity: 0.92;
-}
-
-.market-overview-hero-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.85rem;
-}
-
-.market-overview-hero-name,
-.market-overview-hero-price {
-  display: grid;
-  gap: 0.12rem;
-}
-
-.market-overview-hero-name strong {
-  font-size: 1.05rem;
-  color: #0f172a;
-}
-
-.market-overview-hero-name small,
-.market-overview-hero-summary,
-.market-overview-hero-price small {
-  color: #64748b;
-}
-
-.market-overview-hero-price {
-  text-align: right;
-}
-
-.market-overview-hero-price strong {
-  font-size: 1.45rem;
-}
-
-.market-overview-hero-summary {
-  margin: 0;
-}
-
-.market-overview-tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.market-overview-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.35rem 0.62rem;
-  border-radius: 999px;
-  background: rgba(241, 245, 249, 0.95);
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #334155;
-}
-
-.market-overview-cluster {
-  display: grid;
-  gap: 0.75rem;
-  padding: 0.9rem;
-}
-
-.market-overview-cluster-global {
-  background:
-    radial-gradient(circle at top right, rgba(191, 219, 254, 0.3), transparent 30%),
-    rgba(255, 255, 255, 0.88);
-}
-
-.market-overview-cluster-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.market-overview-cluster-head strong {
-  color: #0f172a;
-}
-
-.market-overview-cluster-head small {
-  color: #64748b;
-}
-
-.market-overview-quote-list {
-  display: grid;
-  gap: 0.6rem;
-}
-
-.market-overview-quote-list-global {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.market-overview-quote-card {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.75rem;
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.96);
-  border: 1px solid rgba(148, 163, 184, 0.14);
-}
-
-.market-overview-quote-card-head,
-.market-overview-quote-card-foot {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.market-overview-quote-card-head > div {
-  display: grid;
-  gap: 0.1rem;
-}
-
-.market-overview-quote-card-head strong:first-child {
-  color: #0f172a;
-}
-
-.market-overview-quote-card small {
-  color: #64748b;
-}
-
-.market-overview-pulse-grid {
-  display: grid;
-  gap: 0.7rem;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-}
-
-.market-overview-pulse-card {
-  display: grid;
-  gap: 0.3rem;
-  padding: 0.8rem 0.85rem;
-}
-
-.market-overview-pulse-card span {
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #64748b;
-}
-
-.market-overview-pulse-card strong {
-  font-size: 1.05rem;
-}
-
-.market-overview-pulse-card small {
-  color: #475569;
-}
-
 .error-text {
   color: #b91c1c;
-}
-
-.compact-field {
-  margin-bottom: 0;
-}
-
-.inline-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
 }
 
 .workspace-grid {
@@ -4214,179 +1649,8 @@ watch(currentStockKey, () => {
   grid-template-columns: minmax(0, 1fr) 280px;
 }
 
-.terminal-summary-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.market-news-panel {
-  display: grid;
-  gap: 0.85rem;
-  padding: 0.95rem 1.1rem;
-  border-radius: 20px;
-  border: 1px solid rgba(14, 165, 233, 0.18);
-  background:
-    radial-gradient(circle at top left, rgba(14, 165, 233, 0.14), transparent 28%),
-    linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(15, 23, 42, 0.9));
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
-}
-
-.market-news-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.market-news-kicker {
-  margin: 0 0 0.2rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #7dd3fc;
-}
-
-.market-news-header h3 {
-  margin: 0;
-  color: #f8fafc;
-  font-size: 1.1rem;
-}
-
-.market-news-actions {
-  display: flex;
-  gap: 0.55rem;
-}
-
-.market-news-button {
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 999px;
-  padding: 0.35rem 0.75rem;
-  background: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
-  cursor: pointer;
-}
-
-.market-news-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.market-news-preview-list,
-.market-news-modal-list {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.market-news-item {
-  display: grid;
-  gap: 0.18rem;
-  min-width: 0;
-  padding: 0.8rem 0.9rem;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-.market-news-item a,
-.market-news-item span {
-  color: #f8fafc;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.market-news-item small {
-  color: #94a3b8;
-}
-
-.market-news-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-  background: rgba(15, 23, 42, 0.62);
-  backdrop-filter: blur(10px);
-  overflow: hidden;
-}
-
-.market-news-modal {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 1rem;
-  width: min(960px, 100%);
-  height: min(78vh, 820px);
-  max-height: min(78vh, 820px);
-  padding: 1.2rem;
-  border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: linear-gradient(160deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.94));
-  overflow: hidden;
-}
-
-.market-news-modal-list {
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 0.35rem;
-}
-
-.market-news-modal-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.market-news-modal-list::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.45);
-}
-
-.market-news-modal-list::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.12);
-}
-
-.local-news-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.local-news-tag,
-.local-news-target {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.1rem 0.45rem;
-  font-size: 0.72rem;
-  line-height: 1.2;
-  background: rgba(148, 163, 184, 0.16);
-  color: #cbd5e1;
-}
-
-.quote-card {
-  padding: 1rem;
-  border-radius: 16px;
-  background: rgba(15, 23, 42, 0.34);
-  border: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-.quote-card p,
 .terminal-empty p {
   margin: 0.2rem 0;
-}
-
-.fundamental-facts {
-  margin: 0.45rem 0 0;
-  padding-left: 1rem;
-  display: grid;
-  gap: 0.3rem;
-}
-
-.fundamental-facts li {
-  color: #d9d4c7;
-}
-
-.tape-card {
-  min-width: 0;
 }
 
 .terminal-empty {
@@ -4419,474 +1683,6 @@ watch(currentStockKey, () => {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-.trading-plan-card {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.trading-plan-board-card {
-  margin-bottom: 1rem;
-}
-
-.plan-board-realtime-strip {
-  display: grid;
-  gap: 0.65rem;
-  padding: 0.85rem;
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(255, 248, 237, 0.92), rgba(238, 248, 255, 0.88));
-  border: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-.plan-board-realtime-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.plan-board-realtime-head strong,
-.plan-board-index-card strong {
-  color: #0f172a;
-}
-
-.plan-board-realtime-head small,
-.plan-board-index-card small {
-  color: #64748b;
-}
-
-.plan-board-realtime-metrics {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.plan-board-index-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0.65rem;
-}
-
-.plan-board-index-card {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.75rem;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-.trading-plan-header,
-.plan-item-header,
-.plan-modal-actions,
-.plan-modal-buttons {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.plan-refresh-button {
-  color: #0f172a;
-  background: rgba(15, 23, 42, 0.08);
-}
-
-.stock-realtime-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.stock-realtime-content {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.stock-realtime-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  color: #64748b;
-  font-size: 0.82rem;
-}
-
-.stock-realtime-focus {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 0.9rem 1rem;
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.05), rgba(37, 99, 235, 0.08));
-  border: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.stock-realtime-focus p,
-.stock-realtime-focus strong,
-.stock-realtime-focus small,
-.stock-realtime-mini-card strong,
-.stock-realtime-mini-card small {
-  display: block;
-}
-
-.stock-realtime-focus-price {
-  text-align: right;
-}
-
-.stock-realtime-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.6rem;
-}
-
-.stock-realtime-mini-card {
-  display: grid;
-  gap: 0.3rem;
-  padding: 0.75rem;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-.stock-realtime-pill-row {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.plan-board-list {
-  max-height: 20rem;
-  overflow-y: auto;
-  padding-right: 0.2rem;
-}
-
-.plan-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 0.75rem;
-}
-
-.plan-item {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.9rem 1rem;
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.plan-item-compact {
-  gap: 0.35rem;
-}
-
-.plan-item-title {
-  display: grid;
-  gap: 0.12rem;
-}
-
-.plan-status-row {
-  display: flex;
-  align-items: center;
-}
-
-.plan-status-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.14rem 0.55rem;
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-}
-
-.plan-status-pending {
-  background: rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
-}
-
-.plan-status-triggered {
-  background: rgba(22, 163, 74, 0.12);
-  color: #15803d;
-}
-
-.plan-status-invalid {
-  background: rgba(100, 116, 139, 0.16);
-  color: #475569;
-}
-
-.plan-status-review-required {
-  background: rgba(239, 68, 68, 0.12);
-  color: #b91c1c;
-}
-
-.plan-item-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.plan-item p,
-.plan-item small {
-  margin: 0;
-}
-
-.plan-alert {
-  display: grid;
-  gap: 0.18rem;
-  margin: 0.35rem 0 0.15rem;
-  padding: 0.55rem 0.7rem;
-  border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  font-size: 0.82rem;
-}
-
-.plan-alert strong {
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.plan-alert small {
-  font-size: 0.76rem;
-}
-
-.plan-alert-warning {
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.24);
-  color: #92400e;
-}
-
-.plan-alert-critical {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.24);
-  color: #991b1b;
-}
-
-.plan-alert-info {
-  background: rgba(14, 165, 233, 0.12);
-  border-color: rgba(14, 165, 233, 0.24);
-  color: #0c4a6e;
-}
-
-.plan-pill-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.plan-pill {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.18rem 0.55rem;
-  background: rgba(37, 99, 235, 0.08);
-  color: #1d4ed8;
-  font-size: 0.78rem;
-}
-
-.plan-link-button,
-.plan-danger-button {
-  border: none;
-  border-radius: 999px;
-  padding: 0.35rem 0.75rem;
-  cursor: pointer;
-}
-
-.plan-link-button {
-  background: rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
-}
-
-.plan-danger-button {
-  background: rgba(220, 38, 38, 0.12);
-  color: #b91c1c;
-}
-
-.plan-danger-button:disabled,
-.plan-link-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.plan-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-  background: rgba(15, 23, 42, 0.58);
-  backdrop-filter: blur(10px);
-}
-
-.plan-modal {
-  display: grid;
-  gap: 1rem;
-  width: min(920px, 100%);
-  max-height: min(82vh, 900px);
-  overflow-y: auto;
-  padding: 1.2rem;
-  border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.96));
-}
-
-.plan-form-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.85rem;
-}
-
-.plan-field {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.plan-field span {
-  color: #334155;
-  font-size: 0.82rem;
-}
-
-.plan-field input,
-.plan-field select,
-.plan-field textarea {
-  border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  padding: 0.65rem 0.75rem;
-  background: rgba(255, 255, 255, 0.95);
-  color: #0f172a;
-}
-
-.plan-field-wide {
-  grid-column: 1 / -1;
-}
-
-.plan-save-button {
-  border: none;
-  border-radius: 999px;
-  padding: 0.55rem 0.95rem;
-  background: linear-gradient(135deg, #0f766e, #0891b2);
-  color: #f8fafc;
-  cursor: pointer;
-}
-
-.plan-save-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.field {
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.field input,
-.field select,
-.field button {
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  padding: 0.55rem 0.75rem;
-  background: rgba(255, 255, 255, 0.9);
-}
-
-.field button {
-  background: linear-gradient(135deg, #2563eb, #38bdf8);
-  color: #ffffff;
-  border: none;
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25);
-}
-
-.field button:disabled {
-  background: #94a3b8;
-  box-shadow: none;
-}
-
-.search-field {
-  position: relative;
-}
-
-.search-dropdown {
-  position: absolute;
-  top: calc(100% + 0.5rem);
-  left: 0;
-  right: 0;
-  width: 100%;
-  max-width: 560px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 16px;
-  padding: 1rem 1.25rem;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  z-index: 50;
-}
-
-.search-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-  color: #0f172a;
-  font-weight: 600;
-}
-
-.close-btn {
-  background: transparent;
-  border: none;
-  color: #64748b;
-  cursor: pointer;
-}
-
-.search-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 0.5rem;
-  max-height: 320px;
-  overflow: auto;
-}
-
-.search-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.6rem 0.75rem;
-  border-radius: 10px;
-  background: rgba(248, 250, 252, 0.9);
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  cursor: pointer;
-}
-
-.search-list li:hover {
-  background: rgba(226, 232, 240, 0.8);
-}
-
-.result-name {
-  color: #0f172a;
-  font-weight: 500;
-}
-
-.result-code {
-  color: #475569;
-  font-size: 0.85rem;
-}
-
-.messages {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 1rem;
-}
-
-.messages li {
-  padding: 0.25rem 0;
-  color: #4b5563;
-  font-size: 0.9rem;
 }
 
 .chat-session {
@@ -4929,202 +1725,20 @@ watch(currentStockKey, () => {
 }
 
 .panel.monochrome .mode-toggle,
-.panel.monochrome .field button,
 .panel.monochrome .context-menu button {
   background: #6b7280;
   color: #ffffff;
 }
 
-.panel.monochrome .field input,
-.panel.monochrome .field select,
 .panel.monochrome .history,
-.panel.monochrome .history-table,
-.panel.monochrome .search-dropdown {
+.panel.monochrome .history-table {
   background: #ffffff;
   color: #000000;
 }
-
-.panel.monochrome .market-news-button {
-  background: rgba(255, 255, 255, 0.88);
-  color: #111827;
-}
-
-.panel.monochrome .market-news-panel,
-.panel.monochrome .market-news-modal,
-.panel.monochrome .plan-modal {
-  background:
-    radial-gradient(circle at top left, rgba(148, 163, 184, 0.12), transparent 28%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.94));
-}
-
-.panel.monochrome .market-news-item a,
-.panel.monochrome .market-news-item span,
-.panel.monochrome .market-news-header h3 {
-  color: #111827;
-}
-
-.panel.monochrome .market-news-kicker {
-  color: #0369a1;
-}
-
-.panel.monochrome .market-news-item small {
-  color: #4b5563;
-}
-
-.panel.monochrome .local-news-tag,
-.panel.monochrome .local-news-target {
-  background: rgba(148, 163, 184, 0.2);
-  color: #334155;
-}
-
-.panel.monochrome .plan-pill {
-  background: rgba(148, 163, 184, 0.18);
-  color: #111827;
-}
-
 .panel.monochrome .text-rise,
 .panel.monochrome .text-fall {
   color: #000000;
   font-weight: 600;
-}
-
-.context-menu {
-  position: fixed;
-  z-index: 60;
-  background: rgba(255, 255, 255, 0.98);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  border-radius: 10px;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.2);
-  padding: 0.25rem;
-}
-
-.context-menu button {
-  background: transparent;
-  border: none;
-  color: #ef4444;
-  padding: 0.4rem 0.8rem;
-  cursor: pointer;
-}
-
-.messages {
-  list-style: none;
-  padding: 0;
-  margin: 0.65rem 0 0;
-  display: grid;
-  gap: 0.55rem;
-  max-height: 18rem;
-  overflow-y: auto;
-  padding-right: 0.25rem;
-}
-
-.messages li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding-bottom: 0.55rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-.messages li.clickable {
-  cursor: pointer;
-}
-
-.messages li.clickable:hover {
-  color: #0f172a;
-}
-
-.messages small {
-  color: #94a3b8;
-}
-
-.news-impact {
-  margin-top: 0;
-}
-
-.news-impact-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.news-impact-header h3 {
-  margin: 0;
-}
-
-.news-impact-content {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.news-buckets {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.news-bucket-card {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.7rem 0.8rem;
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.09);
-}
-
-.news-bucket-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.news-bucket-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.45rem;
-  max-height: 18rem;
-  overflow-y: auto;
-  padding-right: 0.25rem;
-}
-
-.news-bucket-list li {
-  display: grid;
-  align-items: start;
-  gap: 0.15rem;
-}
-
-.news-bucket-list a,
-.news-bucket-list span {
-  color: #0f172a;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.news-bucket-list small {
-  color: #64748b;
-}
-
-.news-impact-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.news-impact-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.6rem;
-}
-
-.news-impact-list li {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 0.75rem;
-  align-items: start;
 }
 
 .impact-tag {
@@ -5199,81 +1813,25 @@ watch(currentStockKey, () => {
   color: #16a34a;
 }
 
-.context-menu {
-  position: fixed;
-  z-index: 80;
-  padding: 0.4rem;
-  border-radius: 12px;
-  background: #0f172a;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.24);
-}
-
-.context-menu button {
-  background: transparent;
-  color: #f8fafc;
-}
-
 @media (max-width: 1180px) {
-  .workspace-grid,
-  .terminal-summary-grid {
+  .workspace-grid {
     grid-template-columns: 1fr;
-  }
-
-  .toolbar-main-row,
-  .toolbar-sub-row {
-    grid-template-columns: 1fr;
-  }
-
-  .toolbar-settings,
-  .toolbar-history-actions {
-    justify-content: flex-start;
   }
 
   .workspace-grid.focused {
     grid-template-columns: 1fr;
   }
-
-  .market-overview-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .market-overview-quote-list-global {
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  }
 }
 
 @media (max-width: 720px) {
   .panel-header,
-  .deck-card-header,
-  .quote-card-header,
-  .news-impact-header,
-  .market-overview-belt-header,
-  .market-overview-hero-head,
-  .market-overview-cluster-head,
-  .market-overview-quote-card-head,
-  .market-overview-quote-card-foot {
+  .deck-card-header {
     flex-direction: column;
   }
 
   .panel-actions {
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .stock-realtime-focus {
-    grid-template-columns: 1fr;
-  }
-
-  .stock-realtime-focus-price {
-    text-align: left;
-  }
-
-  .market-overview-hero-price {
-    text-align: left;
-  }
-
-  .market-overview-quote-list-global {
-    grid-template-columns: 1fr;
   }
 }
 </style>

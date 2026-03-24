@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CHART_VIEW_OPTIONS, isKlineChartView, normalizeKlineInterval, resolveInitialChartView } from './charting/chartViews'
 import { createStrategyVisibilityState, getActiveStrategyBadgesForView, getStrategyGroupsForView } from './charting/chartStrategyRegistry'
-import { CHART_COLORS, buildMinuteRecords, resolveMinuteTrend, useStockChartAdapter } from './charting/useStockChartAdapter'
+import { useStockChartAdapter } from './charting/useStockChartAdapter'
 
 const props = defineProps({
   kLines: {
@@ -31,7 +31,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:interval'])
+const emit = defineEmits(['update:interval', 'view-change', 'strategy-visibility-change'])
 
 const chartWrapperRef = ref(null)
 const chartShellRef = ref(null)
@@ -45,7 +45,6 @@ const showFloatingBadges = ref(true)
 const hoveredBadgeId = ref(null)
 const isFullscreen = ref(false)
 const isFallbackFullscreen = ref(false)
-const minuteOverlaySize = ref({ width: 0, height: 0 })
 
 const {
   aiLevelText,
@@ -64,118 +63,6 @@ const hasActiveData = computed(() => (activeView.value === 'minute' ? props.minu
 const strategyGroups = computed(() => getStrategyGroupsForView(activeView.value, featureVisibilityByView.value[activeView.value] ?? {}))
 const activeStrategyBadges = computed(() => getActiveStrategyBadgesForView(activeView.value, featureVisibilityByView.value[activeView.value] ?? {}))
 const hoveredStrategyBadge = computed(() => activeStrategyBadges.value.find(item => item.id === hoveredBadgeId.value) ?? null)
-
-const formatMinuteAxisPrice = value => {
-  const number = Number(value)
-  return Number.isFinite(number) ? number.toFixed(2) : '--'
-}
-
-const minuteOverlayModel = computed(() => {
-  if (activeView.value !== 'minute') {
-    return null
-  }
-
-  const width = minuteOverlaySize.value.width
-  const height = minuteOverlaySize.value.height
-  if (!width || !height) {
-    return null
-  }
-
-  const visibility = featureVisibilityByView.value.minute ?? {}
-  if (visibility.price === false) {
-    return null
-  }
-
-  const { records, basePrice } = buildMinuteRecords(props.minuteLines, props.basePrice)
-  if (!records.length || !Number.isFinite(basePrice)) {
-    return null
-  }
-
-  const rightAxisWidth = 58
-  const leftPadding = 10
-  const topPadding = 14
-  const bottomPadding = 14
-  const volumePaneHeight = Math.min(110, Math.max(88, Math.round(height * 0.32)))
-  const plotLeft = leftPadding
-  const plotRight = Math.max(plotLeft + 24, width - rightAxisWidth)
-  const plotTop = topPadding
-  const plotBottom = Math.max(plotTop + 48, height - volumePaneHeight - bottomPadding)
-  const plotHeight = plotBottom - plotTop
-  const plotWidth = plotRight - plotLeft
-
-  const prices = [basePrice, ...records.map(item => Number(item.close))].filter(Number.isFinite)
-  let maxPrice = Math.max(...prices)
-  let minPrice = Math.min(...prices)
-  if (maxPrice === minPrice) {
-    const padding = maxPrice === 0 ? 1 : Math.abs(maxPrice) * 0.01
-    maxPrice += padding
-    minPrice -= padding
-  } else {
-    const padding = Math.max((maxPrice - minPrice) * 0.1, Math.abs(basePrice) * 0.002)
-    maxPrice += padding
-    minPrice -= padding
-  }
-
-  const priceRange = maxPrice - minPrice || 1
-  const xStep = records.length > 1 ? plotWidth / (records.length - 1) : 0
-  const resolveX = index => plotLeft + index * xStep
-  const resolveY = price => plotTop + ((maxPrice - price) / priceRange) * plotHeight
-
-  const points = records.map((item, index) => ({
-    x: resolveX(index),
-    y: resolveY(item.close),
-    close: item.close
-  }))
-  const trend = resolveMinuteTrend(records, basePrice)
-  const fillColor = CHART_COLORS[trend] ?? CHART_COLORS.flat
-
-  const fillPath = [
-    `M ${points[0].x} ${plotBottom}`,
-    ...points.map(point => `L ${point.x} ${point.y}`),
-    `L ${points.at(-1).x} ${plotBottom}`,
-    'Z'
-  ].join(' ')
-
-  const segments = points.slice(1).map((point, index) => {
-    const previous = points[index]
-    const delta = point.close - previous.close
-    return {
-      x1: previous.x,
-      y1: previous.y,
-      x2: point.x,
-      y2: point.y,
-      color: delta > 0 ? CHART_COLORS.up : delta < 0 ? CHART_COLORS.down : CHART_COLORS.flat,
-      trendClass: delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat'
-    }
-  })
-
-  const labels = Array.from({ length: 5 }, (_, index) => {
-    const ratio = index / 4
-    const value = maxPrice - priceRange * ratio
-    return {
-      value,
-      y: plotTop + plotHeight * ratio,
-      color: value > basePrice ? CHART_COLORS.up : value < basePrice ? CHART_COLORS.down : CHART_COLORS.flat,
-      trendClass: value > basePrice ? 'up' : value < basePrice ? 'down' : 'flat'
-    }
-  })
-
-  return {
-    width,
-    height,
-    fillPath,
-    fillColor,
-    segments,
-    labels
-  }
-})
-
-const syncMinuteOverlaySize = () => {
-  minuteOverlaySize.value = {
-    width: minuteRef.value?.clientWidth ?? 0,
-    height: minuteRef.value?.clientHeight ?? 0
-  }
-}
 
 const getFullscreenElement = () => document.fullscreenElement ?? document.webkitFullscreenElement ?? document.msFullscreenElement ?? null
 
@@ -211,7 +98,6 @@ const syncFullscreenState = () => {
 const handleFullscreenChange = () => {
   syncFullscreenState()
   nextTick(() => {
-    syncMinuteOverlaySize()
     queueResize()
   })
 }
@@ -243,7 +129,6 @@ const toggleFullscreen = async () => {
     }
     syncFullscreenState()
     await nextTick()
-    syncMinuteOverlaySize()
     queueResize()
     return
   }
@@ -251,7 +136,6 @@ const toggleFullscreen = async () => {
   isFallbackFullscreen.value = !isFallbackFullscreen.value
   isFullscreen.value = isFallbackFullscreen.value
   await nextTick()
-  syncMinuteOverlaySize()
   queueResize()
 }
 
@@ -275,13 +159,19 @@ const selectView = async viewId => {
 }
 
 const toggleFeature = async featureId => {
+  const isActive = !featureVisibilityByView.value[activeView.value]?.[featureId]
   featureVisibilityByView.value = {
     ...featureVisibilityByView.value,
     [activeView.value]: {
       ...featureVisibilityByView.value[activeView.value],
-      [featureId]: !featureVisibilityByView.value[activeView.value]?.[featureId]
+      [featureId]: isActive
     }
   }
+  emit('strategy-visibility-change', {
+    viewId: activeView.value,
+    strategyId: featureId,
+    active: isActive
+  })
   renderAll()
   await nextTick()
   queueResize()
@@ -292,9 +182,7 @@ onMounted(() => {
   syncKlineInterval(props.interval)
   syncFullscreenState()
   if (typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(entries => {
-      if (!entries?.length) return
-      syncMinuteOverlaySize()
+    resizeObserver = new ResizeObserver(() => {
       queueResize()
     })
     if (chartShellRef.value) {
@@ -315,10 +203,7 @@ onMounted(() => {
   document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
   document.addEventListener('MSFullscreenChange', handleFullscreenChange)
   window.addEventListener('keydown', handleFullscreenKeydown)
-  nextTick(() => {
-    syncMinuteOverlaySize()
-    queueResize()
-  })
+  nextTick(queueResize)
 })
 
 onUnmounted(() => {
@@ -340,7 +225,6 @@ onUnmounted(() => {
 watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels], async () => {
   renderAll()
   await nextTick()
-  syncMinuteOverlaySize()
   queueResize()
 })
 
@@ -374,7 +258,6 @@ const resolveLineLegendSwatchStyle = item => item.color
 watch(featureVisibilityByView, async () => {
   renderAll()
   await nextTick()
-  syncMinuteOverlaySize()
   queueResize()
 }, { deep: true })
 
@@ -399,8 +282,9 @@ watch(() => props.focusedView, viewId => {
 })
 
 watch(activeView, async () => {
+  emit('view-change', activeView.value)
   await nextTick()
-  syncMinuteOverlaySize()
+  queueResize()
 })
 </script>
 
@@ -504,42 +388,6 @@ watch(activeView, async () => {
         </div>
         <div class="minute-chart-layer" :class="{ 'chart-hidden': activeView !== 'minute' }">
           <div ref="minuteRef" class="chart minute-chart-host" />
-          <svg
-            v-if="minuteOverlayModel"
-            class="minute-segment-overlay"
-            :viewBox="`0 0 ${minuteOverlayModel.width} ${minuteOverlayModel.height}`"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <path
-              class="minute-fill-path"
-              :d="minuteOverlayModel.fillPath"
-              :fill="minuteOverlayModel.fillColor"
-              fill-opacity="0.18"
-            />
-            <line
-              v-for="(segment, index) in minuteOverlayModel.segments"
-              :key="`minute-segment-${index}`"
-              class="minute-segment-line"
-              :class="`minute-segment-${segment.trendClass}`"
-              :x1="segment.x1"
-              :y1="segment.y1"
-              :x2="segment.x2"
-              :y2="segment.y2"
-              :stroke="segment.color"
-            />
-          </svg>
-          <div v-if="minuteOverlayModel" class="minute-axis-overlay" aria-hidden="true">
-            <span
-              v-for="(label, index) in minuteOverlayModel.labels"
-              :key="`minute-axis-${index}`"
-              class="minute-axis-label"
-              :class="`minute-axis-${label.trendClass}`"
-              :style="{ top: `${label.y}px`, color: label.color }"
-            >
-              {{ formatMinuteAxisPrice(label.value) }}
-            </span>
-          </div>
         </div>
         <div ref="klineRef" class="chart" :class="{ 'chart-hidden': activeView === 'minute' }" />
         <p v-if="!hasActiveData" class="placeholder">{{ activePlaceholder }}</p>
@@ -796,53 +644,6 @@ watch(activeView, async () => {
 
 .minute-chart-host {
   z-index: 1;
-}
-
-.minute-segment-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 2;
-}
-
-.minute-segment-line {
-  fill: none;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.minute-axis-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.minute-axis-label {
-  position: absolute;
-  right: 0.45rem;
-  transform: translateY(-50%);
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 0.08rem 0.28rem;
-  border-radius: 999px;
-  background: rgba(248, 250, 252, 0.88);
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
-}
-
-.minute-axis-up {
-  border: 1px solid rgba(239, 68, 68, 0.18);
-}
-
-.minute-axis-down {
-  border: 1px solid rgba(34, 197, 94, 0.18);
-}
-
-.minute-axis-flat {
-  border: 1px solid rgba(148, 163, 184, 0.18);
 }
 
 .chart-hidden {

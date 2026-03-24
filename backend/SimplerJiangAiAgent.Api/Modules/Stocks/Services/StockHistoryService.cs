@@ -18,7 +18,47 @@ public sealed class StockHistoryService : IStockHistoryService
 
     public async Task UpsertAsync(StockQuoteDto quote, CancellationToken cancellationToken = default)
     {
-        var symbol = StockSymbolNormalizer.Normalize(quote.Symbol);
+        await UpsertCoreAsync(
+            quote.Symbol,
+            quote.Name,
+            quote.Price,
+            quote.ChangePercent,
+            quote.TurnoverRate,
+            quote.PeRatio,
+            quote.High,
+            quote.Low,
+            quote.Speed,
+            cancellationToken);
+    }
+
+    public async Task<StockQueryHistory> RecordAsync(StockHistoryRecordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        return await UpsertCoreAsync(
+            request.Symbol,
+            request.Name,
+            request.Price,
+            request.ChangePercent,
+            request.TurnoverRate,
+            request.PeRatio,
+            request.High,
+            request.Low,
+            request.Speed,
+            cancellationToken);
+    }
+
+    private async Task<StockQueryHistory> UpsertCoreAsync(
+        string symbolValue,
+        string name,
+        decimal price,
+        decimal changePercent,
+        decimal turnoverRate,
+        decimal peRatio,
+        decimal high,
+        decimal low,
+        decimal speed,
+        CancellationToken cancellationToken)
+    {
+        var symbol = StockSymbolNormalizer.Normalize(symbolValue);
         var existing = await _dbContext.StockQueryHistories
             .FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
 
@@ -28,17 +68,18 @@ public sealed class StockHistoryService : IStockHistoryService
             _dbContext.StockQueryHistories.Add(existing);
         }
 
-        existing.Name = quote.Name;
-        existing.Price = quote.Price;
-        existing.ChangePercent = quote.ChangePercent;
-        existing.TurnoverRate = quote.TurnoverRate;
-        existing.PeRatio = quote.PeRatio;
-        existing.High = quote.High;
-        existing.Low = quote.Low;
-        existing.Speed = quote.Speed;
+        existing.Name = name;
+        existing.Price = price;
+        existing.ChangePercent = changePercent;
+        existing.TurnoverRate = turnoverRate;
+        existing.PeRatio = peRatio;
+        existing.High = high;
+        existing.Low = low;
+        existing.Speed = speed;
         existing.UpdatedAt = DateTime.UtcNow;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+        return existing;
     }
 
     public async Task<IReadOnlyList<StockQueryHistory>> GetAllAsync(CancellationToken cancellationToken = default)

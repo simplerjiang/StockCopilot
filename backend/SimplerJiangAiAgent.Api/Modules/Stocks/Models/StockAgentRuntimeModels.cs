@@ -218,6 +218,23 @@ public sealed record StockCopilotFinalAnswerDto(
     bool NeedsToolExecution,
     IReadOnlyList<string> Constraints);
 
+public sealed record StockCopilotLoopBudgetDto(
+    int MaxRounds,
+    int MaxToolCalls,
+    int MaxExternalSearchCalls,
+    int MaxTotalLatencyMs,
+    int MaxPollingSteps);
+
+public sealed record StockCopilotLoopExecutionDto(
+    int CompletedRounds,
+    int ToolCallsExecuted,
+    int ExternalSearchCallsExecuted,
+    long TotalLatencyMs,
+    int ConsumedPollingSteps,
+    string Status,
+    string? StopReason,
+    bool ForcedClose);
+
 public sealed record StockCopilotFollowUpActionDto(
     string ActionId,
     string Label,
@@ -241,7 +258,48 @@ public sealed record StockCopilotTurnDto(
     IReadOnlyList<StockCopilotToolCallDto> ToolCalls,
     IReadOnlyList<StockCopilotToolResultDto> ToolResults,
     StockCopilotFinalAnswerDto FinalAnswer,
-    IReadOnlyList<StockCopilotFollowUpActionDto> FollowUpActions);
+    IReadOnlyList<StockCopilotFollowUpActionDto> FollowUpActions,
+    StockCopilotLoopBudgetDto? LoopBudget = null,
+    StockCopilotLoopExecutionDto? LoopExecution = null);
+
+public sealed record StockCopilotToolExecutionMetricDto(
+    string CallId,
+    string ToolName,
+    string PolicyClass,
+    long LatencyMs,
+    int EvidenceCount,
+    int FeatureCount,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> DegradedFlags);
+
+public sealed record StockCopilotAcceptanceBaselineRequestDto(
+    string Symbol,
+    StockCopilotTurnDto Turn,
+    IReadOnlyList<StockCopilotToolExecutionMetricDto> ToolExecutions,
+    int ReplaySampleTake);
+
+public sealed record StockCopilotAcceptanceMetricDto(
+    string Key,
+    string Label,
+    decimal Value,
+    string Unit,
+    string Status,
+    string Description);
+
+public sealed record StockCopilotAcceptanceBaselineDto(
+    string Symbol,
+    string SessionKey,
+    string TurnId,
+    DateTime GeneratedAt,
+    decimal OverallScore,
+    int ApprovedToolCallCount,
+    int ExecutedToolCallCount,
+    decimal AverageLatencyMs,
+    int WarningCount,
+    int DegradedFlagCount,
+    IReadOnlyList<string> Highlights,
+    IReadOnlyList<StockCopilotAcceptanceMetricDto> Metrics,
+    StockAgentReplayBaselineDto ReplayBaseline);
 
 public sealed record StockCopilotSessionDto(
     string SessionKey,

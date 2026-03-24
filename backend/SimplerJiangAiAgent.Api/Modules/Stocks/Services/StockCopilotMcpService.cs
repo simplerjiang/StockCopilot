@@ -302,6 +302,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
                         var publishedAt = DateTime.TryParse(ReadString(item, "published_date"), out var parsed) ? parsed : (DateTime?)null;
                         var score = ReadDecimal(item, "score");
                         results.Add(new StockCopilotSearchResultDto(title, url, source, score, publishedAt, content));
+                        var readableSnippet = LocalFactDisplayPolicy.SanitizeEvidenceSnippet(content, title);
                         evidence.Add(new StockCopilotMcpEvidenceDto(
                             title,
                             title,
@@ -309,8 +310,8 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
                             publishedAt,
                             null,
                             url,
-                            content,
-                            content,
+                            readableSnippet,
+                            readableSnippet,
                             "url_fetched",
                             string.IsNullOrWhiteSpace(content) ? "metadata_only" : "summary_only",
                             DateTime.UtcNow,
@@ -486,13 +487,13 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     {
         return items.Select(item => new StockCopilotMcpEvidenceDto(
             item.Title,
-            item.TranslatedTitle ?? item.Title,
+            LocalFactDisplayPolicy.SanitizeTranslatedTitle(item.Title, item.TranslatedTitle) ?? item.Title,
             item.Source,
             item.PublishTime,
             item.CrawledAt,
             item.Url,
-            item.Excerpt,
-            item.Summary,
+            LocalFactDisplayPolicy.SanitizeEvidenceSnippet(item.Summary, item.Excerpt, item.Title),
+            LocalFactDisplayPolicy.SanitizeEvidenceSnippet(item.Summary, item.Excerpt, item.Title),
             item.ReadMode,
             item.ReadStatus,
             item.IngestedAt,
@@ -506,15 +507,16 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
     private static StockCopilotMcpEvidenceDto ToEvidence(LocalNewsItemDto item)
     {
+        var readableSnippet = LocalFactDisplayPolicy.SanitizeEvidenceSnippet(item.Summary, item.Excerpt, item.Title);
         return new StockCopilotMcpEvidenceDto(
             item.Title,
-            item.TranslatedTitle ?? item.Title,
+            LocalFactDisplayPolicy.SanitizeTranslatedTitle(item.Title, item.TranslatedTitle) ?? item.Title,
             item.Source,
             item.PublishTime,
             item.CrawledAt,
             item.Url,
-            item.Excerpt,
-            item.Summary,
+            readableSnippet,
+            readableSnippet,
             item.ReadMode,
             item.ReadStatus,
             item.IngestedAt,
@@ -630,27 +632,49 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         }
 
         var count = 0;
-        var bullish = false;
+        string? activeDirection = null;
         for (var index = 4; index < closes.Count; index++)
         {
-            if (closes[index] > closes[index - 4])
+            var nextDirection = ResolveTdSetupDirection(closes[index], closes[index - 4], activeDirection);
+            if (nextDirection is null)
             {
-                count = bullish ? count + 1 : 1;
-                bullish = true;
+                count = 0;
+                activeDirection = null;
             }
-            else if (closes[index] < closes[index - 4])
+            else if (string.Equals(nextDirection, activeDirection, StringComparison.Ordinal))
             {
-                count = !bullish ? count + 1 : 1;
-                bullish = false;
+                count = Math.Min(count + 1, 9);
+                activeDirection = nextDirection;
             }
             else
             {
-                count = 0;
+                count = 1;
+                activeDirection = nextDirection;
             }
         }
 
-        var state = bullish ? "setup_up" : "setup_down";
+        var state = activeDirection switch
+        {
+            "sell" => "setup_up",
+            "buy" => "setup_down",
+            _ => "flat"
+        };
         return (Math.Clamp(count, 0, 9), count == 0 ? "flat" : state);
+    }
+
+    private static string? ResolveTdSetupDirection(decimal currentClose, decimal referenceClose, string? activeDirection)
+    {
+        if (currentClose > referenceClose)
+        {
+            return "sell";
+        }
+
+        if (currentClose < referenceClose)
+        {
+            return "buy";
+        }
+
+        return activeDirection;
     }
 
     private static decimal[] CalculateEma(IReadOnlyList<decimal> values, int period)

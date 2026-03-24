@@ -24,7 +24,38 @@ public sealed class TradingPlanServicesTests
               "name": "深科技",
               "agents": [
                 {
+                  "agentId": "stock_news",
+                  "success": true,
+                  "data": {
+                    "summary": "公告与个股新闻已核对。"
+                  }
+                },
+                {
+                  "agentId": "sector_news",
+                  "success": true,
+                  "data": {
+                    "summary": "板块消息中性偏多。"
+                  }
+                },
+                {
+                  "agentId": "financial_analysis",
+                  "success": true,
+                  "data": {
+                    "summary": "财务结构稳定。"
+                  }
+                },
+                {
+                  "agentId": "trend_analysis",
+                  "success": true,
+                  "data": {
+                    "forecast": [
+                      { "label": "T+5", "price": 13.8 }
+                    ]
+                  }
+                },
+                {
                   "agentId": "commander",
+                  "success": true,
                   "data": {
                     "summary": "偏多",
                     "analysis_opinion": "等待放量突破后再执行。",
@@ -129,7 +160,22 @@ public sealed class TradingPlanServicesTests
               "name": "平安银行",
               "agents": [
                 {
+                  "agentId": "stock_news",
+                  "success": true,
+                  "data": {
+                    "summary": "公告未见新增风险。"
+                  }
+                },
+                {
+                  "agentId": "sector_news",
+                  "success": true,
+                  "data": {
+                    "summary": "银行板块消息中性。"
+                  }
+                },
+                {
                   "agentId": "commander",
+                  "success": true,
                   "data": {
                     "summary": "观察",
                     "analysis_opinion": "若站上 12.60 可继续观察。",
@@ -140,6 +186,7 @@ public sealed class TradingPlanServicesTests
                   },
                 {
                   "agentId": "financial_analysis",
+                  "success": true,
                   "data": {
                     "metrics": {
                       "institutionTargetPrice": 13.8
@@ -148,6 +195,7 @@ public sealed class TradingPlanServicesTests
                 },
                 {
                   "agentId": "trend_analysis",
+                  "success": true,
                   "data": {
                     "forecast": [
                       { "label": "T+1", "price": 13.2 },
@@ -210,7 +258,29 @@ public sealed class TradingPlanServicesTests
               "name": "深科技",
               "agents": [
                 {
+                  "agentId": "stock_news",
+                  "success": true,
+                  "data": {
+                    "summary": "公告正常。"
+                  }
+                },
+                {
+                  "agentId": "sector_news",
+                  "success": true,
+                  "data": {
+                    "summary": "半导体板块偏强。"
+                  }
+                },
+                {
+                  "agentId": "financial_analysis",
+                  "success": true,
+                  "data": {
+                    "summary": "估值合理。"
+                  }
+                },
+                {
                   "agentId": "commander",
+                  "success": true,
                   "data": {
                     "summary": "偏多",
                     "direction": "Long",
@@ -225,6 +295,7 @@ public sealed class TradingPlanServicesTests
                 },
                 {
                   "agentId": "trend_analysis",
+                  "success": true,
                   "data": {
                     "forecast": [
                       { "label": "T+5", "price": 34.8 }
@@ -267,6 +338,42 @@ public sealed class TradingPlanServicesTests
 
         Assert.Equal(34.8m, draft.TargetPrice);
         Assert.Equal(34.8m, draft.TakeProfitPrice);
+    }
+
+    [Fact]
+    public async Task BuildDraftAsync_RejectsIncompleteCommanderHistory()
+    {
+        await using var dbContext = CreateDbContext();
+        var history = new StockAgentAnalysisHistory
+        {
+            Symbol = "sh600000",
+            Name = "浦发银行",
+            Interval = "day",
+            ResultJson = """
+            {
+              "symbol": "sh600000",
+              "agents": [
+                {
+                  "agentId": "stock_news",
+                  "success": true,
+                  "data": {
+                    "summary": "只有个股新闻。"
+                  }
+                }
+              ]
+            }
+            """,
+            CreatedAt = DateTime.UtcNow
+        };
+        dbContext.StockAgentAnalysisHistories.Add(history);
+        await dbContext.SaveChangesAsync();
+
+        var service = new TradingPlanDraftService(new StockAgentHistoryService(dbContext), new StockMarketContextService(dbContext));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.BuildDraftAsync("sh600000", history.Id));
+
+        Assert.Contains("分析历史不完整", error.Message);
+        Assert.Contains("指挥Agent", error.Message);
     }
 
     [Fact]

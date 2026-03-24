@@ -1,0 +1,197 @@
+<script setup>
+import StockSourceLoadProgress from './StockSourceLoadProgress.vue'
+
+defineProps({
+  detail: {
+    type: Object,
+    default: null
+  },
+  showSourceLoadProgress: {
+    type: Boolean,
+    default: false
+  },
+  sourceLoadProgressTitle: {
+    type: String,
+    default: ''
+  },
+  sourceLoadProgressPercent: {
+    type: Number,
+    default: 0
+  },
+  visibleSourceLoadStages: {
+    type: Array,
+    default: () => []
+  },
+  formatDate: {
+    type: Function,
+    required: true
+  }
+})
+
+defineEmits(['open-external'])
+</script>
+
+<template>
+  <div v-if="detail" class="terminal-summary-grid">
+    <div class="quote-card">
+      <p><strong>{{ detail.quote.name }}</strong>（{{ detail.quote.symbol }}）</p>
+      <p>当前价：{{ detail.quote.price }}</p>
+      <p>涨跌：{{ detail.quote.change }}（{{ detail.quote.changePercent }}%）</p>
+      <p class="muted">更新时间：{{ formatDate(detail.quote.timestamp) }}</p>
+      <StockSourceLoadProgress
+        v-if="showSourceLoadProgress"
+        :title="sourceLoadProgressTitle"
+        :progress-percent="sourceLoadProgressPercent"
+        :stages="visibleSourceLoadStages"
+      />
+    </div>
+
+    <div class="quote-card">
+      <div class="quote-card-header">
+        <h4>基本面快照</h4>
+        <span class="muted">Step 3</span>
+      </div>
+      <p>流通市值：{{ detail.quote.floatMarketCap ? `${(Number(detail.quote.floatMarketCap) / 100000000).toFixed(2)} 亿` : '-' }}</p>
+      <p>市盈率：{{ detail.quote.peRatio ?? '-' }}</p>
+      <p>量比：{{ detail.quote.volumeRatio ?? '-' }}</p>
+      <p>股东户数：{{ detail.quote.shareholderCount ? Number(detail.quote.shareholderCount).toLocaleString('zh-CN') : '-' }}</p>
+      <p>所属板块：{{ detail.quote.sectorName || '-' }}</p>
+      <p v-if="detail.fundamentalSnapshot?.updatedAt" class="muted">快照刷新：{{ formatDate(detail.fundamentalSnapshot.updatedAt) }}</p>
+      <ul v-if="detail.fundamentalSnapshot?.facts?.length" class="fundamental-facts">
+        <li v-for="fact in detail.fundamentalSnapshot.facts.slice(0, 8)" :key="`fundamental-${fact.label}-${fact.value}`">
+          <strong>{{ fact.label }}：</strong>{{ fact.value }}
+        </li>
+      </ul>
+    </div>
+
+    <div class="quote-card tape-card">
+      <div class="quote-card-header">
+        <h4>盘中消息带</h4>
+        <span class="muted">{{ detail.messages.length }} 条</span>
+      </div>
+      <ul v-if="detail.messages.length" class="messages">
+        <li
+          v-for="item in detail.messages"
+          :key="`${item.title}-${item.publishedAt ?? item.PublishedAt ?? ''}`"
+          :class="{ clickable: !!(item.url ?? item.Url) }"
+          @click="$emit('open-external', item.url ?? item.Url)"
+        >
+          <span>{{ item.title }}</span>
+          <small>{{ item.source }} · {{ formatDate(item.publishedAt ?? item.PublishedAt) }}</small>
+        </li>
+      </ul>
+      <p v-else class="muted">暂无盘中消息。</p>
+    </div>
+  </div>
+
+  <div v-else class="terminal-empty stock-terminal-empty">
+    <h4>等待加载股票</h4>
+    <p>主视区只保留价格、分时、K 线、量价指标与消息带。</p>
+    <p class="muted">数据来源：腾讯 / 新浪 / 百度（后端爬虫占位）</p>
+    <StockSourceLoadProgress
+      v-if="showSourceLoadProgress"
+      :title="sourceLoadProgressTitle"
+      :progress-percent="sourceLoadProgressPercent"
+      :stages="visibleSourceLoadStages"
+      empty
+    />
+  </div>
+</template>
+
+<style scoped>
+.terminal-summary-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.quote-card {
+  padding: 1rem;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.34);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.quote-card-header {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.quote-card p,
+.terminal-empty p {
+  margin: 0.2rem 0;
+}
+
+.fundamental-facts {
+  margin: 0.45rem 0 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.fundamental-facts li {
+  color: #d9d4c7;
+}
+
+.tape-card {
+  min-width: 0;
+}
+
+.stock-terminal-empty {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 140px;
+  align-content: center;
+}
+
+.stock-terminal-empty h4 {
+  margin: 0;
+  color: #f8fafc;
+}
+
+.messages {
+  list-style: none;
+  padding: 0;
+  margin: 0.65rem 0 0;
+  display: grid;
+  gap: 0.55rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.messages li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  color: #4b5563;
+  font-size: 0.9rem;
+}
+
+.messages li.clickable {
+  cursor: pointer;
+}
+
+.messages li.clickable:hover {
+  color: #0f172a;
+}
+
+.messages small {
+  color: #94a3b8;
+}
+
+@media (max-width: 1180px) {
+  .terminal-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .quote-card-header {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

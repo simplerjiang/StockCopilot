@@ -58,6 +58,46 @@ public sealed class SectorRotationIngestionServiceTests
 	}
 
 	[Fact]
+	public async Task SyncAsync_SkipsMarketSentimentSnapshot_WhenCriticalMarketSourceFails()
+	{
+		await using var dbContext = CreateDbContext();
+		var client = new FakeSectorRotationClient
+		{
+			BoardRankings = new Dictionary<string, IReadOnlyList<EastmoneySectorBoardRow>>(StringComparer.OrdinalIgnoreCase)
+			{
+				[SectorBoardTypes.Industry] =
+				[
+					new EastmoneySectorBoardRow(SectorBoardTypes.Industry, "BK1001", "半导体", 2.8m, 120m, 40m, 30m, 20m, 30m, 300m, 12m, 1, "{}")
+				]
+			},
+			Leaders = new Dictionary<string, IReadOnlyList<EastmoneySectorLeaderRow>>(StringComparer.OrdinalIgnoreCase)
+			{
+				["BK1001"] =
+				[
+					new EastmoneySectorLeaderRow(1, "688001", "华芯", 7.8m, 90m, false, false)
+				]
+			},
+			MarketBreadth = new EastmoneyMarketBreadthSnapshot(2200, 1800, 200, 5000m),
+			ThrowLimitUpCount = true,
+			LimitDownCount = 6,
+			BrokenBoardCount = 8,
+			MaxLimitUpStreak = 4
+		};
+
+		var service = new SectorRotationIngestionService(
+			dbContext,
+			client,
+			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
+			NullLogger<SectorRotationIngestionService>.Instance);
+
+		await service.SyncAsync();
+
+		Assert.Empty(await dbContext.MarketSentimentSnapshots.ToListAsync());
+		Assert.Single(await dbContext.SectorRotationSnapshots.ToListAsync());
+		Assert.Single(await dbContext.SectorRotationLeaderSnapshots.ToListAsync());
+	}
+
+	[Fact]
 	public async Task SyncAsync_UsesResolvedTradingDateForPersistedSnapshots()
 	{
 		await using var dbContext = CreateDbContext();
@@ -164,6 +204,11 @@ public sealed class SectorRotationIngestionServiceTests
 		public HashSet<string> ThrowBoardTypes { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 		public Dictionary<string, IReadOnlyList<EastmoneySectorBoardRow>> BoardRankings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 		public Dictionary<string, IReadOnlyList<EastmoneySectorLeaderRow>> Leaders { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+		public bool ThrowMarketBreadth { get; init; }
+		public bool ThrowLimitUpCount { get; init; }
+		public bool ThrowLimitDownCount { get; init; }
+		public bool ThrowBrokenBoardCount { get; init; }
+		public bool ThrowMaxLimitUpStreak { get; init; }
 		public EastmoneyMarketBreadthSnapshot MarketBreadth { get; init; } = new(0, 0, 0, 0m);
 		public int LimitUpCount { get; init; }
 		public int LimitDownCount { get; init; }
@@ -187,26 +232,51 @@ public sealed class SectorRotationIngestionServiceTests
 
 		public Task<EastmoneyMarketBreadthSnapshot> GetMarketBreadthAsync(int take, CancellationToken cancellationToken = default)
 		{
+			if (ThrowMarketBreadth)
+			{
+				throw new HttpRequestException("boom-market-breadth");
+			}
+
 			return Task.FromResult(MarketBreadth);
 		}
 
 		public Task<int> GetLimitUpCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default)
 		{
+			if (ThrowLimitUpCount)
+			{
+				throw new HttpRequestException("boom-limit-up");
+			}
+
 			return Task.FromResult(LimitUpCount);
 		}
 
 		public Task<int> GetLimitDownCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default)
 		{
+			if (ThrowLimitDownCount)
+			{
+				throw new HttpRequestException("boom-limit-down");
+			}
+
 			return Task.FromResult(LimitDownCount);
 		}
 
 		public Task<int> GetBrokenBoardCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default)
 		{
+			if (ThrowBrokenBoardCount)
+			{
+				throw new HttpRequestException("boom-broken-board");
+			}
+
 			return Task.FromResult(BrokenBoardCount);
 		}
 
 		public Task<int> GetMaxLimitUpStreakAsync(DateOnly tradingDate, CancellationToken cancellationToken = default)
 		{
+			if (ThrowMaxLimitUpStreak)
+			{
+				throw new HttpRequestException("boom-max-streak");
+			}
+
 			return Task.FromResult(MaxLimitUpStreak);
 		}
 	}

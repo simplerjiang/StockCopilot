@@ -183,14 +183,20 @@ export const resolveMinuteTrend = (records, basePrice) => {
 }
 
 const buildMinuteAreaStyle = (visibility, minuteTrend) => {
+  const lineColor = visibility.price === false
+    ? 'rgba(148, 163, 184, 0)'
+    : CHART_COLORS[minuteTrend] ?? CHART_COLORS.flat
+  const topColor = visibility.price === false ? 'rgba(148, 163, 184, 0)' : withOpacity(lineColor, 0.18)
+  const bottomColor = visibility.price === false ? 'rgba(148, 163, 184, 0)' : withOpacity(lineColor, 0.04)
+
   return {
     lineSize: 2,
-    lineColor: 'rgba(148, 163, 184, 0)',
+    lineColor,
     value: 'close',
     smooth: true,
     backgroundColor: [
-      { offset: 0, color: 'rgba(148, 163, 184, 0)' },
-      { offset: 1, color: 'rgba(148, 163, 184, 0)' }
+      { offset: 0, color: topColor },
+      { offset: 1, color: bottomColor }
     ],
     point: {
       show: false
@@ -276,7 +282,7 @@ const buildChartStyles = (viewType, visibility = {}, options = {}) => ({
     axisLine: { show: false, color: 'transparent' },
     tickLine: { show: false, color: 'transparent' },
     tickText: {
-      color: viewType === 'minute' ? 'rgba(148, 163, 184, 0)' : '#94a3b8',
+      color: '#94a3b8',
       size: 11,
       weight: 400
     }

@@ -36,6 +36,33 @@ public class StockHistoryServiceTests
     }
 
     [Fact]
+    public async Task RecordAsync_ShouldInsertAndNormalizeSymbol()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var dbContext = new AppDbContext(options);
+        var service = new StockHistoryService(dbContext, new FakeStockDataService());
+
+        var stored = await service.RecordAsync(new StockHistoryRecordRequestDto(
+            "600519",
+            "贵州茅台",
+            1234m,
+            1.8m,
+            2.1m,
+            30m,
+            1250m,
+            1200m,
+            0.5m));
+
+        Assert.Equal("sh600519", stored.Symbol);
+        Assert.Equal("贵州茅台", stored.Name);
+        Assert.Equal(1234m, stored.Price);
+        Assert.Single(dbContext.StockQueryHistories);
+    }
+
+    [Fact]
     public async Task RefreshAsync_ShouldUpdateHistoryFromDataService()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

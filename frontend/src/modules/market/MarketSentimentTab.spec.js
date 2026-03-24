@@ -270,4 +270,127 @@ describe('MarketSentimentTab', () => {
     expect(wrapper.text()).toContain('实时总览暂不可用')
     expect(wrapper.text()).toContain('实时板块榜暂不可用')
   })
+
+  it('keeps strength ordering stable when realtime board rank differs', async () => {
+    const fetchMock = vi.fn(async input => {
+      const url = String(input)
+      if (url === '/api/market/sentiment/latest') {
+        return makeResponse({ json: async () => ({ stageLabel: '混沌', snapshotTime: '2026-03-15T06:35:00Z' }) })
+      }
+      if (url === '/api/market/sentiment/history?days=10') {
+        return makeResponse({ json: async () => ([]) })
+      }
+      if (url === '/api/market/realtime/overview') {
+        return makeResponse({ json: async () => ({ snapshotTime: '2026-03-15T06:35:00Z', indices: [], breadth: { buckets: [] } }) })
+      }
+      if (url.includes('/api/market/sectors?boardType=concept')) {
+        return makeResponse({
+          json: async () => ({
+            total: 2,
+            items: [
+              { boardType: 'concept', sectorCode: 'BK1', sectorName: '强度优先A', strengthScore: 90, rankNo: 9, changePercent: 3.2, mainNetInflow: 20, newsHotCount: 2, leaderName: '龙头A', advancerCount: 10 },
+              { boardType: 'concept', sectorCode: 'BK2', sectorName: '强度优先B', strengthScore: 70, rankNo: 1, changePercent: 4.8, mainNetInflow: 50, newsHotCount: 2, leaderName: '龙头B', advancerCount: 10 }
+            ]
+          })
+        })
+      }
+      if (url.includes('/api/market/sectors/realtime?boardType=concept')) {
+        return makeResponse({
+          json: async () => ({
+            items: [
+              { boardType: 'concept', sectorCode: 'BK1', sectorName: '强度优先A', rankNo: 9, changePercent: 3.2, mainNetInflow: 20 },
+              { boardType: 'concept', sectorCode: 'BK2', sectorName: '强度优先B', rankNo: 1, changePercent: 4.8, mainNetInflow: 50 }
+            ]
+          })
+        })
+      }
+      if (url.includes('/api/market/sectors/BK1?')) {
+        return makeResponse({ json: async () => ({ snapshot: { boardType: 'concept', sectorCode: 'BK1', sectorName: '强度优先A' }, history: [], leaders: [], news: [] }) })
+      }
+      if (url.includes('/api/market/sectors/BK2?')) {
+        return makeResponse({ json: async () => ({ snapshot: { boardType: 'concept', sectorCode: 'BK2', sectorName: '强度优先B' }, history: [], leaders: [], news: [] }) })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MarketSentimentTab)
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    const cards = wrapper.findAll('.sector-card')
+    expect(cards[0].text()).toContain('强度优先A')
+    expect(cards[0].text()).toContain('东财#9')
+    expect(cards[1].text()).toContain('强度优先B')
+  })
+
+  it('falls back to realtime breadth and marks sparse snapshots honestly', async () => {
+    const fetchMock = vi.fn(async input => {
+      const url = String(input)
+      if (url === '/api/market/sentiment/latest') {
+        return makeResponse({
+          json: async () => ({
+            snapshotTime: '2026-03-15T06:35:00Z',
+            sessionPhase: '盘后',
+            stageLabel: '混沌',
+            stageScore: 43.8,
+            stageConfidence: 57,
+            limitUpCount: 0,
+            limitDownCount: 0,
+            advancers: 0,
+            decliners: 0,
+            flatCount: 0,
+            top3SectorTurnoverShare: 0,
+            top10SectorTurnoverShare: 0,
+            diffusionScore: 50,
+            continuationScore: 50,
+            brokenBoardRate: 0,
+            brokenBoardCount: 0,
+            maxLimitUpStreak: 0,
+            limitUpCount5dAvg: 0,
+            brokenBoardRate5dAvg: 0,
+            top3SectorTurnoverShare5dAvg: 0,
+            top10SectorTurnoverShare5dAvg: 0
+          })
+        })
+      }
+      if (url === '/api/market/sentiment/history?days=10') {
+        return makeResponse({ json: async () => ([]) })
+      }
+      if (url === '/api/market/realtime/overview') {
+        return makeResponse({
+          json: async () => ({
+            snapshotTime: '2026-03-15T06:35:00Z',
+            indices: [],
+            mainCapitalFlow: { snapshotTime: '2026-03-15T06:35:00Z', mainNetInflow: 20, superLargeOrderNetInflow: 10 },
+            northboundFlow: { snapshotTime: '2026-03-15T06:35:00Z', totalNetInflow: 3, shanghaiNetInflow: 2, shenzhenNetInflow: 1 },
+            breadth: { tradingDate: '2026-03-15T00:00:00Z', advancers: 4992, decliners: 299, flatCount: 15, limitUpCount: 153, limitDownCount: 3, buckets: [{ label: '涨停', count: 83 }] }
+          })
+        })
+      }
+      if (url.includes('/api/market/sectors?boardType=concept')) {
+        return makeResponse({ json: async () => ({ total: 1, items: [{ boardType: 'concept', sectorCode: 'BK1', sectorName: '快照有限板块', rankNo: 20, strengthScore: 57, changePercent: 4.42, mainNetInflow: -10, newsHotCount: 0, advancerCount: 0, declinerCount: 0, flatMemberCount: 0, limitUpMemberCount: 0, leaderName: '', leaderSymbol: '' }] }) })
+      }
+      if (url.includes('/api/market/sectors/realtime?boardType=concept')) {
+        return makeResponse({ json: async () => ({ items: [{ boardType: 'concept', sectorCode: 'BK1', sectorName: '快照有限板块', rankNo: 20, changePercent: 4.42, mainNetInflow: -10 }] }) })
+      }
+      if (url.includes('/api/market/sectors/BK1?')) {
+        return makeResponse({ json: async () => ({ snapshot: { boardType: 'concept', sectorCode: 'BK1', sectorName: '快照有限板块', changePercent: 4.42, advancerCount: 0, declinerCount: 0, flatMemberCount: 0, limitUpMemberCount: 0, leaderSymbol: '' }, history: [], leaders: [], news: [] }) })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(MarketSentimentTab)
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('153 / 3')
+    expect(wrapper.text()).toContain('4992 / 299 / 平盘 15')
+    expect(wrapper.text()).toContain('待同步')
+    expect(wrapper.text()).toContain('快照有限')
+    expect(wrapper.text()).toContain('当前板块只有涨幅快照')
+  })
 })

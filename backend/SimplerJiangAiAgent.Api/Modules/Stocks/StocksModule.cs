@@ -53,6 +53,7 @@ public sealed class StocksModule : IModule
         services.AddScoped<IStockAgentReplayCalibrationService, StockAgentReplayCalibrationService>();
         services.AddScoped<IStockCopilotMcpService, StockCopilotMcpService>();
         services.AddScoped<IStockCopilotSessionService, StockCopilotSessionService>();
+        services.AddScoped<IStockCopilotAcceptanceService, StockCopilotAcceptanceService>();
         services.AddScoped<ITradingPlanDraftService, TradingPlanDraftService>();
         services.AddScoped<ITradingPlanService, TradingPlanService>();
         services.AddScoped<IStockMarketContextService, StockMarketContextService>();
@@ -656,7 +657,7 @@ public sealed class StocksModule : IModule
             var normalized = StockSymbolNormalizer.Normalize(symbol);
             var list = await historyService.GetListAsync(normalized);
             var result = list
-                .Select(item => new StockAgentHistoryItemDto(item.Id, item.Symbol, item.Name, item.Summary, item.CreatedAt))
+                .Select(MapStockAgentHistoryItemDto)
                 .ToArray();
             return Results.Ok(result);
         })
@@ -671,13 +672,16 @@ public sealed class StocksModule : IModule
                 return Results.NotFound();
             }
 
+            var validation = ValidateStockAgentHistory(item.ResultJson);
             var result = new StockAgentHistoryDetailDto(
                 item.Id,
                 item.Symbol,
                 item.Name,
                 item.Summary,
                 item.CreatedAt,
-                JsonDocument.Parse(item.ResultJson).RootElement.Clone());
+                JsonDocument.Parse(item.ResultJson).RootElement.Clone(),
+                validation.IsCommanderComplete,
+                validation.BlockedReason);
             return Results.Ok(result);
         })
         .WithName("GetStockAgentHistoryDetail")
@@ -688,6 +692,12 @@ public sealed class StocksModule : IModule
             if (string.IsNullOrWhiteSpace(request.Symbol))
             {
                 return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var validation = StockAgentHistoryValidation.Validate(request.Result);
+            if (!validation.IsCommanderComplete)
+            {
+                return Results.BadRequest(new { message = $"多Agent 分析尚未完成：{validation.BlockedReason}" });
             }
 
             var normalized = StockSymbolNormalizer.Normalize(request.Symbol);
@@ -707,7 +717,7 @@ public sealed class StocksModule : IModule
             };
 
             var saved = await historyService.AddAsync(entry);
-            return Results.Ok(new StockAgentHistoryItemDto(saved.Id, saved.Symbol, saved.Name, saved.Summary, saved.CreatedAt));
+            return Results.Ok(MapStockAgentHistoryItemDto(saved));
         })
         .WithName("CreateStockAgentHistory")
         .WithOpenApi();
@@ -867,6 +877,19 @@ public sealed class StocksModule : IModule
         .WithName("GetStockHistory")
         .WithOpenApi();
 
+        group.MapPost("/history", async (StockHistoryRecordRequestDto request, IStockHistoryService historyService) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            var item = await historyService.RecordAsync(request);
+            return Results.Ok(item);
+        })
+        .WithName("RecordStockHistory")
+        .WithOpenApi();
+
         // 刷新历史记录行情
         group.MapPost("/history/refresh", async (string? source, IStockHistoryService historyService) =>
         {
@@ -924,6 +947,31 @@ public sealed class StocksModule : IModule
             }
         })
         .WithName("BuildStockCopilotDraftTurn")
+        .WithOpenApi();
+
+        group.MapPost("/copilot/acceptance/baseline", async (StockCopilotAcceptanceBaselineRequestDto request, IStockCopilotAcceptanceService acceptanceService) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            if (request.Turn is null)
+            {
+                return Results.BadRequest(new { message = "turn 不能为空" });
+            }
+
+            try
+            {
+                var result = await acceptanceService.BuildBaselineAsync(request);
+                return Results.Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        })
+        .WithName("BuildStockCopilotAcceptanceBaseline")
         .WithOpenApi();
 
         group.MapPost("/chat/sessions", async (StockChatSessionCreateDto request, IStockChatHistoryService chatHistoryService) =>
@@ -1068,6 +1116,51 @@ public sealed class StocksModule : IModule
         }
 
         return null;
+    }
+
+    private static StockAgentHistoryItemDto MapStockAgentHistoryItemDto(Data.Entities.StockAgentAnalysisHistory item)
+    {
+        var validation = ValidateStockAgentHistory(item.ResultJson);
+        return new StockAgentHistoryItemDto(
+            item.Id,
+            item.Symbol,
+            item.Name,
+            item.Summary,
+            item.CreatedAt,
+            validation.IsCommanderComplete,
+            validation.BlockedReason);
+    }
+
+    private static StockAgentHistoryValidationResult ValidateStockAgentHistory(string resultJson)
+    {
+        if (string.IsNullOrWhiteSpace(resultJson))
+        {
+            return new StockAgentHistoryValidationResult(
+                false,
+                false,
+                false,
+                false,
+                new[] { "commander" },
+                Array.Empty<string>(),
+                "历史结果为空。");
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(resultJson);
+            return StockAgentHistoryValidation.Validate(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            return new StockAgentHistoryValidationResult(
+                false,
+                false,
+                false,
+                false,
+                new[] { "commander" },
+                Array.Empty<string>(),
+                "历史结果 JSON 无法解析。");
+        }
     }
 
     private static TradingPlanItemDto MapTradingPlanDto(Data.Entities.TradingPlan item, bool? watchlistEnsured = null, StockMarketContextDto? currentMarketContext = null)

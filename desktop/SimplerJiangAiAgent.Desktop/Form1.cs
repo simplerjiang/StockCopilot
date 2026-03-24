@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace SimplerJiangAiAgent.Desktop;
@@ -9,10 +10,12 @@ namespace SimplerJiangAiAgent.Desktop;
 public partial class Form1 : Form
 {
     private const int PreferredBackendPort = 5119;
-    private const int BackendHealthFailureThreshold = 2;
+    private const int BackendHealthFailureThreshold = 3;
     private static readonly TimeSpan BackendStartupTimeout = TimeSpan.FromSeconds(90);
-    private static readonly TimeSpan BackendHealthProbeInterval = TimeSpan.FromSeconds(2);
-    private static readonly HttpClient HealthClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private static readonly TimeSpan BackendHealthProbeInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan BackendHealthProbeTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan BackendHealthRecoveryGracePeriod = TimeSpan.FromSeconds(20);
+    private static readonly HttpClient HealthClient = new() { Timeout = BackendHealthProbeTimeout };
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly WebView2 _webView;
     private readonly System.Windows.Forms.Timer _backendHealthTimer;
@@ -24,8 +27,11 @@ public partial class Form1 : Form
     private bool _ownsBackendProcess;
     private bool _backendReady;
     private bool _isRecoveringBackend;
+    private bool _isCheckingBackendHealth;
     private bool _isClosing;
     private int _backendConsecutiveHealthFailures;
+    private DateTime _lastBackendHealthyAtUtc = DateTime.MinValue;
+    private DateTime _lastBackendLaunchAtUtc = DateTime.MinValue;
 #if DEBUG
     private readonly TextBox _debugTextBox;
     private readonly Button _debugButton;
@@ -100,7 +106,7 @@ public partial class Form1 : Form
                 AppendDebug($"页面加载失败: {args.WebErrorStatus}");
                 if (_ownsBackendProcess && !_isClosing)
                 {
-                    _ = RecoverBackendAsync($"页面导航失败: {args.WebErrorStatus}");
+                    _ = HandleNavigationFailureAsync(args.WebErrorStatus);
                 }
             };
 #if DEBUG
@@ -136,6 +142,7 @@ public partial class Form1 : Form
         {
             _ownsBackendProcess = false;
             _backendReady = true;
+            _lastBackendHealthyAtUtc = DateTime.UtcNow;
             AppendDebug($"复用已运行后端: {existingUrl}");
             return existingUrl;
         }
@@ -204,25 +211,47 @@ public partial class Form1 : Form
 
     private async void OnBackendHealthTimerTickAsync(object? sender, EventArgs e)
     {
-        if (_isClosing || _isRecoveringBackend || !_ownsBackendProcess || !_backendReady || string.IsNullOrWhiteSpace(_backendBaseUrl))
+        if (_isClosing || _isRecoveringBackend || _isCheckingBackendHealth || !_ownsBackendProcess || !_backendReady || string.IsNullOrWhiteSpace(_backendBaseUrl))
         {
             return;
         }
 
-        if (await IsHealthyAsync(_backendBaseUrl))
+        _isCheckingBackendHealth = true;
+        try
         {
-            _backendConsecutiveHealthFailures = 0;
-            return;
-        }
+            if (await IsHealthyAsync(_backendBaseUrl))
+            {
+                _backendConsecutiveHealthFailures = 0;
+                _lastBackendHealthyAtUtc = DateTime.UtcNow;
+                return;
+            }
 
-        _backendConsecutiveHealthFailures += 1;
-        AppendDebug($"后端健康检查失败，第 {_backendConsecutiveHealthFailures} 次。地址: {_backendBaseUrl}");
-        if (_backendConsecutiveHealthFailures < BackendHealthFailureThreshold)
+            _backendConsecutiveHealthFailures += 1;
+            var unhealthySince = _lastBackendHealthyAtUtc == DateTime.MinValue
+                ? _lastBackendLaunchAtUtc
+                : _lastBackendHealthyAtUtc;
+            var unhealthyDuration = unhealthySince == DateTime.MinValue
+                ? TimeSpan.Zero
+                : DateTime.UtcNow - unhealthySince;
+
+            AppendDebug($"后端健康检查失败，第 {_backendConsecutiveHealthFailures} 次。地址: {_backendBaseUrl}，持续失联约 {Math.Max(0, unhealthyDuration.TotalSeconds):0.#} 秒。");
+            if (_backendConsecutiveHealthFailures < BackendHealthFailureThreshold)
+            {
+                return;
+            }
+
+            if (unhealthyDuration < BackendHealthRecoveryGracePeriod)
+            {
+                AppendDebug($"后端仍在短时抖动观察窗口内（<{BackendHealthRecoveryGracePeriod.TotalSeconds:0} 秒），本次不触发自动恢复。");
+                return;
+            }
+
+            await RecoverBackendAsync("健康检查持续失败");
+        }
+        finally
         {
-            return;
+            _isCheckingBackendHealth = false;
         }
-
-        await RecoverBackendAsync("健康检查连续失败");
     }
 
     private async Task RecoverBackendAsync(string reason)
@@ -276,6 +305,8 @@ public partial class Form1 : Form
         _backendProcess = process;
         _ownsBackendProcess = true;
         _backendConsecutiveHealthFailures = 0;
+    _lastBackendLaunchAtUtc = DateTime.UtcNow;
+    _lastBackendHealthyAtUtc = DateTime.MinValue;
         AttachBackendProcessDiagnostics(process, dataRoot);
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
@@ -289,6 +320,23 @@ public partial class Form1 : Form
         }
 
         _backendReady = true;
+        _lastBackendHealthyAtUtc = DateTime.UtcNow;
+    }
+
+    private async Task HandleNavigationFailureAsync(CoreWebView2WebErrorStatus webErrorStatus)
+    {
+        if (_isClosing || !_ownsBackendProcess || string.IsNullOrWhiteSpace(_backendBaseUrl))
+        {
+            return;
+        }
+
+        if (await IsHealthyAsync(_backendBaseUrl))
+        {
+            AppendDebug($"页面导航失败，但后端健康检查仍通过，本次不触发自动恢复。原因: {webErrorStatus}");
+            return;
+        }
+
+        await RecoverBackendAsync($"页面导航失败: {webErrorStatus}");
     }
 
     private static Process CreateBackendProcess(BackendLaunchCommand launchCommand, string baseUrl, string dataRoot)
@@ -395,8 +443,9 @@ public partial class Form1 : Form
         var process = _backendProcess;
         _backendProcess = null;
         _backendReady = false;
+        _ownsBackendProcess = false;
 
-        if (!_ownsBackendProcess || process is null)
+        if (process is null)
         {
             return;
         }

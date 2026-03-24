@@ -11,6 +11,141 @@ namespace SimplerJiangAiAgent.Api.Tests;
 public sealed class SectorRotationQueryServiceTests
 {
     [Fact]
+    public async Task GetLatestSummaryAsync_PrefersLatestUsableSnapshotOverNewerBrokenRow()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.MarketSentimentSnapshots.AddRange(
+            new MarketSentimentSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 15),
+                SnapshotTime = new DateTime(2026, 3, 15, 6, 35, 0, DateTimeKind.Utc),
+                SessionPhase = "盘中",
+                StageLabel = "主升",
+                StageScore = 78.6m,
+                MaxLimitUpStreak = 5,
+                LimitUpCount = 153,
+                LimitDownCount = 3,
+                BrokenBoardCount = 21,
+                BrokenBoardRate = 13.7m,
+                Advancers = 4992,
+                Decliners = 299,
+                FlatCount = 15,
+                TotalTurnover = 18234m,
+                Top3SectorTurnoverShare = 26.4m,
+                Top10SectorTurnoverShare = 58.8m,
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            },
+            new MarketSentimentSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 15),
+                SnapshotTime = new DateTime(2026, 3, 15, 6, 36, 0, DateTimeKind.Utc),
+                SessionPhase = "盘中",
+                StageLabel = "主升",
+                StageScore = 77.2m,
+                MaxLimitUpStreak = 0,
+                LimitUpCount = 0,
+                LimitDownCount = 1,
+                BrokenBoardCount = 0,
+                BrokenBoardRate = 0m,
+                Advancers = 0,
+                Decliners = 0,
+                FlatCount = 0,
+                TotalTurnover = 0m,
+                Top3SectorTurnoverShare = 0m,
+                Top10SectorTurnoverShare = 0m,
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new SectorRotationQueryService(dbContext, Options.Create(new SectorRotationOptions()));
+
+        var result = await service.GetLatestSummaryAsync();
+
+        Assert.NotNull(result);
+        Assert.Equal(153, result!.LimitUpCount);
+        Assert.Equal(4992, result.Advancers);
+        Assert.Equal(26.4m, result.Top3SectorTurnoverShare);
+        Assert.Equal(new DateTime(2026, 3, 15, 6, 35, 0, DateTimeKind.Utc), result.SnapshotTime);
+    }
+
+    [Fact]
+    public async Task GetHistoryAsync_PrefersUsableDailySnapshotWhenLatestRowIsBroken()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.MarketSentimentSnapshots.AddRange(
+            new MarketSentimentSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 14),
+                SnapshotTime = new DateTime(2026, 3, 14, 6, 35, 0, DateTimeKind.Utc),
+                SessionPhase = "盘后",
+                StageLabel = "分歧",
+                StageScore = 55m,
+                LimitUpCount = 88,
+                LimitDownCount = 6,
+                BrokenBoardCount = 18,
+                Advancers = 3120,
+                Decliners = 1800,
+                FlatCount = 120,
+                TotalTurnover = 13500m,
+                Top3SectorTurnoverShare = 24.8m,
+                Top10SectorTurnoverShare = 54.3m,
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            },
+            new MarketSentimentSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 15),
+                SnapshotTime = new DateTime(2026, 3, 15, 6, 35, 0, DateTimeKind.Utc),
+                SessionPhase = "盘中",
+                StageLabel = "主升",
+                StageScore = 78.6m,
+                LimitUpCount = 153,
+                LimitDownCount = 3,
+                BrokenBoardCount = 21,
+                Advancers = 4992,
+                Decliners = 299,
+                FlatCount = 15,
+                TotalTurnover = 18234m,
+                Top3SectorTurnoverShare = 26.4m,
+                Top10SectorTurnoverShare = 58.8m,
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            },
+            new MarketSentimentSnapshot
+            {
+                TradingDate = new DateTime(2026, 3, 15),
+                SnapshotTime = new DateTime(2026, 3, 15, 6, 36, 0, DateTimeKind.Utc),
+                SessionPhase = "盘中",
+                StageLabel = "主升",
+                StageScore = 77.2m,
+                LimitUpCount = 0,
+                LimitDownCount = 1,
+                BrokenBoardCount = 0,
+                Advancers = 0,
+                Decliners = 0,
+                FlatCount = 0,
+                TotalTurnover = 0m,
+                Top3SectorTurnoverShare = 0m,
+                Top10SectorTurnoverShare = 0m,
+                SourceTag = "test",
+                CreatedAt = DateTime.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new SectorRotationQueryService(dbContext, Options.Create(new SectorRotationOptions()));
+
+        var result = await service.GetHistoryAsync(10);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(new DateTime(2026, 3, 15), result[1].TradingDate);
+        Assert.Equal(153, result[1].LimitUpCount);
+        Assert.Equal(3, result[1].LimitDownCount);
+        Assert.Equal(21, result[1].BrokenBoardCount);
+    }
+
+    [Fact]
     public async Task GetSectorPageAsync_UsesLatestSnapshotAndRequestedSort()
     {
         await using var dbContext = CreateDbContext();
