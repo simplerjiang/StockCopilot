@@ -1,0 +1,55 @@
+# MANUAL-20260325-STOCKINFOTAB-READABILITY-DEV
+
+## English
+- Scope: reduce the readability burden of the oversized StockInfoTab frontend test file, finish the split into focused suites, and add a repository rule to keep files under roughly 1000 lines whenever practical.
+- Actions completed:
+  - Added a stricter file-size rule to `AGENTS.md` and `.github/copilot-instructions.md`.
+  - Extracted shared StockInfoTab test helpers and mock builders into `frontend/src/modules/stocks/stockInfoTabTestUtils.js`.
+  - Replaced the monolithic `frontend/src/modules/stocks/StockInfoTab.spec.js` with 7 themed suites backed by focused `.cases.js` files:
+    - `StockInfoTab.layout-chat.*`
+    - `StockInfoTab.copilot.*`
+    - `StockInfoTab.news-history.*`
+    - `StockInfoTab.quote-chart.*`
+    - `StockInfoTab.switching.*`
+    - `StockInfoTab.panel-ui.*`
+    - `StockInfoTab.trading-plan.*`
+  - Added `frontend/scripts/run-vitest.mjs` and switched `frontend/package.json` to use it for `test:unit`.
+  - Diagnosed the Vitest blocker as a Windows drive-letter casing issue: runs launched from a lower-cased `d:\...` path failed collection, while normalized `D:\...` runs succeeded.
+  - Fixed the last chat-session test assumptions so new-session creation and same-symbol session switching wait for the actual async UI state.
+- Validation commands:
+  - `npm run test:unit -- src/modules/stocks/StockCharts.spec.js`
+  - `npm run test:unit -- src/modules/stocks/StockInfoTab.layout-chat.spec.js src/modules/stocks/StockInfoTab.copilot.spec.js src/modules/stocks/StockInfoTab.news-history.spec.js src/modules/stocks/StockInfoTab.quote-chart.spec.js src/modules/stocks/StockInfoTab.switching.spec.js src/modules/stocks/StockInfoTab.panel-ui.spec.js src/modules/stocks/StockInfoTab.trading-plan.spec.js`
+- Validation results:
+  - `StockCharts.spec.js`: passed, 23/23.
+  - Split StockInfoTab suites: passed, 63/63 across 7 files.
+  - Windows package chain: passed, `.\scripts\publish-windows-package.ps1` produced `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe`.
+- Notes:
+  - The themed spec wrappers are now tiny entry files, and each focused case file stays well under the 1000-line guideline.
+  - The Vitest launcher workaround is intentionally repo-local so future Windows runs do not depend on the shell's current drive-letter casing.
+
+## 中文
+- 范围：降低超大 StockInfoTab 前端测试文件的阅读负担，完成按主题拆分，并补充仓库规范，要求单文件在可行时尽量控制在约 1000 行以内。
+- 已完成动作：
+  - 在 `AGENTS.md` 与 `.github/copilot-instructions.md` 中补充了更严格的单文件长度规则。
+  - 将 StockInfoTab 测试里公共的 helper、mock 构造器抽到了 `frontend/src/modules/stocks/stockInfoTabTestUtils.js`。
+  - 删除了单体 `frontend/src/modules/stocks/StockInfoTab.spec.js`，改成 7 组按主题拆分的 suite，并由对应 `.cases.js` 承载具体用例：
+    - `StockInfoTab.layout-chat.*`
+    - `StockInfoTab.copilot.*`
+    - `StockInfoTab.news-history.*`
+    - `StockInfoTab.quote-chart.*`
+    - `StockInfoTab.switching.*`
+    - `StockInfoTab.panel-ui.*`
+    - `StockInfoTab.trading-plan.*`
+  - 新增 `frontend/scripts/run-vitest.mjs`，并把 `frontend/package.json` 的 `test:unit` 切到这个启动器。
+  - 最终定位出 Vitest 阻塞根因是 Windows 盘符大小写问题：从小写 `d:\...` 启动会导致收集失败，规范到 `D:\...` 后即可正常运行。
+  - 修正了最后两个聊天 session 相关用例，让“新建会话”和“同标的切换历史会话”都等待真实的异步 UI 状态完成。
+- 验证命令：
+  - `npm run test:unit -- src/modules/stocks/StockCharts.spec.js`
+  - `npm run test:unit -- src/modules/stocks/StockInfoTab.layout-chat.spec.js src/modules/stocks/StockInfoTab.copilot.spec.js src/modules/stocks/StockInfoTab.news-history.spec.js src/modules/stocks/StockInfoTab.quote-chart.spec.js src/modules/stocks/StockInfoTab.switching.spec.js src/modules/stocks/StockInfoTab.panel-ui.spec.js src/modules/stocks/StockInfoTab.trading-plan.spec.js`
+- 验证结果：
+  - `StockCharts.spec.js`：通过，23/23。
+  - 拆分后的 StockInfoTab 7 组 suite：通过，63/63。
+  - Windows 打包链：通过，`.\scripts\publish-windows-package.ps1` 成功产出 `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe`。
+- 说明：
+  - 现在的 themed spec wrapper 已经是很小的入口文件，各主题 `.cases.js` 也都控制在 1000 行规则之内。
+  - Vitest 启动器修复是仓库内的本地兜底，后续在 Windows 上运行时不再依赖当前 shell 的盘符大小写状态。

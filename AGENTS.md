@@ -3,7 +3,7 @@
 ## Scope
 - This repository is split frontend/backend/desktop.
 - Follow existing project conventions and keep changes minimal and reviewable.
-- Keep single files reasonably sized; when a file starts getting too long and behavior can stay unchanged, prefer splitting code into focused components, modules, or imports instead of continuing to grow one file.
+- Keep single files reasonably sized; target under 1000 lines per file whenever practical. When a file starts getting too long and behavior can stay unchanged, prefer splitting code into focused components, modules, or imports instead of continuing to grow one file. Only exceed that limit when the file cannot be split cleanly.
 
 ## Mandatory Workflow
 1. Analyze task scope first; avoid speculative refactors.

@@ -317,18 +317,18 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "修复 `Evidence / Source` 摘要噪音。优先使用结构化 `summary/excerpt/readStatus`，过滤站点导航、页头页脚和抓取残留，默认呈现 1-2 句可读摘要，并保留全文展开入口。需要覆盖 Bug 10。2026-03-24 已完成开发与测试：`LocalFactDisplayPolicy` 新增可复用的 evidence snippet 清洗逻辑，过滤 `财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金` 一类导航噪音，并从 `summary/excerpt/title` 中优先抽取可读片段；`StockCopilotMcpService` 已把本地新闻与外部搜索 evidence 的 `Excerpt/Summary` 统一切到清洗后的摘要；`StockCopilotSessionPanel.vue` 同步增加前端兜底清洗与 `snippet` 渲染，避免旧脏数据直接显示在用户面板。验证包括后端定向测试 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"StockCopilotMcpServiceTests\"` 5/5 通过，以及前端定向测试 `npm --prefix .\\frontend run test:unit -- .\\src\\modules\\stocks\\StockInfoTab.spec.js` 61/61 通过；新增回归分别锁定“导航噪音进入 DTO 前被清理”与“Evidence 面板只展示 clean summary 不展示导航脏文本”。"
+      "notes": "修复 `Evidence / Source` 摘要噪音。优先使用结构化 `summary/excerpt/readStatus`，过滤站点导航、页头页脚和抓取残留，默认呈现 1-2 句可读摘要，并保留全文展开入口。需要覆盖 Bug 10。2026-03-24 已完成开发与测试：`LocalFactDisplayPolicy` 新增可复用的 evidence snippet 清洗逻辑，过滤 `财经 焦点 股票 新股 期指 期权 行情 数据 全球 美股 港股 基金` 一类导航噪音，并从 `summary/excerpt/title` 中优先抽取可读片段；`StockCopilotMcpService` 已把本地新闻与外部搜索 evidence 的 `Excerpt/Summary` 统一切到清洗后的摘要；`StockCopilotSessionPanel.vue` 同步增加前端兜底清洗与 `snippet` 渲染，避免旧脏数据直接显示在用户面板。验证包括后端定向测试 `dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"StockCopilotMcpServiceTests\"` 5/5 通过，以及前端定向测试 `npm --prefix .\\frontend run test:unit -- .\\src\\modules\\stocks\\StockInfoTab.spec.js` 61/61 通过；新增回归分别锁定“导航噪音进入 DTO 前被清理”与“Evidence 面板只展示 clean summary 不展示导航脏文本”。2026-03-25 follow-up：继续把前端 evidence 契约补到可展开层，`StockCopilotSessionPanel.vue` 现已支持默认只显示 clean snippet，按需 `展开查看更多` 后显示更完整的清洗后 detail 文本，并保留 `查看原文` 链接与 `publishedAt/readMode/readStatus` 元数据。验证包括 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 64/64 通过，以及 `npm --prefix .\\frontend run build` 成功。"
     },
     {
       "id": "GOAL-AGENT-002-R5-D",
       "title": "Chat-first Copilot main view",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "前端主切片。将 `StockCopilotSessionPanel.vue` 从卡片墙重排为聊天工作台：用户消息、状态头、结构化思维摘要、MCP 紧凑轨迹、证据摘要、最终回答、下一步动作，按 turn group 串成单一叙事流。"
+      "notes": "前端主切片。将 `StockCopilotSessionPanel.vue` 从卡片墙重排为聊天工作台：用户消息、状态头、结构化思维摘要、MCP 紧凑轨迹、证据摘要、最终回答、下一步动作，按 turn group 串成单一叙事流。2026-03-25 已完成开发与验证：`StockCopilotSessionPanel.vue` 现已重排为 user message + assistant turn group 结构，planner/governor/plan step 被收口为结构化思路摘要，工具执行改为消息内紧凑 MCP 时间线，evidence / final answer / actions 均挂在同一条 assistant 回复下；同时新增次级详情区承接计划时间线、acceptance baseline 与 replay baseline，默认主界面不再是独立卡片墙。前端回归 `npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.spec.js` 64/64 通过，前端 build `npm --prefix .\\frontend run build` 通过；Browser / runtime 侧已重新执行 `start-all.bat` 并确认 packaged runtime 成功启动，`Test-NetConnection localhost -Port 5119 | Select-Object -ExpandProperty TcpTestSucceeded` 返回 True，浏览器工具可打开 `http://localhost:5119/?tab=stock-info`，但当前 VS Code 会话未开放 page-content chat tools，且 console 池混有大量历史 `ERR_CONNECTION_REFUSED`，因此本轮浏览器证据以运行态可达性 smoke 为主。"
     },
     {
       "id": "GOAL-AGENT-002-R5-E",
