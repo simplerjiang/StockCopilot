@@ -208,6 +208,7 @@ public sealed record StockCopilotToolResultDto(
     int FeatureCount,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> DegradedFlags,
+    IReadOnlyList<StockCopilotMcpEvidenceDto> Evidence,
     string Summary);
 
 public sealed record StockCopilotFinalAnswerDto(

@@ -30,8 +30,8 @@ public sealed class StockCopilotAcceptanceServiceTests
             },
             ToolResults: new[]
             {
-                new StockCopilotToolResultDto("call-kline", "StockKlineMcp", "completed", "trace-kline", 2, 1, Array.Empty<string>(), Array.Empty<string>(), "kline ok"),
-                new StockCopilotToolResultDto("call-news", "StockNewsMcp", "completed", "trace-news", 1, 1, new[] { "stale_cache" }, new[] { "market_context_stale" }, "news ok")
+                new StockCopilotToolResultDto("call-kline", "StockKlineMcp", "completed", "trace-kline", 2, 1, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<StockCopilotMcpEvidenceDto>(), "kline ok"),
+                new StockCopilotToolResultDto("call-news", "StockNewsMcp", "completed", "trace-news", 1, 1, new[] { "stale_cache" }, new[] { "market_context_stale" }, Array.Empty<StockCopilotMcpEvidenceDto>(), "news ok")
             },
             FinalAnswer: new StockCopilotFinalAnswerDto("completed", "grounded", "tool_results", 0.78m, false, new[] { "only facts from tool results" }),
             FollowUpActions: new[]

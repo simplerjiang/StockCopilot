@@ -612,6 +612,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 envelope.Features.Count,
                 envelope.Warnings,
                 envelope.DegradedFlags,
+                envelope.Evidence,
                 summary),
             new ToolExecutionSnapshot(
                 proposal.CallId,
@@ -642,6 +643,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
                 0,
                 [message],
                 Array.Empty<string>(),
+                Array.Empty<StockCopilotMcpEvidenceDto>(),
                 $"{proposal.ToolName} 执行失败：{message}"),
             new ToolExecutionSnapshot(
                 proposal.CallId,

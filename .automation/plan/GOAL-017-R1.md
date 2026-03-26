@@ -6,7 +6,7 @@
 ## Why R1 First
 1. 如果没有统一 normalized input 层，后续双引擎差异会变成“输入差异 + 算法差异”的混合噪声，无法定位。
 2. 如果没有统一 contract，图表、MCP、Agent、交易计划会分别读取不同结构，后面会形成四套局部模型。
-3. 仓库里已经存在 `StockCopilotKLineDataDto`、`StockCopilotMinuteDataDto`、`StockCopilotStrategySignalDto` 等早期 DTO，可以作为演进基础，但还不足以承担双引擎、差异分析与后续 replay/calibration 的统一入口。
+3. 旧 `Stock Copilot / GOAL-AGENT-002` 相关 `StockCopilot*Dto` 命名仍可能在仓库残留，但按当前状态它们已不再是必须兼容的产品层前提；本设计应以领域能力和当前主线目标为准，而不是继续围绕旧 Copilot 命名收敛。
 
 ## Scope
 1. 统一行情归一化输入模型
@@ -22,7 +22,7 @@
 
 ## Existing Assets To Reuse
 1. 现有图表策略注册表：`frontend/src/modules/stocks/charting/chartStrategyRegistry.js`
-2. 现有 MCP 策略信号 DTO：`StockCopilotStrategySignalDto`
+2. 现有领域内策略信号与 MCP envelope 经验，可作为 contract 设计参考，但不要求继续保留旧 `StockCopilot*` 命名。
 3. 现有 K 线、分时、新闻 MCP envelope 方向：`traceId/taskId/toolName/latency/cache/warnings/degradedFlags/data/evidence/features/meta`
 4. 现有 Agent 需要的 K 线/分时窗口与本地事实上下文：`StockAgentOrchestrator`
 
@@ -33,7 +33,7 @@
 4. `QuantEngineComparisonDto` 设计
 5. `AgentQuantContextDto` 设计
 6. `QuantEngineDescriptorDto` 设计
-7. 现有 `StockCopilot*Dto` 到新 contract 的映射策略
+7. 旧残留 DTO 到新 contract 的迁移与清理策略
 8. 测试与验收基线
 
 ## Normalized Input Model
@@ -161,17 +161,9 @@
   - `EvidenceRefs`
 
 ## Mapping Strategy From Existing DTOs
-1. `StockCopilotKLineDataDto`
-   - 保留为 MCP 的轻量对外 DTO
-   - 内部增加映射到 `NormalizedBarSeries`
-2. `StockCopilotMinuteDataDto`
-   - 保留为 MCP 的轻量分时 DTO
-   - 内部增加映射到 `NormalizedBarSeries`
-3. `StockCopilotStrategySignalDto`
-   - 短期继续保留对外兼容
-   - 中期由 `QuantStrategySignalDto -> StockCopilotStrategySignalDto` 单向映射导出
-4. `StockCopilotMcpEnvelopeDto`
-   - 后续 `features` 字段优先承接 `QuantFeatureSnapshotDto` 摘要，而不是匿名 name/value 拼接
+1. 如果仓库中仍残留旧 `StockCopilotKLineDataDto`、`StockCopilotMinuteDataDto`、`StockCopilotStrategySignalDto`、`StockCopilotMcpEnvelopeDto`，只允许作为迁移期间的临时 mapper 输入。
+2. 新 contract 不再以保留旧 `StockCopilot*` 命名为目标。
+3. 中期方向是让 `Quant*` 与领域 MCP contract 成为唯一主模型，再由必要的兼容层做一次性迁移或清理。
 
 ## Service Boundaries
 ### 1. IMarketDataNormalizer
@@ -217,12 +209,12 @@
 
 ## Tests
 1. 合成 K 线 / 分时样本测试 normalized timestamp、session、missing segment、synthetic merge 标记。
-2. DTO 映射测试：现有 `StockCopilotStrategySignalDto` 可由 `QuantStrategySignalDto` 稳定导出。
+2. DTO 迁移测试：如仍存在旧残留 DTO，必须证明其可被稳定迁移到 `Quant*` contract；不再把保留旧对外导出作为默认目标。
 3. MCP contract 测试：`StockStrategyMcp` 能返回结构化 feature/signal 摘要，而不是仅字符串描述。
 4. Agent contract 测试：当 `WarmupState=insufficient_history` 或存在 `degradedFlags` 时，context builder 输出明确风险提示。
 
 ## DoD
 1. 形成独立的 R1 设计文件，并同步任务台账、README 与双语报告。
 2. 明确 normalized input、feature/signal/comparison/agent context 五类 contract。
-3. 明确与现有 `StockCopilot*Dto` 的兼容映射路径。
+3. 明确旧残留 DTO 的迁移/清理路径，而不是默认长期兼容。
 4. 后续开发者可以直接按本文件新增 DTO、service interface 和定向测试，而不需要再次重拆边界。

@@ -211,14 +211,14 @@
     },
     {
       "id": "GOAL-AGENT-002",
-      "title": "Stock Copilot sessionized orchestration and product surface",
-      "status": "todo",
+      "title": "Stock Copilot sessionized orchestration and product surface (retired)",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "2026-03-22 已完成父级规划：R4 之后的下一阶段不再继续补裸工具，而是把现有 evidence/replay/MCP 底座提升为真正类似 GitHub Copilot 的股票协驾产品层。范围拆为 P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX、R3 动作化工作流集成、R4 Copilot 验收与 replay 指标。优先级：先收口 buglist 中直接阻塞 Copilot 的高优先级运行问题，再做会话 runtime 与面板化交互，量化双引擎 GOAL-017 作为并行但次优先的底座线。2026-03-23 follow-up：P0、R1、R2、R3 已完成；当前父级剩余主线只剩 R4 Copilot 产品验收与 replay 指标。2026-03-24 follow-up：R4 已完成，当前 Stock Copilot 已具备 session 化计划/工具/证据/动作流，以及与之配套的 acceptance baseline 和 replay baseline 产品验收面板；原父级一度标记收口。2026-03-24 second follow-up：经新一轮产品复核，现有 UI 与用户目标严重偏离，仍缺少真正的聊天形态、明确的最终回答闭环、可读的 MCP/证据展示和连续上下文体验，因此父级重新打开，并新增 R5 作为会话式重构切片。"
+      "notes": "2026-03-22 至 2026-03-25 期间曾完成 Stock Copilot / 股票助手 / 多 Agent 分析的一整套会话化与验收能力。按用户当前最新决定，GOAL-AGENT-002 已被手动彻底删除，不再视为当前仓库状态、可复用底座或未来兼容目标。后续文档与开发一律不得假定旧 Copilot 会话、旧面板或旧 `/api/stocks/copilot*` / `/api/stocks/mcp*` 路径仍然有效；即便仓库中仍残留同名实现，也只按待清理遗留处理。对应历史报告：`.automation/reports/GOAL-AGENT-002-REMOVAL-DEV-20260325.md`。"
     },
     {
       "id": "GOAL-AGENT-002-P0",
@@ -278,13 +278,13 @@
     {
       "id": "GOAL-AGENT-002-R5",
       "title": "Conversational Copilot redesign and grounded answer loop",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "2026-03-24 新增 R5：按 GitHub Copilot 风格重构 Stock Copilot，目标不再是右侧堆叠卡片，而是单一聊天工作台。新的用户可见形态必须满足：1) 以对话消息为中心，支持上下文连续会话；2) 每轮回答必须产出清晰的最终结论，而不是停留在草案/待执行状态；3) 展示结构化思维流程摘要，但不暴露原始 chain-of-thought；4) MCP 调用、证据抓取、网页/公告内容采用简写卡片 + 点击展开全文；5) 工具执行轨迹、耗时、降级与失败要内嵌在消息流中；6) 去掉当前分散的 timeline / acceptance / replay 大卡片默认铺满式布局，仅把质量与 replay 放入折叠侧栏或会话详情抽屉。设计文档见 `docs/stock-copilot-chat-redesign-20260324.md`，规划报告见 `.automation/reports/GOAL-AGENT-002-R5-PLAN-20260324.md`。2026-03-24 细化执行拆分：R5-A 后端受控 loop 与 grounded final answer 状态机；R5-B 交易计划 gating 与 commander 完整性校验；R5-C Evidence 摘要清洗与展开模型；R5-D 聊天主视图与 turn group 重排；R5-E 详情抽屉与 acceptance/replay 下沉；R5-F 多轮上下文与历史承接；R5-G 单测、Browser MCP 验证与自动化报告收口。详细任务清单见 `.automation/reports/GOAL-AGENT-002-R5-PLAN-DETAIL-20260324.md`。"
+      "notes": "2026-03-24 新增 R5：按 GitHub Copilot 风格重构 Stock Copilot，目标不再是右侧堆叠卡片，而是单一聊天工作台。新的用户可见形态必须满足：1) 以对话消息为中心，支持上下文连续会话；2) 每轮回答必须产出清晰的最终结论，而不是停留在草案/待执行状态；3) 展示结构化思维流程摘要，但不暴露原始 chain-of-thought；4) MCP 调用、证据抓取、网页/公告内容采用简写卡片 + 点击展开全文；5) 工具执行轨迹、耗时、降级与失败要内嵌在消息流中；6) 去掉当前分散的 timeline / acceptance / replay 大卡片默认铺满式布局，仅把质量与 replay 放入折叠侧栏或会话详情抽屉。设计文档见 `docs/stock-copilot-chat-redesign-20260324.md`，规划报告见 `.automation/reports/GOAL-AGENT-002-R5-PLAN-20260324.md`。2026-03-24 细化执行拆分：R5-A 后端受控 loop 与 grounded final answer 状态机；R5-B 交易计划 gating 与 commander 完整性校验；R5-C Evidence 摘要清洗与展开模型；R5-D 聊天主视图与 turn group 重排；R5-E 详情抽屉与 acceptance/replay 下沉；R5-F 多轮上下文与历史承接；R5-G 单测、Browser MCP 验证与自动化报告收口。详细任务清单见 `.automation/reports/GOAL-AGENT-002-R5-PLAN-DETAIL-20260324.md`。2026-03-25 close-out：R5 全切片已完成，默认主界面已是聊天式 Copilot 工作台，详情区保留审计能力而不再霸占主舞台，会话历史可直接承接上一轮问题、最终回答和证据来源。验证与报告见 `.automation/reports/GOAL-AGENT-002-R5-D-DEV-20260325.md` 和 `.automation/reports/GOAL-AGENT-002-R5-EFG-DEV-20260325.md`。"
     },
     {
       "id": "GOAL-AGENT-002-R5-A",
@@ -333,35 +333,145 @@
     {
       "id": "GOAL-AGENT-002-R5-E",
       "title": "Detail drawer and metrics demotion",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "把 acceptance / replay / raw payload / degraded flags / 历史 turn 下沉到详情抽屉或折叠区，退出默认主舞台，但保留现有底座和可审计性。"
+      "notes": "把 acceptance / replay / raw payload / degraded flags / 历史 turn 下沉到详情抽屉或折叠区，退出默认主舞台，但保留现有底座和可审计性。2026-03-25 已完成开发与测试：`StockCopilotSessionPanel.vue` 详情层已补齐 `会话审计基线`、历史 turn 列表、原始工具 payload、traceId、warnings 与 degraded flags；用户默认看到的仍是 clean summary + final answer + actions。验证命令：`npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.copilot.spec.js`，结果 10/10 通过；`npm --prefix .\\frontend run build` 通过。"
     },
     {
       "id": "GOAL-AGENT-002-R5-F",
       "title": "Session continuity and follow-ups",
-      "status": "todo",
+      "status": "done",
       "stages": {
         "plan": "done",
-        "dev": "todo",
-        "test": "todo"
+        "dev": "done",
+        "test": "done"
       },
-      "notes": "补齐连续会话和多轮追问承接。要求 turn history 可继续引用前一轮证据/结果/结论，且 follow-up actions 与 final answer 一致，不再像独立卡片漂在主界面上。"
+      "notes": "补齐连续会话和多轮追问承接。要求 turn history 可继续引用前一轮证据/结果/结论，且 follow-up actions 与 final answer 一致，不再像独立卡片漂在主界面上。2026-03-25 已完成开发与测试：`StockCopilotSessionPanel.vue` 新增 `会话上下文承接` 区和历史 turn 入口，当前轮会显示同会话上一轮问题、最终摘要与来源，点击即可切换 replay turn，follow-up actions 继续严格挂在对应回答下方。验证命令：`npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.copilot.spec.js`，结果 10/10 通过。"
     },
     {
       "id": "GOAL-AGENT-002-R5-G",
       "title": "R5 regression and browser acceptance",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "测试收口切片。包括后端单测锁定 loop/gating/evidence 清洗，前端单测锁定聊天消息流与动作 gating，最后用 Browser MCP 跑真实链路：提问 -> 自动/受控工具执行 -> 最终回答 -> 下一步动作 -> 交易计划入口。2026-03-25 已完成本轮前端收口：`npm --prefix .\\frontend run test:unit -- src/modules/stocks/StockInfoTab.copilot.spec.js` 10/10 通过，`npm --prefix .\\frontend run build` 通过；运行态重新执行 `start-all.bat` 后 `Test-NetConnection localhost -Port 5119` 返回 True。随后用 CopilotBrowser MCP 在 backend-served 页面 `http://localhost:5119/?tab=stock-info` 完成真实链路：1) 输入 `sh600000` 并查询成功；2) 在 `Stock Copilot` 面板输入问题并提交；3) 页面出现 grounded final answer 和 `看 60 日 K 线结构 / 查看本地新闻证据 / 起草交易计划` 三个动作；4) 点击 `起草交易计划` 后真实触发多 Agent 运行，完成后出现 `交易计划草稿` dialog，包含 `AnalysisHistory #6` 与 `保存为 Pending 计划` 按钮；5) 浏览器 console error 数量为 0。该链路说明 GOAL-AGENT-002 的用户可见主闭环已经真实走通。"
+    },
+    {
+      "id": "GOAL-AGENT-002-R6",
+      "title": "Review-driven evidence contract and audit layout hardening",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-25 新增 R6：来源于 GOAL-AGENT-002 正式 review 的收尾加固切片，目的是修掉当前聊天式 Copilot 主体验里仍会误导用户或放大回归风险的残余问题。计划范围分三块：1) 证据契约打通：修复 `StockCopilotSessionPanel.vue` 主舞台 `证据摘要卡` 和 `会话上下文承接` 只读 `toolPayloads` 的问题，让后端 auto-loop 已执行工具返回的 `ToolResults`/可展示 evidence 摘要也能进入当前 turn 与历史 turn 的证据视图，避免出现“工具已执行但证据区为空”的假阴性；2) 详情层结构修复：把当前被错误插入 `Replay 基线` grid 内的 `历史 turn 列表` 恢复为独立 secondary card，避免 DOM 结构、响应式布局和可访问性语义继续漂移；3) 回归与验收补强：新增前端回归覆盖“draft 首屏只有 ToolResults、没有 toolPayloads”的真实 auto-loop 路径，并补做对应 Browser/运行态验证，确保主证据卡、历史 evidence 计数和详情区布局都按新契约稳定工作。规划报告：`.automation/reports/GOAL-AGENT-002-R6-PLAN-20260325.md`。2026-03-25 已完成开发与测试：后端 `StockCopilotToolResultDto` 新增 `Evidence` 契约，`StockCopilotSessionService` 会把 MCP envelope evidence 直接压入 draft turn `ToolResults`，前端 `StockCopilotSessionPanel.vue` 则统一优先从 `toolResults.evidence` 聚合主舞台 evidence 与历史承接 evidence，并在缺少新字段时回退到 `toolPayloads`；同时把 `历史 turn 列表` 从 `Replay 基线` grid 中移出为独立 secondary card。新增前端回归锁定“auto-loop 直接返回 `ToolResults.evidence`、没有 `toolPayloads`”时，当前轮 evidence 卡能直接显示摘要、历史承接 evidence 计数不归零，且 history card 不再嵌入 replay card。验证包括后端定向测试 6/6、前端定向测试 11/11、前端 build 通过、`localhost:5119` 端口可达，以及 backend-served 页面 console error = 0。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001",
+      "title": "TradingAgents-style multi-role stock copilot rebuild",
       "status": "todo",
       "stages": {
         "plan": "done",
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "测试收口切片。包括后端单测锁定 loop/gating/evidence 清洗，前端单测锁定聊天消息流与动作 gating，最后用 Browser MCP 跑真实链路：提问 -> 自动/受控工具执行 -> 最终回答 -> 下一步动作 -> 交易计划入口。"
+      "notes": "2026-03-25 已完成详细规划，并进一步拆成总约束文件 + 分任务文件。新方向完全以 `noupload/TradingAgents-main` 为准，不再受现有 README、旧 Stock Copilot 目标或原有需求偏差影响。按用户当前最新决定，旧 `Stock Copilot / GOAL-AGENT-002` 已被手动彻底删除，不再作为可复用产品层前提。总入口：`.automation/plan/GOAL-AGENT-NEW-001/README.md`；规划报告：`.automation/reports/GOAL-AGENT-NEW-001-PLAN-20260325.md`。2026-03-25 follow-up：P0 已收口为正式规格，冻结了阶段顺序、角色职责、工作台 pane、术语、底座复用清单与偏离警戒线；对应执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260325.md`。2026-03-25 second follow-up：根据用户要求，已把 P0 与 R1-R7 全部扩写到可执行粒度，新增统一开发拆解模板、实施顺序、对象/接口粒度、fail-fast 与 degraded 边界、Browser MCP 与 packaged desktop 验收要求，避免后续开发代理因子任务过粗而偏离主目标。2026-03-25 third follow-up：继续把 R1-R7 深化到下一层，逐个补上“与最终 PLAN 对应关系”、更细的交付物清单、分层测试面、回归断言与可判定完成门槛，确保子任务与用户确认的最终 PLAN 前后逐条对应，而不是停留在摘要层。补充报告：`.automation/reports/GOAL-AGENT-NEW-001-PLAN-REFINE-20260325.md`。下一步进入 R1 会话 contract 与 R2 MCP 能力矩阵。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0",
+      "title": "TradingAgents parity spec and salvage audit",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-25 已完成 P0 收口。现已把 `.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-P0.md` 扩成正式规格，内容覆盖：TradingAgents 对齐基线、阶段顺序对齐表、15 角色职责表、工作台 pane 对齐表、统一术语、可复用底座清单、禁用清单、偏离警戒线、初版 MCP 能力盘点与角色缺口矩阵。并已结合当前代码核实 `StockInfoTab.vue`、`StockAgentAnalysisHistories`、`TradingPlans`、`QueryLocalFactDatabaseTool`、`IStockMarketContextService`、现有五类 MCP 以及 `/api/stocks/fundamental-snapshot` / `/api/stocks/detail/cache` 等接缝仍然存在。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260325.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R1",
+      "title": "Persistent multi-turn session and role contract",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "定义真正的 session contract。一个 symbol 下的连续追问必须进入同一会话，而不是每问一次自动新建对话。需要新增 team/agent/stage/message/report/progress/final decision contract，并保留 traceId、tool call、degraded flags、history replay 和 role-by-role 状态推进。现已在任务文件中进一步细化为对象边界、API contract、数据库对象草图、continuation/reuse/rerun 规则、session 锁和错误传播设计，开发时必须先落 contract 再落 runner。详细任务文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R1.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R2",
+      "title": "MCP adapter matrix and missing tool fill",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "把 TradingAgents 的 Market/Social Media/News/Fundamentals/Bullish/Bearish/Trader/Risk/Manager 角色任务映射到本仓库 MCP。现有 `kline/minute/strategy/news/search`、本地资讯和市场总览继续复用；缺失项如 fundamentals、market context、social sentiment、research memory 必须补成同一 MCP envelope 下的新 adapter，而不是让模型自由推断。现已在任务文件中细化统一 Tool Gateway、角色权限矩阵、envelope 字段、errorCode、fail-fast/degraded 规则，以及 CompanyOverview/Fundamentals/Shareholder/Product/Social 缺口补齐顺序。详细任务文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R2.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R3",
+      "title": "Backend multi-agent graph orchestration",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "后端必须真实执行 TradingAgents 风格顺序：Analyst Team -> Research Team bull/bear debate -> Trader -> Risk Management aggressive/neutral/conservative -> Portfolio Manager。每个节点都要产出结构化角色消息、工具调用、阶段摘要、状态推进和 stopReason，供后续追问继续引用。现已在任务文件中细化 runner 状态机、阶段执行拆解、事件总线、并行 barrier、resume/rerun、角色输入输出与 fail-fast 恢复规则。详细任务文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R3.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R4",
+      "title": "TradingAgents-style conversational workbench UI",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "前端主界面默认参考 TradingAgents，而不是旧 README 或旧 Copilot 目标。需要呈现 team progress、agent status、messages and tools、current report 和用户输入区，视觉上接近 TradingAgents 的工作台叙事，同时支持真实对话式追问。现已在任务文件中细化组件拆分、状态来源、交互流、响应式骨架、fail-fast modal 和 nextAction handoff 入口，要求 UI 只消费 authoritative object 而不自行拼状态。详细任务文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R4.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R5",
+      "title": "Debate, risk, and approval persistence",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "bull/bear debate、risk 三角色评审和 portfolio manager 最终批准必须持久化为真实对象，而不是最后拼成一段总结。后续追问需要能引用上一轮争议点、风险意见和决策结论继续推进。现已在任务文件中细化 debate/risk/proposal/decision 对象 schema、版本关系、引用链、查询面与 replay comparison 约束，要求不得再从 report 文本反解析。详细任务文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R5.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R6",
+      "title": "Grounded report output and action handoff",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "TradingAgents 风格 `Current Report` 不能只是长文本。需要输出结构化研究报告块，包含结论、关键证据、主要分歧、风险限制、失效条件和下一步动作，并直接接到现有图表、资讯证据、市场上下文与交易计划草稿入口。现已在任务文件中细化 report block、final decision、nextAction、degraded/failure 表现与 action handoff contract，要求 report 成为 authoritative object。详细任务文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R6.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-R7",
+      "title": "Replay, browser acceptance, and desktop validation",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "验收必须跑真实多轮链路：查股 -> 提问 -> 多角色推进 -> debate -> 风控评审 -> manager decision -> follow-up 继续同一 session -> 交易计划联动。同时继续执行 Browser MCP 和桌面打包验证，避免再次出现只有静态 UI、没有真实运行闭环的假完成。现已在任务文件中细化分层测试装配、Browser MCP 验收、回归清单与验收证据要求，明确 R7 是质量门禁总装配而不是附录。此任务已扩展为测试目标、回归测试、多维验收和门禁总文件：`.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-R7.md`。"
     },
     {
       "id": "GOAL-015",
@@ -471,7 +581,7 @@
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "2026-03-22 已完成 R1 详细设计：本切片先不真正接入 Skender 或 Lean，而是先锁定双引擎共享底座。范围包括：1) 统一 `NormalizedBar` / `NormalizedBarSeries` 行情输入模型；2) 定义 `QuantEngineDescriptorDto`、`QuantFeatureSnapshotDto`、`QuantStrategySignalDto`、`QuantEngineComparisonDto`、`AgentQuantContextDto`；3) 统一 `warmupState`、`degradedFlags`、`engine role`、`execution mode` 语义；4) 明确现有 `StockCopilotKLineDataDto`、`StockCopilotMinuteDataDto`、`StockCopilotStrategySignalDto` 到新 contract 的兼容映射；5) 明确后续与 MCP、图表策略注册表、Agent、交易计划的接缝。验收重点：后续开发者可以直接按该文档新增 DTO、service interface 与测试，而不需要再次重拆边界。"
+      "notes": "2026-03-22 已完成 R1 详细设计：本切片先不真正接入 Skender 或 Lean，而是先锁定双引擎共享底座。范围包括：1) 统一 `NormalizedBar` / `NormalizedBarSeries` 行情输入模型；2) 定义 `QuantEngineDescriptorDto`、`QuantFeatureSnapshotDto`、`QuantStrategySignalDto`、`QuantEngineComparisonDto`、`AgentQuantContextDto`；3) 统一 `warmupState`、`degradedFlags`、`engine role`、`execution mode` 语义；4) 明确后续与 MCP、图表策略注册表、Agent、交易计划的接缝。按用户 2026-03-25 最新决定，旧 `Stock Copilot / GOAL-AGENT-002` 已被手动删除，因此 `StockCopilot*Dto` 不再作为必须兼容的产品层前提；如仍有残留同名类型，仅按待清理遗留处理。"
     },
     {
       "id": "MANUAL-20260322-START-ALL-FIX",

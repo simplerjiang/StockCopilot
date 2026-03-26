@@ -1,7 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import StockCharts from './StockCharts.vue'
-import StockAgentPanels from './StockAgentPanels.vue'
 import StockMarketNewsPanel from './StockMarketNewsPanel.vue'
 import StockNewsImpactPanel from './StockNewsImpactPanel.vue'
 import StockSearchToolbar from './StockSearchToolbar.vue'
@@ -11,29 +10,8 @@ import StockTradingPlanBoard from './StockTradingPlanBoard.vue'
 import StockTradingPlanModal from './StockTradingPlanModal.vue'
 import StockTradingPlanSection from './StockTradingPlanSection.vue'
 import TerminalView from './TerminalView.vue'
-import CopilotPanel from './CopilotPanel.vue'
-import StockCopilotSessionPanel from './StockCopilotSessionPanel.vue'
-import ChatWindow from '../../components/ChatWindow.vue'
-import {
-  buildCopilotAcceptanceExecutions,
-  buildCopilotToolResult,
-  getCopilotApprovedToolCalls,
-  getCopilotExecutedToolCallIds,
-  getCopilotFinalAnswer,
-  getCopilotToolCalls,
-  getCopilotToolResults,
-  parseCopilotInputSummary
-} from './stockInfoTabCopilot'
-import { createStockInfoTabAgentRuntime } from './stockInfoTabAgentRuntime'
-import { createStockInfoTabCopilotRuntime } from './stockInfoTabCopilotRuntime'
 import { createStockInfoTabDataRequests } from './stockInfoTabDataRequests'
 import { createStockInfoTabQuoteRuntime } from './stockInfoTabQuoteRuntime'
-import {
-  getCopilotDraftPlanAvailability,
-  getSelectedCommanderHistoryAvailability,
-  inspectCommanderHistoryAgentResults,
-  isGroundedCopilotFinalAnswerReady
-} from './stockInfoTabPlanHelpers'
 import {
   createStockLoadStages,
   createStockWorkspace,
@@ -81,7 +59,6 @@ import {
 } from './stockInfoTabTradingPlans'
 import {
   buildStockContext,
-  extractTaggedPriceLevels,
   formatPercent,
   getHighClass,
   getLowClass,
@@ -90,7 +67,6 @@ import {
   normalizeNewsBucket,
   normalizeOptionalText,
   normalizeRealtimeOverview,
-  parseLevelNumber
 } from './stockInfoTabViewHelpers'
 import {
   formatTradingPlanStatus,
@@ -123,7 +99,6 @@ const contextMenu = ref({ visible: false, x: 0, y: 0, item: null })
 const sortKey = ref('id')
 const sortAsc = ref(true)
 const monochromeMode = ref(localStorage.getItem('stock_monochrome_mode') === 'true')
-const copilotPanelOpen = ref(localStorage.getItem('stock_copilot_panel_open') !== 'false')
 const marketNewsModalOpen = ref(false)
 const stockRealtimeOverviewEnabled = ref(localStorage.getItem('stock_realtime_context_enabled') !== 'false')
 const stockRealtimeOverview = ref(null)
@@ -133,7 +108,6 @@ const stockRealtimeSymbol = ref('')
 let stockRealtimeAbortController = null
 const chartActiveView = ref('day')
 const minuteTdSequentialEnabled = ref(false)
-const chatWindowRefs = new Map()
 
 const stockWorkspaces = reactive({})
 const rootWorkspace = createStockWorkspace('__root__')
@@ -195,14 +169,6 @@ const chatSessions = bindWorkspaceField('chatSessions', [])
 const chatSessionsLoading = bindWorkspaceField('chatSessionsLoading', false)
 const chatSessionsError = bindWorkspaceField('chatSessionsError', '')
 const selectedChatSession = bindWorkspaceField('selectedChatSession', '')
-const agentResults = bindWorkspaceField('agentResults', [])
-const agentLoading = bindWorkspaceField('agentLoading', false)
-const agentError = bindWorkspaceField('agentError', '')
-const agentUpdatedAt = bindWorkspaceField('agentUpdatedAt', '')
-const agentHistoryList = bindWorkspaceField('agentHistoryList', [])
-const agentHistoryLoading = bindWorkspaceField('agentHistoryLoading', false)
-const agentHistoryError = bindWorkspaceField('agentHistoryError', '')
-const selectedAgentHistoryId = bindWorkspaceField('selectedAgentHistoryId', '')
 const newsImpact = bindWorkspaceField('newsImpact', null)
 const newsImpactLoading = bindWorkspaceField('newsImpactLoading', false)
 const newsImpactError = bindWorkspaceField('newsImpactError', '')
@@ -216,15 +182,6 @@ const planList = bindWorkspaceField('planList', [])
 const planAlerts = bindWorkspaceField('planAlerts', [])
 const planListLoading = bindWorkspaceField('planListLoading', false)
 const planAlertsLoading = bindWorkspaceField('planAlertsLoading', false)
-const copilotQuestion = bindWorkspaceField('copilotQuestion', '')
-const copilotAllowExternalSearch = bindWorkspaceField('copilotAllowExternalSearch', false)
-const copilotLoading = bindWorkspaceField('copilotLoading', false)
-const copilotError = bindWorkspaceField('copilotError', '')
-const copilotReplayTurns = bindWorkspaceField('copilotReplayTurns', [])
-const copilotAcceptanceBaseline = bindWorkspaceField('copilotAcceptanceBaseline', null)
-const copilotAcceptanceLoading = bindWorkspaceField('copilotAcceptanceLoading', false)
-const copilotAcceptanceError = bindWorkspaceField('copilotAcceptanceError', '')
-const copilotToolBusyCallId = bindWorkspaceField('copilotToolBusyCallId', '')
 const marketNewsBucket = computed(() => rootWorkspace.localNewsBuckets.market ?? null)
 const marketNewsLoading = computed(() => rootWorkspace.localNewsLoading)
 const marketNewsError = computed(() => rootWorkspace.localNewsError)
@@ -351,19 +308,6 @@ const setStockLoadStage = (workspace, requestToken, key, status, message = '') =
   stage.message = message || definition.messages[status] || definition.messages.idle
 }
 
-const upsertAgentResult = result => {
-  const agentId = result?.agentId ?? result?.AgentId ?? ''
-  if (!agentId) return
-  const list = [...agentResults.value]
-  const index = list.findIndex(item => (item.agentId ?? item.AgentId) === agentId)
-  if (index >= 0) {
-    list[index] = result
-  } else {
-    list.push(result)
-  }
-  agentResults.value = list
-}
-
 const applyHistorySymbol = item => {
   const rawSymbol = item.symbol || item.Symbol || item.code || item.Code || ''
   const normalizedSymbol = normalizeStockSymbol(rawSymbol)
@@ -464,15 +408,6 @@ const openExternal = url => {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-const chatSymbolKey = computed(() => {
-  const quote = detail.value?.quote
-  const raw = quote?.symbol || selectedSymbol.value || symbol.value || ''
-  return String(raw || '').trim().toLowerCase()
-})
-
-const getChatSessionOptions = workspace => (Array.isArray(workspace?.chatSessions) ? workspace.chatSessions : [])
-const getChatHistoryKey = workspace => workspace?.selectedChatSession || ''
-
 const closeTradingPlanModal = symbolKey => {
   const workspace = getWorkspace(symbolKey)
   if (!workspace) {
@@ -490,59 +425,6 @@ const editTradingPlan = (symbolKey, item) => {
   workspace.planError = ''
   workspace.planForm = createTradingPlanForm(item)
   workspace.planModalOpen = true
-}
-
-const openTradingPlanDraft = async (symbolKey = currentStockKey.value) => {
-  const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
-  if (!workspace?.detail?.quote?.symbol) {
-    return
-  }
-
-  workspace.planDraftLoading = true
-  workspace.planError = ''
-  try {
-    let historyAvailability = getSelectedCommanderHistoryAvailability(workspace)
-    let historyId = historyAvailability.ready ? workspace.selectedAgentHistoryId : ''
-    if (!historyId) {
-      const resultAvailability = inspectCommanderHistoryAgentResults(workspace.agentResults)
-      if (!resultAvailability.isComplete) {
-        throw new Error(resultAvailability.blockedReason || '请先完成完整的 commander 多Agent 分析')
-      }
-
-      await saveAgentHistory(symbolKey)
-      await fetchAgentHistory(symbolKey, { force: true })
-      historyAvailability = getSelectedCommanderHistoryAvailability(workspace)
-      if (!historyAvailability.ready) {
-        throw new Error(historyAvailability.blockedReason || '多Agent 历史未达到 commander 完整性要求')
-      }
-      historyId = workspace.selectedAgentHistoryId
-    }
-
-    if (!historyId) {
-      throw new Error('多Agent历史保存失败')
-    }
-
-    const response = await fetch('/api/stocks/plans/draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: workspace.detail.quote.symbol,
-        analysisHistoryId: Number(historyId)
-      })
-    })
-
-    if (!response.ok) {
-      throw new Error(await parseResponseMessage(response, '交易计划草稿生成失败'))
-    }
-
-    const payload = normalizeTradingPlan(await response.json())
-    workspace.planForm = createTradingPlanForm(payload)
-    workspace.planModalOpen = true
-  } catch (err) {
-    workspace.planError = err.message || '交易计划草稿生成失败'
-  } finally {
-    workspace.planDraftLoading = false
-  }
 }
 
 const saveTradingPlan = async (symbolKey = currentStockKey.value) => {
@@ -681,71 +563,6 @@ const jumpToPlanSymbol = symbolKey => {
   currentStockKey.value = normalizedSymbol
   fetchQuote()
 }
-
-const selectAgentHistory = async (symbolKey, value) => {
-  const workspace = getWorkspace(symbolKey)
-  if (!workspace) {
-    return
-  }
-  workspace.selectedAgentHistoryId = value || ''
-  if (!workspace.selectedAgentHistoryId) {
-    return
-  }
-  await loadAgentHistoryDetail(workspace.selectedAgentHistoryId, symbolKey)
-}
-
-const buildChatPrompt = content => {
-  const context = buildStockContext(detail.value)
-  const responseRule = '回答要求：只输出自然语言或Markdown，不要JSON，不要代码块。'
-  return context
-    ? `你是股票助手，请基于以下股票信息回答用户问题。\n${responseRule}\n\n${context}\n\n用户问题：${content}`
-    : `${responseRule}\n${content}`
-}
-
-const currentStockLabel = computed(() => {
-  const quote = detail.value?.quote
-  if (!quote) return '未选择股票'
-  return `${quote.name ?? ''}（${quote.symbol ?? ''}）`
-})
-
-const getAgentId = agent => agent?.agentId ?? agent?.AgentId ?? ''
-const getAgentData = agent => agent?.data ?? agent?.Data ?? null
-
-const aiLevels = computed(() => {
-  const list = Array.isArray(agentResults.value) ? agentResults.value : []
-  const commanderData = getAgentData(list.find(item => getAgentId(item) === 'commander'))
-  const trendData = getAgentData(list.find(item => getAgentId(item) === 'trend_analysis'))
-
-  const resistancePatterns = [/突破\s*([0-9]+(?:\.[0-9]+)?)/g, /站上\s*([0-9]+(?:\.[0-9]+)?)/g, /目标\s*([0-9]+(?:\.[0-9]+)?)/g]
-  const supportPatterns = [/跌破\s*([0-9]+(?:\.[0-9]+)?)/g, /失守\s*([0-9]+(?:\.[0-9]+)?)/g, /止损\s*([0-9]+(?:\.[0-9]+)?)/g, /支撑\s*([0-9]+(?:\.[0-9]+)?)/g]
-  const triggerLevels = extractTaggedPriceLevels(commanderData?.trigger_conditions, resistancePatterns)
-  const invalidLevels = extractTaggedPriceLevels(commanderData?.invalid_conditions, supportPatterns)
-  const riskLevels = extractTaggedPriceLevels(commanderData?.risk_warning, supportPatterns)
-  const analysisLevels = extractTaggedPriceLevels(commanderData?.analysis_opinion, [...resistancePatterns, ...supportPatterns])
-
-  const resistanceFromRecommendation = triggerLevels[0] ?? analysisLevels[0] ?? null
-  const supportFromRecommendation = invalidLevels[0] ?? riskLevels[0] ?? null
-
-  const forecast = Array.isArray(trendData?.forecast) ? trendData.forecast : []
-  const forecastPrices = forecast
-    .map(item => parseLevelNumber(item?.price))
-    .filter(price => Number.isFinite(price))
-
-  const resistanceFromTrend = forecastPrices.length ? Math.max(...forecastPrices) : null
-  const supportFromTrend = forecastPrices.length ? Math.min(...forecastPrices) : null
-
-  const resistance = resistanceFromRecommendation ?? resistanceFromTrend
-  const support = supportFromRecommendation ?? supportFromTrend
-
-  if (!Number.isFinite(resistance) && !Number.isFinite(support)) {
-    return null
-  }
-
-  return {
-    resistance: Number.isFinite(resistance) ? resistance : null,
-    support: Number.isFinite(support) ? support : null
-  }
-})
 
 const marketNewsItems = computed(() => marketNewsBucket.value?.items ?? [])
 const marketNewsPreviewItems = computed(() => marketNewsItems.value.slice(0, 3))
@@ -960,18 +777,6 @@ const closeSearch = () => {
   searchOpen.value = false
 }
 
-const saveAgentHistoryRequest = async payload => {
-  const response = await fetch('/api/stocks/agents/history', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-  if (!response.ok) {
-    throw new Error('保存多Agent历史失败')
-  }
-  return response.json()
-}
-
 const {
   fetchQuote,
   refreshChartData
@@ -998,65 +803,6 @@ const {
   applyLatestDetail,
   applyLatestMessages,
   error
-})
-
-const {
-  fetchAgentHistory,
-  loadAgentHistoryDetail,
-  runAgents,
-  saveAgentHistory
-} = createStockInfoTabAgentRuntime({
-  chatSymbolKey,
-  currentStockKey,
-  currentWorkspace,
-  formatDate,
-  getWorkspace,
-  interval,
-  inspectCommanderHistoryAgentResults,
-  replaceAbortController,
-  saveAgentHistoryRequest,
-  fetchBackendGet,
-  isAbortError,
-  selectedSource,
-  upsertAgentResult
-})
-
-const {
-  activateCopilotAction,
-  chatHistoryAdapter,
-  currentCopilotTurn,
-  executeCopilotToolCall,
-  fetchChatSessions,
-  fetchCopilotAcceptanceBaseline,
-  selectCopilotReplayTurn,
-  setChatRef,
-  startNewChat,
-  submitCopilotDraft
-} = createStockInfoTabCopilotRuntime({
-  chatSymbolKey,
-  chatWindowRefs,
-  currentStockKey,
-  currentWorkspace,
-  fetchAgentHistory,
-  fetchBackendGet,
-  fetchLocalNews,
-  fetchNewsImpact,
-  formatDate,
-  getCopilotApprovedToolCalls,
-  getCopilotDraftPlanAvailability,
-  getSelectedCommanderHistoryAvailability,
-  getWorkspace,
-  interval,
-  isAbortError,
-  nextTick,
-  openTradingPlanDraft,
-  parseCopilotInputSummary,
-  parseResponseMessage,
-  refreshChartData,
-  replaceAbortController,
-  runAgents,
-  buildCopilotAcceptanceExecutions,
-  buildCopilotToolResult
 })
 
 const setupHistoryRefresh = () => {
@@ -1184,14 +930,6 @@ watch(selectedSource, value => {
   }
 })
 
-watch(chatSymbolKey, value => {
-  if (!value) {
-    return
-  }
-  fetchChatSessions(value)
-  fetchAgentHistory(value)
-})
-
 watch(historyRefreshSeconds, value => {
   localStorage.setItem('stock_history_refresh_seconds', String(value))
   setupHistoryRefresh()
@@ -1257,10 +995,6 @@ watch(monochromeMode, value => {
   localStorage.setItem('stock_monochrome_mode', String(value))
 })
 
-watch(copilotPanelOpen, value => {
-  localStorage.setItem('stock_copilot_panel_open', String(value))
-})
-
 watch(stockRealtimeOverviewEnabled, value => {
   localStorage.setItem('stock_realtime_context_enabled', String(value))
   if (value) {
@@ -1292,14 +1026,11 @@ watch(currentStockKey, () => {
       <div>
         <p class="panel-kicker">GOAL-012</p>
         <h2>股票信息终端</h2>
-        <p class="muted panel-subtitle">左侧聚焦行情与图表，右侧收纳 AI 对话和事件信号。</p>
+        <p class="muted panel-subtitle">左侧聚焦行情与图表，右侧预留后续扩展区域。</p>
       </div>
       <div class="panel-actions">
         <button class="mode-toggle" @click="monochromeMode = !monochromeMode">
           {{ monochromeMode ? '彩色模式' : '黑白模式' }}
-        </button>
-        <button class="mode-toggle focus-toggle" @click="copilotPanelOpen = !copilotPanelOpen">
-          {{ copilotPanelOpen ? '专注模式' : '显示 AI 侧栏' }}
         </button>
       </div>
     </div>
@@ -1378,7 +1109,7 @@ watch(currentStockKey, () => {
       @close-modal="closeMarketNewsModal"
     />
 
-    <div class="workspace-grid" :class="{ focused: !copilotPanelOpen }">
+    <div class="workspace-grid">
       <TerminalView :quote="detail?.quote ?? null" :monochrome="monochromeMode">
         <template #summary>
           <StockTerminalSummary
@@ -1393,15 +1124,13 @@ watch(currentStockKey, () => {
         </template>
 
         <template #chart>
-          <div class="stock-chart-section" :class="{ 'copilot-section-active': currentWorkspace.copilotFocusSection === 'chart' }">
+          <div class="stock-chart-section">
             <StockCharts
               v-if="detail"
               :k-lines="detail.kLines"
               :minute-lines="detail.minuteLines"
               :base-price="Number(detail.quote.price) - Number(detail.quote.change)"
-              :ai-levels="aiLevels"
               :interval="interval"
-              :focused-view="currentWorkspace.copilotChartFocusView"
               @update:interval="interval = $event"
               @view-change="handleChartViewChange"
               @strategy-visibility-change="handleChartStrategyVisibilityChange"
@@ -1413,29 +1142,7 @@ watch(currentStockKey, () => {
         </template>
       </TerminalView>
 
-      <CopilotPanel :open="copilotPanelOpen" :current-stock-label="currentStockLabel" @toggle="copilotPanelOpen = !copilotPanelOpen">
-        <StockCopilotSessionPanel
-          v-if="currentStockKey"
-          :current-stock-label="currentStockLabel"
-          :question="copilotQuestion"
-          :loading="copilotLoading"
-          :error="copilotError"
-          :allow-external-search="copilotAllowExternalSearch"
-          :turn="currentCopilotTurn"
-          :session-title="currentWorkspace.copilotSessionTitle"
-          :replay-turns="copilotReplayTurns"
-          :acceptance-baseline="copilotAcceptanceBaseline"
-          :acceptance-loading="copilotAcceptanceLoading"
-          :acceptance-error="copilotAcceptanceError"
-          :busy-call-id="copilotToolBusyCallId"
-          @update:question="copilotQuestion = $event"
-          @toggle-external-search="copilotAllowExternalSearch = $event"
-          @submit="submitCopilotDraft(currentStockKey)"
-          @select-replay="selectCopilotReplayTurn($event, currentStockKey)"
-          @execute-tool="executeCopilotToolCall($event, currentStockKey)"
-          @activate-action="activateCopilotAction($event, currentStockKey)"
-        />
-
+      <div class="sidebar-workspace">
         <StockTradingPlanBoard
           :workspace="rootWorkspace"
           :format-trading-plan-status="formatTradingPlanStatus"
@@ -1470,22 +1177,6 @@ watch(currentStockKey, () => {
               @refresh="fetchNewsImpact(workspace.symbolKey, { force: true })"
             />
 
-            <div class="stock-agent-section" :class="{ 'copilot-section-active': workspace.copilotFocusSection === 'strategy' }">
-              <StockAgentPanels
-                :agents="workspace.agentResults"
-                :loading="workspace.agentLoading"
-                :error="workspace.agentError"
-                :last-updated="workspace.agentUpdatedAt"
-                :history-options="workspace.agentHistoryList.map(item => ({ value: item.id ?? item.Id, label: `${item.symbol ?? item.Symbol} - ${formatDate(item.createdAt ?? item.CreatedAt)}` }))"
-                :selected-history-id="workspace.selectedAgentHistoryId"
-                :history-loading="workspace.agentHistoryLoading"
-                :history-error="workspace.agentHistoryError"
-                @select-history="selectAgentHistory(workspace.symbolKey, $event)"
-                @run="runAgents(workspace.symbolKey, $event)"
-                @draft-plan="openTradingPlanDraft(workspace.symbolKey)"
-              />
-            </div>
-
             <StockTradingPlanSection
               :workspace="workspace"
               :deleting-plan-id="deletingPlanId"
@@ -1507,46 +1198,13 @@ watch(currentStockKey, () => {
               @resume="resumeTradingPlan(workspace.symbolKey, $event)"
               @delete="deleteTradingPlan(workspace.symbolKey, $event)"
             />
-
-            <div class="copilot-card">
-              <ChatWindow
-                v-if="workspace.detail"
-                :ref="setChatRef(workspace.symbolKey)"
-                title="股票助手"
-                :build-prompt="buildChatPrompt"
-                :history-key="getChatHistoryKey(workspace)"
-                :enable-history="true"
-                :history-adapter="chatHistoryAdapter"
-                expandable
-                expanded-storage-key="stock_chat_expanded"
-                placeholder="请输入关于该股票的问题"
-                empty-text="可以询问该股票的走势、风险或盘面解读。"
-                max-height="320px"
-                expanded-height="600px"
-              >
-                <template #header-extra>
-                  <div class="chat-session">
-                    <p class="muted">当前：{{ workspace.detail?.quote?.name ?? '' }}（{{ workspace.detail?.quote?.symbol ?? '' }}）</p>
-                    <select v-model="workspace.selectedChatSession" :disabled="!getChatSessionOptions(workspace).length">
-                      <option v-for="item in getChatSessionOptions(workspace)" :key="item.key" :value="item.key">
-                        {{ item.label }}
-                      </option>
-                    </select>
-                    <button class="chat-session-new" @click="startNewChat(workspace.symbolKey)" :disabled="!workspace.symbolKey">
-                      新建对话
-                    </button>
-                  </div>
-                </template>
-              </ChatWindow>
-            </div>
-
           </div>
         </template>
 
-        <div v-else class="copilot-card">
+        <div v-else class="copilot-card ai-placeholder-card">
           <div class="terminal-empty compact-empty">
-            <h4>AI Copilot 已待命</h4>
-            <p>先在左侧加载股票，再在这里查看事件信号或发起对话。</p>
+            <h4>扩展区已留空</h4>
+            <p>股票助手、会话化协驾和多 Agent 分析模块已移除，后续可在这里重新接入新方案。</p>
           </div>
         </div>
 
@@ -1556,7 +1214,7 @@ watch(currentStockKey, () => {
           @close="closeTradingPlanModal(activePlanModalWorkspace.symbolKey)"
           @save="saveTradingPlan(activePlanModalWorkspace.symbolKey)"
         />
-      </CopilotPanel>
+      </div>
     </div>
   </section>
 </template>
@@ -1573,14 +1231,8 @@ watch(currentStockKey, () => {
   gap: 1rem;
 }
 
-.stock-chart-section,
-.stock-agent-section {
+.stock-chart-section {
   border-radius: 18px;
-}
-
-.copilot-section-active {
-  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.28);
-  transition: box-shadow 0.18s ease;
 }
 
 .panel-header {
@@ -1628,11 +1280,6 @@ watch(currentStockKey, () => {
   cursor: pointer;
 }
 
-.focus-toggle {
-  background: #0f172a;
-  color: #f8fafc;
-}
-
 .error-text {
   color: #b91c1c;
 }
@@ -1643,10 +1290,6 @@ watch(currentStockKey, () => {
   grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.95fr);
   align-items: start;
   min-height: calc(100vh - 238px);
-}
-
-.workspace-grid.focused {
-  grid-template-columns: minmax(0, 1fr) 280px;
 }
 
 .terminal-empty p {
@@ -1685,27 +1328,8 @@ watch(currentStockKey, () => {
   border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.chat-session {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.chat-session select {
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  padding: 0.35rem 0.6rem;
-  background: #ffffff;
-}
-
-.chat-session-new {
-  border-radius: 999px;
-  border: none;
-  padding: 0.3rem 0.75rem;
-  background: #e2e8f0;
-  color: #1f2937;
-  cursor: pointer;
+.ai-placeholder-card {
+  min-height: 180px;
 }
 
 .text-rise {
@@ -1815,10 +1439,6 @@ watch(currentStockKey, () => {
 
 @media (max-width: 1180px) {
   .workspace-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .workspace-grid.focused {
     grid-template-columns: 1fr;
   }
 }

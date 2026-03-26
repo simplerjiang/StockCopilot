@@ -14,7 +14,7 @@ export const stockInfoTabPanelUiCases = ({
   vi,
 }) => [
   {
-    title: "keeps market news visible in the embedded panel when the AI sidebar is collapsed",
+    title: "keeps market news visible alongside the reserved extension area",
     run: async () => {
     const { fetchMock } = createChatFetchMock({
       handle: async (url) => {
@@ -53,11 +53,9 @@ export const stockInfoTabPanelUiCases = ({
     await flushPromises()
     await flushPromises()
 
-    await wrapper.find('.focus-toggle').trigger('click')
-    await wrapper.vm.$nextTick()
-
     expect(wrapper.find('.market-news-panel').text()).toContain('全球宏观信号仍在左侧显示')
-    expect(wrapper.findComponent({ name: 'ChatWindow' }).exists()).toBe(false)
+    expect(wrapper.find('.sidebar-workspace').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('股票助手')
   }
   },
   {
@@ -243,28 +241,16 @@ export const stockInfoTabPanelUiCases = ({
   }
   },
   {
-    title: "supports focus mode by collapsing the copilot sidebar",
+    title: "renders a blank extension placeholder before any stock is loaded",
     run: async () => {
     const { fetchMock } = createChatFetchMock()
     vi.stubGlobal('fetch', fetchMock)
 
     const wrapper = mount(StockInfoTab)
-    wrapper.vm.detail = {
-      quote: { name: '深科技', symbol: 'sz000021', price: 31.1, change: 0, changePercent: 0 },
-      kLines: [],
-      minuteLines: [],
-      messages: []
-    }
-    await wrapper.vm.$nextTick()
     await flushPromises()
 
-    expect(wrapper.findComponent({ name: 'ChatWindow' }).exists()).toBe(true)
-
-    await wrapper.find('.focus-toggle').trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.text()).toContain('AI 对话、事件信号和多 Agent 分析已收拢到侧栏。')
-    expect(wrapper.findComponent({ name: 'ChatWindow' }).exists()).toBe(false)
+    expect(wrapper.find('.ai-placeholder-card').exists()).toBe(true)
+    expect(wrapper.text()).toContain('股票助手、会话化协驾和多 Agent 分析模块已移除')
   }
   }
 ]

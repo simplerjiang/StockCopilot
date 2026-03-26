@@ -270,13 +270,9 @@ export const stockInfoTabNewsHistoryCases = ({
     expect(counters.impact.sh600000).toBe(1)
     expect(counters.news['sh600000:stock']).toBe(1)
     expect(counters.news['sh600000:sector']).toBe(1)
-    expect(counters.chatSessions.sh600000).toBe(1)
-    expect(counters.agentHistory.sh600000).toBe(1)
     expect(counters.impact.sh600519).toBe(1)
     expect(counters.news['sh600519:stock']).toBe(1)
     expect(counters.news['sh600519:sector']).toBe(1)
-    expect(counters.chatSessions.sh600519).toBe(1)
-    expect(counters.agentHistory.sh600519).toBe(1)
   }
   },
   {

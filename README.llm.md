@@ -240,17 +240,12 @@ opencode
 - [x] GOAL-AGENT-001-R2 Agent 职责重切与推理收口（stock/sector/financial/trend 边界重划、marketReports 抗污染、代码先算特征、commander 覆盖率/冲突/降级惩罚）
 - [x] GOAL-AGENT-001-R3 回放校准闭环与验收基线（历史回放样本、1/3/5/10 日收益对齐、命中率/Brier score/分组胜率、开发者可观测验收指标）
 - [x] GOAL-AGENT-001-R4 Copilot 风格 MCP 工具运行时基础层（股票 K 线 MCP、分时图 MCP、策略 MCP、新闻 MCP、搜索 MCP/Tavily 受控兜底；统一 tool envelope、governor policy class、trace/cache/degradedFlags/evidence/features 输出，作为后续把多 Agent 改造成类似 Copilot 的直接能力层）
-- [ ] GOAL-AGENT-002 股票 Copilot 会话化编排与产品层（2026-03-22 已完成父级规划；截至 2026-03-23，P0 运行态稳定性与输出安全闸门、R1 会话 contract 与 planner/governor 时间线、R2 股票 Copilot 面板 UX 已完成，当前剩余重点收口到 R3 动作化工作流与 R4 产品验收指标。）
-- [x] GOAL-AGENT-002-P0 运行态稳定性与输出安全闸门（已完成：修复直接阻塞 Copilot 的高优先级 bug，包括 `情绪轮动` sectors API 500、图表重试与运行态稳定性、raw reasoning 外泄、developer-mode 脏输出展示与 MCP 请求取消误报 500 等问题。）
-- [x] GOAL-AGENT-002-R1 会话 Contract 与 planner/governor 时间线（已于 2026-03-22 完成第一可执行切片：后端新增 `Session/Turn/PlanStep/ToolCall/ToolResult/FinalAnswer/FollowUpAction` contract、`IStockCopilotSessionService` / `StockCopilotSessionService`，并开放 `POST /api/stocks/copilot/turns/draft` 把用户问题组装成 planner/governor timeline 草案。`StockSearchMcp` 在草案阶段已应用 `external_gated` 审批，相关定向测试 3/3 通过。）
-- [x] GOAL-AGENT-002-R2 股票 Copilot 面板 UX（已于 2026-03-23 完成：股票页右侧已接入会话化 Copilot 面板，包含问题输入、计划时间线、工具调用卡片、evidence/source 展示、follow-up action chips、最近一轮回放，以及已批准工具执行后的结果摘要与证据回填。定向单测 `StockInfoTab.spec.js` 54/54 通过，Browser MCP 已在真实股票页完成“提问 -> 看计划 -> 执行工具 -> evidence/source 落屏”验收。）
-- [ ] GOAL-AGENT-002-R3 动作化工作流集成（把 Copilot 回答接到图表、市场上下文、新闻证据、交易计划草稿等实际工作流，形成“下一步做什么”的动作卡。）
-- [ ] GOAL-AGENT-002-R4 Copilot 验收与 replay 指标（建立工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、traceability 与 action-card 质量等产品指标。）
+- [x] GOAL-AGENT-002 股票 Copilot 会话化编排与产品层（历史实现已于 2026-03-25 被用户终止，并已被手动删除默认入口与产品方向。后续文档与开发不得再把 GOAL-AGENT-002 视为当前主线、可复用 UI 模型或必须保留的产品层；相关报告仅保留为历史归档。）
 - [ ] GOAL-015 深度盘面属性扩充与 Agent 指挥体系重构（Step 3 已继续完成“基本面快照富事实 + 数据库缓存优先刷新”增强：`StockCompanyProfiles` 新增 `FundamentalFactsJson/FundamentalUpdatedAt`，详情页先读 `/api/stocks/detail/cache` 的数据库快照，再由 `/api/stocks/detail` 实时抓东财公司概况/股东研究并回写；本轮进一步补上股票信息卡片真实加载进度，将“缓存回显 / 腾讯行情 / 东方财富基本面”拆成可视化阶段，并新增 `/api/stocks/fundamental-snapshot` 轻量接口配合前端独立显示东财刷新状态。剩余主要是 Edge/UI 验收与更大范围联调。）
 - [ ] GOAL-016 单机可安装版与本地数据底座重构规划（本轮先完成规划，不急于编码；目标是把当前“桌面壳 + 本地后端 + 外部 SQL Server”的开发形态，收敛为可以发给不同 Windows 用户安装使用的单机应用。总体路线采用“桌面宿主 EXE + 后端内嵌启动 + 前端静态资源随包发布 + 主事务库 SQLite + 冷数据 Parquet + 本地分析 DuckDB”的分层架构，兼顾免安装数据库、长期大数据量增长和后续回测/统计能力。规划分 4 个切片：R1 数据库提供者抽象与 SQLite 落地；R2 高频行情/历史事实冷热分层与归档；R3 WinForms/WebView2 桌面宿主化与本地自启动；R4 安装器、升级、数据目录与发布流程收口。）
 - [ ] GOAL-016-R6 单宿主单进程 packaged runtime 收口（2026-03-22 已补充详细设计：接受“一个主 EXE + 应用自带附属文件”的交付形态，不再把“绝对单文件”作为硬目标；真正的硬目标改为“单 EXE 统一控制启动与关闭、用户无需预装 SDK/.NET runtime、后端不再作为独立后台进程存在”。实施路线为：把 ASP.NET Core 从独立 `Backend/` 进程改成由 WinForms 宿主进程内直接启动和停止；保留 localhost + WebView2 的现有前端访问契约；重做 `publish-windows-package` 与安装器链路，使桌面宿主成为唯一主入口，并为 WebView2 Fixed Version Runtime 制定随包发布与升级策略。）
 - [ ] GOAL-017 量化双引擎与 Agent/图表协同规划（本轮先完成规划，不急于编码；目标是在现有分时图、K线图、交易计划与多 Agent 分析之间补上一层统一的量化特征与策略能力。总体路线采用 `Skender primary + Lean shadow`：用轻量 .NET 指标库承担在线主引擎，用 Lean 承担 shadow/replay/calibration；图表、Agent、交易计划默认只消费 primary 结果，shadow 结果主要用于开发者模式、回放、校准与研究。规划分 4 个切片：R1 统一 normalized market-data 输入层与 feature/signal/comparison contract；R2 Skender 主运行时整合；R3 Lean shadow replay/calibration 整合；R4 图表、MCP、Agent、交易计划产品层整合。）
-- [ ] GOAL-017-R1 归一化行情输入层与量化 Contract 设计（先锁定双引擎共享底座，不急于真正接入 Skender 或 Lean。范围包括：统一 `NormalizedBar/NormalizedBarSeries`、定义 `QuantFeatureSnapshotDto/QuantStrategySignalDto/QuantEngineComparisonDto/AgentQuantContextDto`，补齐 `warmupState/degradedFlags/engine role/execution mode` 语义，并明确现有 `StockCopilot*Dto` 到新 contract 的兼容映射路径。）
+- [ ] GOAL-017-R1 归一化行情输入层与量化 Contract 设计（先锁定双引擎共享底座，不急于真正接入 Skender 或 Lean。范围包括：统一 `NormalizedBar/NormalizedBarSeries`、定义 `QuantFeatureSnapshotDto/QuantStrategySignalDto/QuantEngineComparisonDto/AgentQuantContextDto`，补齐 `warmupState/degradedFlags/engine role/execution mode` 语义。由于 `Stock Copilot / GOAL-AGENT-002` 已被手动删除，后续不再把 `StockCopilot*Dto` 当成必须兼容的产品层前提；如仓库仍残留同名类型，只按待清理遗留处理。）
 - [x] MANUAL-20260319-EXTENSION-INTERFACE `stock-and-fund-chrome-master` 接口吸收规划（已完成 R1-R5 全链路收口：后端新增 `/api/stocks/quotes/batch`、`/api/market/realtime/overview`、`/api/market/sectors/realtime`，接入东财批量行情、主力资金、北向资金、涨跌分布与实时板块榜；默认分时来源已切到东方财富优先；前端已同步落地到 `情绪轮动`、`股票推荐`、`股票信息` 与交易计划总览等高频决策入口，并通过定向单测与浏览器验收。整体策略仍是不做整包替换，而是只吸收扩展里仍有价值的公开端点；作者自建 `110.40.187.161` 云服务继续排除在正式依赖之外。）
 - [x] MANUAL-20260319-EXTENSION-INTERFACE-R1 实时行情后端切片（新增 Eastmoney realtime adapter 与聚合服务，提供批量行情和市场总览 API；验证覆盖批量行情、主力资金、北向资金、涨跌分布解析，以及本地运行时 smoke test。）
 - [x] MANUAL-20260319-CHART-PERF 股票图表刷新性能收口（已定位慢点不在第三方行情源本身，而在前端把图表刷新绑定到 `/api/stocks/detail` 重聚合链路；现已新增 `/api/stocks/chart` 轻量接口，并把 `StockInfoTab` 首屏图表和 `日K/月K/年K` 切换改为只请求图表数据。定向单测 43/43 通过，Browser MCP 已确认切换 `月K图/年K图` 时只出现 `/api/stocks/chart?...interval=month|year`，不再触发 `/api/stocks/detail/cache`、`/api/stocks/messages` 与 `/api/stocks/fundamental-snapshot`。）
@@ -291,13 +286,7 @@ opencode
 	- R2 Agent 职责重切与推理收口：再收口 4 个子 Agent 的职责边界，减少重复结论输出；对 `marketReports` 做 A 股场景净化；先由后端计算 freshness/coverage/conflict/trend/valuation 等确定性特征，再让 LLM 解释；同时把 commander 的覆盖率惩罚、冲突惩罚、degraded path 降级做成系统逻辑。
 	- R3 回放校准闭环与验收基线：最后建立历史 replay、收益对齐、命中率/Brier score/分组胜率指标与可观测验收面板，把“格式化观点”推进成“可被持续校准的分析系统”。
 	- R4 Copilot 风格 MCP 工具层：把股票 Copilot 后续最常用的图表与证据能力单独收口成领域 MCP。首批范围包括 `StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp`（Tavily 兜底），并统一 `traceId/taskId/toolName/cache/degradedFlags/evidence/features` 输出，让未来 planner/governor/commander 能像 Copilot 一样按需调用工具，而不是继续依赖大 prompt 填充所有上下文。
-- [ ] GOAL-AGENT-002 股票 Copilot 会话化编排与产品层
-	- 目标：把已完成的 evidence traceability、commander guardrails、replay baseline 和 MCP 工具层收口成真正类似 GitHub Copilot 的股票协驾体验。
-	- P0 运行态稳定性与输出安全闸门：先修复直接阻塞 Copilot 的高优先级问题，包括 `情绪轮动` sectors API 500、图表轻链路失效、raw reasoning 外泄、developer-mode 审计展示未收口，以及首次查股后疑似后端崩溃风险。没有这一步，后面的 Copilot session 体验会建立在不稳定运行态上。
-	- R1 会话 Contract 与 planner/governor 时间线：已完成后端第一可执行切片，把一轮 Copilot turn 固定为 `Session -> Turn -> PlanStep -> ToolCall -> ToolResult -> FinalAnswer -> FollowUpAction`。当前后端已能通过 `/api/stocks/copilot/turns/draft` 返回 question routing + planner/governor 草案，前端后续可直接消费。
-	- R2 股票 Copilot 面板 UX：把股票页右侧从静态分析卡片升级为会话面板，补齐问题输入、可视 plan/timeline、工具调用卡片、evidence/source 展示、follow-up action chips 和最近一轮回放。
-	- R3 动作化工作流集成：让 Copilot 不只“回答”，还要能建议下一步，例如“看 60 日 K 线结构”“检查今日分时承接”“查看主线板块共振”“起草交易计划”，并把这些动作接到图表、市场上下文、新闻证据和交易计划工作流上。
-	- R4 Copilot 验收与 replay 指标：把产品层也纳入可量化验收，跟踪工具调用效率、evidence 覆盖率、local-first 命中率、外部搜索触发率、final answer traceability 和 action-card 质量，形成后续迭代的硬基线。
+- [x] GOAL-AGENT-002 股票 Copilot 会话化编排与产品层（已归档并按用户决定手动删除；当前不再作为候选目标，后续只允许作为历史报告背景，不允许恢复为活跃需求。）
 - [ ] GOAL-008 交易计划引擎（盘前计划、盘中触发、失效条件）
 	- Step 4.0 已完成：股票切换与加载性能深度优化，后端 `/api/stocks/detail` 并发化，前端先读 `/api/stocks/detail/cache` 做秒开渲染，并加入快速切股的旧响应抑制。
 	- Step 4.1 已完成：新增 `ActiveWatchlist` 高频白名单与 `HighFrequencyQuoteService`，仅在 A 股交易时段轮询白名单股票并持续回写 quote/minute/messages 到本地缓存表，为后续交易计划触发与纪律执行提供稳定底座；已通过后端全量单测、EF migration 应用与 SQLCMD 表/索引校验。

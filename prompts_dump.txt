@@ -1,0 +1,106 @@
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\analysts\fundamentals_analyst.py =======
+
+Line 1: from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+Line 27:         system_message = (
+Line 33:         prompt = ChatPromptTemplate.from_messages(
+Line 43:                     " You have access to the following tools: {tool_names}.\n{system_message}"
+Line 50:         prompt = prompt.partial(system_message=system_message)
+Line 51:         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+Line 52:         prompt = prompt.partial(current_date=current_date)
+Line 53:         prompt = prompt.partial(instrument_context=instrument_context)
+Line 55:         chain = prompt | llm.bind_tools(tools)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\analysts\market_analyst.py =======
+
+Line 1: from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+Line 23:         system_message = (
+Line 24:             """You are a trading assistant tasked with analyzing financial markets. Your role is to select the **most relevant indicators** for a given market condition or trading strategy from the following list. The goal is to choose up to **8 indicators** that provide complementary insights without redundancy. Categories and each category's indicators are:
+Line 48: - Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call get_stock_data first to retrieve the CSV that is needed to generate indicators. Then use get_indicators with the specific indicator names. Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
+Line 49:             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+Line 52:         prompt = ChatPromptTemplate.from_messages(
+Line 62:                     " You have access to the following tools: {tool_names}.\n{system_message}"
+Line 69:         prompt = prompt.partial(system_message=system_message)
+Line 70:         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+Line 71:         prompt = prompt.partial(current_date=current_date)
+Line 72:         prompt = prompt.partial(instrument_context=instrument_context)
+Line 74:         chain = prompt | llm.bind_tools(tools)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\analysts\news_analyst.py =======
+
+Line 1: from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+Line 22:         system_message = (
+Line 24:             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+Line 27:         prompt = ChatPromptTemplate.from_messages(
+Line 37:                     " You have access to the following tools: {tool_names}.\n{system_message}"
+Line 44:         prompt = prompt.partial(system_message=system_message)
+Line 45:         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+Line 46:         prompt = prompt.partial(current_date=current_date)
+Line 47:         prompt = prompt.partial(instrument_context=instrument_context)
+Line 49:         chain = prompt | llm.bind_tools(tools)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\analysts\social_media_analyst.py =======
+
+Line 1: from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+Line 17:         system_message = (
+Line 19:             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+Line 22:         prompt = ChatPromptTemplate.from_messages(
+Line 32:                     " You have access to the following tools: {tool_names}.\n{system_message}"
+Line 39:         prompt = prompt.partial(system_message=system_message)
+Line 40:         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+Line 41:         prompt = prompt.partial(current_date=current_date)
+Line 42:         prompt = prompt.partial(instrument_context=instrument_context)
+Line 44:         chain = prompt | llm.bind_tools(tools)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\managers\portfolio_manager.py =======
+
+Line 24:         prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading decision.
+Line 53: Be decisive and ground every conclusion in specific evidence from the analysts."""
+Line 55:         response = llm.invoke(prompt)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\managers\research_manager.py =======
+
+Line 25:         prompt = f"""As the portfolio manager and debate facilitator, your role is to critically evaluate this round of debate and make a definitive decision: align with the bear analyst, the bull analyst, or choose Hold only if it is strongly justified based on the arguments presented.
+Line 43: {history}"""
+Line 44:         response = llm.invoke(prompt)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\researchers\bear_researcher.py =======
+
+Line 25:         prompt = f"""You are a Bear Analyst making the case against investing in the stock. Your goal is to present a well-reasoned argument emphasizing risks, challenges, and negative indicators. Leverage the provided research and data to highlight potential downsides and counter bullish arguments effectively.
+Line 45: """
+Line 47:         response = llm.invoke(prompt)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\researchers\bull_researcher.py =======
+
+Line 25:         prompt = f"""You are a Bull Analyst advocating for investing in the stock. Your task is to build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Leverage the provided research and data to address concerns and counter bearish arguments effectively.
+Line 43: """
+Line 45:         response = llm.invoke(prompt)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\risk_mgmt\aggressive_debator.py =======
+
+Line 21:         prompt = f"""As the Aggressive Risk Analyst, your role is to actively champion high-reward, high-risk opportunities, emphasizing bold strategies and competitive advantages. When evaluating the trader's decision or plan, focus intently on the potential upside, growth potential, and innovative benefits—even when these come with elevated risk. Use the provided market data and sentiment analysis to strengthen your arguments and challenge the opposing views. Specifically, respond directly to each point made by the conservative and neutral analysts, countering with data-driven rebuttals and persuasive reasoning. Highlight where their caution might miss critical opportunities or where their assumptions may be overly conservative. Here is the trader's decision:
+Line 33: Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting."""
+Line 35:         response = llm.invoke(prompt)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\risk_mgmt\conservative_debator.py =======
+
+Line 22:         prompt = f"""As the Conservative Risk Analyst, your primary objective is to protect assets, minimize volatility, and ensure steady, reliable growth. You prioritize stability, security, and risk mitigation, carefully assessing potential losses, economic downturns, and market volatility. When evaluating the trader's decision or plan, critically examine high-risk elements, pointing out where the decision may expose the firm to undue risk and where more cautious alternatives could secure long-term gains. Here is the trader's decision:
+Line 34: Engage by questioning their optimism and emphasizing the potential downsides they may have overlooked. Address each of their counterpoints to showcase why a conservative stance is ultimately the safest path for the firm's assets. Focus on debating and critiquing their arguments to demonstrate the strength of a low-risk strategy over their approaches. Output conversationally as if you are speaking without any special formatting."""
+Line 36:         response = llm.invoke(prompt)
+
+
+======= noupload/TradingAgents-main/tradingagents/agents\risk_mgmt\neutral_debator.py =======
+
+Line 21:         prompt = f"""As the Neutral Risk Analyst, your role is to provide a balanced perspective, weighing both the potential benefits and risks of the trader's decision or plan. You prioritize a well-rounded approach, evaluating the upsides and downsides while factoring in broader market trends, potential economic shifts, and diversification strategies.Here is the trader's decision:
+Line 33: Engage actively by analyzing both sides critically, addressing weaknesses in the aggressive and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting."""
+Line 35:         response = llm.invoke(prompt)
