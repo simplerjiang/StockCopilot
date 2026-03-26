@@ -1,0 +1,8 @@
+{
+  "errorCode": "market_noise_filtered",
+  "freshnessTag": "recent",
+  "sourceTier": "local",
+  "cacheHit": false,
+  "rolePolicyClass": "local_required",
+  "data_length": "no series"
+}

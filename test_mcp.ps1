@@ -1,0 +1,1 @@
+$r = Invoke-WebRequest -Uri "http://localhost:5119/api/stocks/mcp/kline?symbol=sh601899" -UseBasicParsing; $r.Content | ConvertFrom-Json | ConvertTo-Json -Depth 5

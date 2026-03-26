@@ -20,13 +20,16 @@
 4. 若角色表与能力矩阵不闭合，该角色只能标记 blocked，不允许在 UI 或文档里伪装成已支持。
 
 ## 核心工作项
-1. 定义 `MCP Manager / Tool Gateway` 抽象层。
-2. 定义角色级工具权限和 tool group 级授权模型。
-3. 形成角色能力矩阵：Company Overview、Market、Social、News、Fundamentals、Shareholder、Product。
-4. 补齐缺失 MCP 或 adapter：`CompanyOverviewMcp`、`StockFundamentalsMcp`、`StockShareholderMcp`、`StockProductMcp`，以及 Social Sentiment 的降级方案。
-5. 定义 tool envelope、evidence 最小字段、freshness 规则、degraded flags。
-6. 对 `local_required` 工具定义 fail-fast 和 machine-readable 错误码。
-7. 完成真实 MCP 拿数验证、Prompt 使用规则检查和基于环境 LLM key 的工具调用实测。
+1. 先落地 `MCP Manager / Tool Gateway`、`McpServiceRegistry`、`RoleToolPolicyService` 三件套。
+2. 恢复或新增 MCP / draft 的运行态入口，使 P0-Pre 可执行真实 HTTP readiness check。
+3. 定义角色级工具权限和 tool group 级授权模型。
+4. 先把现有五类 MCP (`StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp`) 正式纳入统一网关。
+5. 再补齐第一批缺失 MCP：`CompanyOverviewMcp`、`StockFundamentalsMcp`、`StockShareholderMcp`。
+6. 再补 `MarketContextMcp` 与 `SocialSentimentMcp` 的正式或降级 contract。
+7. 将 `StockProductMcp` 作为单独 backlog 管理；若无稳定上游源，必须明确 blocked。
+8. 定义 tool envelope、evidence 最小字段、freshness 规则、degraded flags。
+9. 对 `local_required` 工具定义 fail-fast 和 machine-readable 错误码。
+10. 完成真实 MCP 拿数验证、Prompt 使用规则检查和基于环境 LLM key 的工具调用实测。
 
 ## 详细开发拆解
 
@@ -85,11 +88,11 @@
 5. `SocialSentimentMcp` 或等价降级方案：明确真实源、受控 external fallback、degraded 标记与结论降级方式。
 
 ## 建议实施顺序
-1. 先定义 `ToolGateway` 接口、envelope DTO、角色权限矩阵和错误码字典。
-2. 再把现有 `StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp` 适配到统一网关，验证旧能力不退化。
-3. 然后补 `CompanyOverviewMcp`、`StockFundamentalsMcp`、`StockShareholderMcp` 三个优先缺口。
-4. 再为 Social Sentiment 写明确降级 contract，决定何时显示 blocked、何时显示 degraded。
-5. 最后处理 `StockProductMcp`：若没有真实数据源，则在 contract 中明确 blocked，不允许伪成功。
+1. 先完成基础设施 Phase A：`ToolGateway`、`McpServiceRegistry`、`RoleToolPolicyService`、MCP / draft 运行态入口、错误码字典。
+2. 再完成 Phase B：把现有 `StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp` 适配到统一网关，验证旧能力不退化。
+3. 然后完成 Phase C：补 `CompanyOverviewMcp`、`StockFundamentalsMcp`、`StockShareholderMcp` 三个绝对阻断型缺口。
+4. 再完成 Phase D：补 `MarketContextMcp` 与 `SocialSentimentMcp`，并写清 success / degraded / blocked contract。
+5. 最后完成 Phase E：处理 `StockProductMcp`；若没有真实数据源，则在 contract、矩阵、readiness 报告中明确 blocked，不允许伪成功。
 
 ## 角色能力矩阵细化要求
 1. 每个角色都要列出：可调用 tool groups、默认 policyClass、失败后是 blocked 还是 degraded、最小 evidence 数量要求。

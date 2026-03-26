@@ -7,6 +7,8 @@ internal static class EastmoneyCompanyProfileParser
 {
     private static readonly (string JsonKey, string Label)[] FactMappings =
     [
+        ("zyyw", "主营业务"),
+        ("jyfw", "经营范围"),
         ("gsmc", "公司全称"),
         ("ywmc", "英文名称"),
         ("zqlb", "证券类别"),
@@ -186,5 +188,58 @@ internal static class EastmoneyCompanyProfileParser
         }
 
         return null;
+    }
+
+    public static IReadOnlyList<StockFundamentalFactDto> ParseFinanceFacts(string? financeJson)
+    {
+        if (string.IsNullOrWhiteSpace(financeJson))
+        {
+            return Array.Empty<StockFundamentalFactDto>();
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(financeJson);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("data", out var dataNode) || dataNode.ValueKind != JsonValueKind.Array || dataNode.GetArrayLength() == 0)
+            {
+                return Array.Empty<StockFundamentalFactDto>();
+            }
+
+            var latest = dataNode[0];
+            var facts = new List<StockFundamentalFactDto>();
+
+            void AddFactOrSkip(string jsonKey, string label, string unit = "", decimal divisor = 1m)
+            {
+                if (latest.TryGetProperty(jsonKey, out var valNode) && valNode.ValueKind == JsonValueKind.Number && valNode.TryGetDecimal(out var val))
+                {
+                    var formatted = (val / divisor).ToString("0.##");
+                    facts.Add(new StockFundamentalFactDto(label, $"{formatted}{unit}", "东方财富最新财报"));
+                }
+            }
+
+            if (latest.TryGetProperty("REPORT_DATE_NAME", out var reportNameNode) && reportNameNode.ValueKind == JsonValueKind.String)
+            {
+                facts.Add(new StockFundamentalFactDto("最新财报期", reportNameNode.GetString() ?? "", "东方财富最新财报"));
+            }
+
+            AddFactOrSkip("TOTALOPERATEREVE", "营业收入", "亿元", 100000000m);
+            AddFactOrSkip("PARENTNETPROFIT", "归属净利润", "亿元", 100000000m);
+            AddFactOrSkip("KCFJCXSYJLR", "扣非净利润", "亿元", 100000000m);
+            AddFactOrSkip("TOTALOPERATEREVETZ", "营收同比", "%");
+            AddFactOrSkip("PARENTNETPROFITTZ", "归属净利同比", "%");
+            AddFactOrSkip("EPSJB", "基本每股收益", "元");
+            AddFactOrSkip("BPS", "每股净资产", "元");
+            AddFactOrSkip("ROEJQ", "净资产收益率(ROE)", "%");
+            AddFactOrSkip("XSMLL", "销售毛利率", "%");
+            AddFactOrSkip("XSJLL", "销售净利率", "%");
+            AddFactOrSkip("ZCFZL", "资产负债率", "%");
+
+            return facts;
+        }
+        catch
+        {
+            return Array.Empty<StockFundamentalFactDto>();
+        }
     }
 }

@@ -1,0 +1,612 @@
+﻿diff --git a/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyCompanyProfileParser.cs b/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyCompanyProfileParser.cs
+index 1d22f54..ceb1761 100644
+--- a/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyCompanyProfileParser.cs
++++ b/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyCompanyProfileParser.cs
+@@ -7,6 +7,8 @@ internal static class EastmoneyCompanyProfileParser
+ {
+     private static readonly (string JsonKey, string Label)[] FactMappings =
+     [
++        ("zyyw", "涓昏惀涓氬姟"),
++        ("jyfw", "缁忚惀鑼冨洿"),
+         ("gsmc", "鍏徃鍏ㄧО"),
+         ("ywmc", "鑻辨枃鍚嶇О"),
+         ("zqlb", "璇佸埜绫诲埆"),
+@@ -187,4 +189,57 @@ internal static class EastmoneyCompanyProfileParser
+ 
+         return null;
+     }
++
++    public static IReadOnlyList<StockFundamentalFactDto> ParseFinanceFacts(string? financeJson)
++    {
++        if (string.IsNullOrWhiteSpace(financeJson))
++        {
++            return Array.Empty<StockFundamentalFactDto>();
++        }
++
++        try
++        {
++            using var document = JsonDocument.Parse(financeJson);
++            var root = document.RootElement;
++            if (!root.TryGetProperty("data", out var dataNode) || dataNode.ValueKind != JsonValueKind.Array || dataNode.GetArrayLength() == 0)
++            {
++                return Array.Empty<StockFundamentalFactDto>();
++            }
++
++            var latest = dataNode[0];
++            var facts = new List<StockFundamentalFactDto>();
++
++            void AddFactOrSkip(string jsonKey, string label, string unit = "", decimal divisor = 1m)
++            {
++                if (latest.TryGetProperty(jsonKey, out var valNode) && valNode.ValueKind == JsonValueKind.Number && valNode.TryGetDecimal(out var val))
++                {
++                    var formatted = (val / divisor).ToString("0.##");
++                    facts.Add(new StockFundamentalFactDto(label, $"{formatted}{unit}", "涓滄柟璐㈠瘜鏈€鏂拌储鎶?));
++                }
++            }
++
++            if (latest.TryGetProperty("REPORT_DATE_NAME", out var reportNameNode) && reportNameNode.ValueKind == JsonValueKind.String)
++            {
++                facts.Add(new StockFundamentalFactDto("鏈€鏂拌储鎶ユ湡", reportNameNode.GetString() ?? "", "涓滄柟璐㈠瘜鏈€鏂拌储鎶?));
++            }
++
++            AddFactOrSkip("TOTALOPERATEREVE", "钀ヤ笟鏀跺叆", "浜垮厓", 100000000m);
++            AddFactOrSkip("PARENTNETPROFIT", "褰掑睘鍑€鍒╂鼎", "浜垮厓", 100000000m);
++            AddFactOrSkip("KCFJCXSYJLR", "鎵ｉ潪鍑€鍒╂鼎", "浜垮厓", 100000000m);
++            AddFactOrSkip("TOTALOPERATEREVETZ", "钀ユ敹鍚屾瘮", "%");
++            AddFactOrSkip("PARENTNETPROFITTZ", "褰掑睘鍑€鍒╁悓姣?, "%");
++            AddFactOrSkip("EPSJB", "鍩烘湰姣忚偂鏀剁泭", "鍏?);
++            AddFactOrSkip("BPS", "姣忚偂鍑€璧勪骇", "鍏?);
++            AddFactOrSkip("ROEJQ", "鍑€璧勪骇鏀剁泭鐜?ROE)", "%");
++            AddFactOrSkip("XSMLL", "閿€鍞瘺鍒╃巼", "%");
++            AddFactOrSkip("XSJLL", "閿€鍞噣鍒╃巼", "%");
++            AddFactOrSkip("ZCFZL", "璧勪骇璐熷€虹巼", "%");
++
++            return facts;
++        }
++        catch
++        {
++            return Array.Empty<StockFundamentalFactDto>();
++        }
++    }
+ }
+\ No newline at end of file
+diff --git a/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyFundamentalSnapshotService.cs b/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyFundamentalSnapshotService.cs
+index e566800..9324619 100644
+--- a/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyFundamentalSnapshotService.cs
++++ b/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/EastmoneyFundamentalSnapshotService.cs
+@@ -18,10 +18,12 @@ public sealed class EastmoneyFundamentalSnapshotService : IStockFundamentalSnaps
+         var code = normalized[2..];
+         var surveyUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={marketPrefix}{code}";
+         var shareholderUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={marketPrefix}{code}";
++        var financeUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={marketPrefix}{code}";
+ 
+         var surveyTask = TryGetStringAsync(surveyUrl, cancellationToken);
+         var shareholderTask = TryGetStringAsync(shareholderUrl, cancellationToken);
+-        await Task.WhenAll(surveyTask, shareholderTask);
++        var financeTask = TryGetStringAsync(financeUrl, cancellationToken);
++        await Task.WhenAll(surveyTask, shareholderTask, financeTask);
+ 
+         var surveyJson = await surveyTask;
+         if (string.IsNullOrWhiteSpace(surveyJson))
+@@ -30,12 +32,21 @@ public sealed class EastmoneyFundamentalSnapshotService : IStockFundamentalSnaps
+         }
+ 
+         var dto = EastmoneyCompanyProfileParser.Parse(normalized, surveyJson, await shareholderTask);
+-        if (dto.Facts.Count == 0)
++        var financeJson = await financeTask;
++        var allFacts = new List<StockFundamentalFactDto>(dto.Facts);
++        
++        if (!string.IsNullOrWhiteSpace(financeJson))
++        {
++            var financeFacts = EastmoneyCompanyProfileParser.ParseFinanceFacts(financeJson);
++            allFacts.AddRange(financeFacts);
++        }
++
++        if (allFacts.Count == 0)
+         {
+             return null;
+         }
+ 
+-        return new StockFundamentalSnapshotDto(DateTime.UtcNow, dto.Facts);
++        return new StockFundamentalSnapshotDto(DateTime.UtcNow, allFacts);
+     }
+ 
+     private async Task<string?> TryGetStringAsync(string url, CancellationToken cancellationToken)
+diff --git a/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/StockCopilotMcpService.cs b/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/StockCopilotMcpService.cs
+index 202134f..1011548 100644
+--- a/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/StockCopilotMcpService.cs
++++ b/backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/StockCopilotMcpService.cs
+@@ -1,6 +1,7 @@
+ using System.Diagnostics;
+ using System.Net.Http.Json;
+ using System.Text.Json;
++using System.Text.RegularExpressions;
+ using Microsoft.Extensions.Options;
+ using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
+ 
+@@ -8,6 +9,9 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
+ 
+ public interface IStockCopilotMcpService
+ {
++    Task<StockCopilotMcpEnvelopeDto<StockCopilotCompanyOverviewDataDto>> GetCompanyOverviewAsync(string symbol, string? taskId, CancellationToken cancellationToken = default);
++    Task<StockCopilotMcpEnvelopeDto<StockCopilotFundamentalsDataDto>> GetFundamentalsAsync(string symbol, string? taskId, CancellationToken cancellationToken = default);
++    Task<StockCopilotMcpEnvelopeDto<StockCopilotShareholderDataDto>> GetShareholderAsync(string symbol, string? taskId, CancellationToken cancellationToken = default);
+     Task<StockCopilotMcpEnvelopeDto<StockCopilotKlineDataDto>> GetKlineAsync(string symbol, string interval, int count, string? source, string? taskId, CancellationToken cancellationToken = default);
+     Task<StockCopilotMcpEnvelopeDto<StockCopilotMinuteDataDto>> GetMinuteAsync(string symbol, string? source, string? taskId, CancellationToken cancellationToken = default);
+     Task<StockCopilotMcpEnvelopeDto<StockCopilotStrategyDataDto>> GetStrategyAsync(string symbol, string interval, int count, string? source, IReadOnlyList<string>? strategies, string? taskId, CancellationToken cancellationToken = default);
+@@ -18,10 +22,12 @@ public interface IStockCopilotMcpService
+ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+ {
+     private const string Version = "v1";
++    private static readonly Regex IntegerRegex = new("\\d+", RegexOptions.Compiled);
+     private readonly IStockDataService _dataService;
+     private readonly IQueryLocalFactDatabaseTool _queryLocalFactDatabaseTool;
+     private readonly IStockMarketContextService _marketContextService;
+     private readonly IStockAgentFeatureEngineeringService _featureEngineeringService;
++    private readonly IStockFundamentalSnapshotService _fundamentalSnapshotService;
+     private readonly IHttpClientFactory _httpClientFactory;
+     private readonly StockCopilotSearchOptions _searchOptions;
+ 
+@@ -30,6 +36,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+         IQueryLocalFactDatabaseTool queryLocalFactDatabaseTool,
+         IStockMarketContextService marketContextService,
+         IStockAgentFeatureEngineeringService featureEngineeringService,
++        IStockFundamentalSnapshotService fundamentalSnapshotService,
+         IHttpClientFactory httpClientFactory,
+         IOptions<StockCopilotSearchOptions> searchOptions)
+     {
+@@ -37,10 +44,118 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+         _queryLocalFactDatabaseTool = queryLocalFactDatabaseTool;
+         _marketContextService = marketContextService;
+         _featureEngineeringService = featureEngineeringService;
++        _fundamentalSnapshotService = fundamentalSnapshotService;
+         _httpClientFactory = httpClientFactory;
+         _searchOptions = searchOptions.Value;
+     }
+ 
++    public async Task<StockCopilotMcpEnvelopeDto<StockCopilotCompanyOverviewDataDto>> GetCompanyOverviewAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
++    {
++        var stopwatch = Stopwatch.StartNew();
++        var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
++        var quote = await _dataService.GetQuoteAsync(normalizedSymbol, null, cancellationToken);
++        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
++        var snapshotResolution = await ResolveFundamentalSnapshotAsync(normalizedSymbol, localFacts, cancellationToken);
++        var shareholderCount = quote.ShareholderCount
++            ?? TryResolveShareholderCount(snapshotResolution.Snapshot?.Facts)
++            ?? TryResolveShareholderCount(localFacts.FundamentalFacts);
++        var warnings = BuildWarnings(snapshotResolution.Warning);
++        var degradedFlags = BuildDegradedFlags(snapshotResolution.DegradedFlag);
++
++        stopwatch.Stop();
++        return BuildEnvelope(
++            toolName: StockMcpToolNames.CompanyOverview,
++            policyClass: "local_required",
++            taskId: taskId,
++            latencyMs: stopwatch.ElapsedMilliseconds,
++            data: new StockCopilotCompanyOverviewDataDto(
++                normalizedSymbol,
++                FirstNonEmpty(localFacts.Name, quote.Name, normalizedSymbol),
++                FirstNonEmpty(localFacts.SectorName, quote.SectorName),
++                quote.Price,
++                quote.ChangePercent,
++                quote.FloatMarketCap > 0m ? quote.FloatMarketCap : null,
++                quote.PeRatio > 0m ? quote.PeRatio : null,
++                shareholderCount,
++                quote.Timestamp,
++                snapshotResolution.UpdatedAt,
++                snapshotResolution.Snapshot?.Facts.Count ?? localFacts.FundamentalFacts.Count),
++            evidence: BuildCompanyOverviewEvidence(normalizedSymbol, quote, localFacts, snapshotResolution.UpdatedAt, shareholderCount),
++            features: BuildCompanyOverviewFeatures(quote, localFacts, shareholderCount, snapshotResolution.Snapshot?.Facts.Count ?? localFacts.FundamentalFacts.Count, snapshotResolution.UpdatedAt),
++            symbol: normalizedSymbol,
++            interval: null,
++            query: null,
++            marketContext: await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken),
++            degradedFlags: degradedFlags,
++            warnings: warnings);
++    }
++
++    public async Task<StockCopilotMcpEnvelopeDto<StockCopilotFundamentalsDataDto>> GetFundamentalsAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
++    {
++        var stopwatch = Stopwatch.StartNew();
++        var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
++        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
++        var snapshotResolution = await ResolveFundamentalSnapshotAsync(normalizedSymbol, localFacts, cancellationToken);
++        var allFacts = snapshotResolution.Snapshot?.Facts ?? ConvertFacts(localFacts.FundamentalFacts);
++        var facts = allFacts.Where(item => !IsShareholderFact(item)).ToList();
++        var warnings = BuildWarnings(snapshotResolution.Warning);
++        var degradedFlags = BuildDegradedFlags(snapshotResolution.DegradedFlag ?? (facts.Count == 0 ? "no_fundamental_facts" : null));
++
++        stopwatch.Stop();
++        return BuildEnvelope(
++            toolName: StockMcpToolNames.Fundamentals,
++            policyClass: "local_required",
++            taskId: taskId,
++            latencyMs: stopwatch.ElapsedMilliseconds,
++            data: new StockCopilotFundamentalsDataDto(normalizedSymbol, snapshotResolution.UpdatedAt, facts.Count, facts),
++            evidence: BuildFactEvidence(normalizedSymbol, facts, snapshotResolution.UpdatedAt, "fundamental"),
++            features: BuildFundamentalFeatures(facts.Count, snapshotResolution.UpdatedAt),
++            symbol: normalizedSymbol,
++            interval: null,
++            query: null,
++            marketContext: await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken),
++            degradedFlags: degradedFlags,
++            warnings: warnings);
++    }
++
++    public async Task<StockCopilotMcpEnvelopeDto<StockCopilotShareholderDataDto>> GetShareholderAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
++    {
++        var stopwatch = Stopwatch.StartNew();
++        var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
++        var quote = await _dataService.GetQuoteAsync(normalizedSymbol, null, cancellationToken);
++        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
++        var snapshotResolution = await ResolveFundamentalSnapshotAsync(normalizedSymbol, localFacts, cancellationToken);
++        var allFacts = snapshotResolution.Snapshot?.Facts ?? ConvertFacts(localFacts.FundamentalFacts);
++        var shareholderFacts = FilterShareholderFacts(allFacts).ToList();
++        var shareholderCount = quote.ShareholderCount
++            ?? TryResolveShareholderCount(allFacts)
++            ?? TryResolveShareholderCount(localFacts.FundamentalFacts);
++
++        if (shareholderCount.HasValue && shareholderFacts.All(item => !string.Equals(item.Label, "鑲′笢鎴锋暟", StringComparison.OrdinalIgnoreCase)))
++        {
++            shareholderFacts.Insert(0, new StockFundamentalFactDto("鑲′笢鎴锋暟", shareholderCount.Value.ToString(), "鍏徃鐢诲儚缂撳瓨"));
++        }
++
++        var warnings = BuildWarnings(snapshotResolution.Warning);
++        var degradedFlags = BuildDegradedFlags(snapshotResolution.DegradedFlag ?? (!shareholderCount.HasValue && shareholderFacts.Count == 0 ? "no_shareholder_facts" : null));
++
++        stopwatch.Stop();
++        return BuildEnvelope(
++            toolName: StockMcpToolNames.Shareholder,
++            policyClass: "local_required",
++            taskId: taskId,
++            latencyMs: stopwatch.ElapsedMilliseconds,
++            data: new StockCopilotShareholderDataDto(normalizedSymbol, shareholderCount, snapshotResolution.UpdatedAt, shareholderFacts.Count, shareholderFacts),
++            evidence: BuildFactEvidence(normalizedSymbol, shareholderFacts, snapshotResolution.UpdatedAt, "shareholder"),
++            features: BuildShareholderFeatures(shareholderCount, shareholderFacts.Count, snapshotResolution.UpdatedAt),
++            symbol: normalizedSymbol,
++            interval: null,
++            query: null,
++            marketContext: await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken),
++            degradedFlags: degradedFlags,
++            warnings: warnings);
++    }
++
+     public async Task<StockCopilotMcpEnvelopeDto<StockCopilotKlineDataDto>> GetKlineAsync(string symbol, string interval, int count, string? source, string? taskId, CancellationToken cancellationToken = default)
+     {
+         var stopwatch = Stopwatch.StartNew();
+@@ -48,19 +163,11 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+         var safeInterval = string.IsNullOrWhiteSpace(interval) ? "day" : interval.Trim();
+         var safeCount = Math.Clamp(count, 20, 240);
+ 
+-        var quoteTask = _dataService.GetQuoteAsync(normalizedSymbol, source, cancellationToken);
+-        var klineTask = _dataService.GetKLineAsync(normalizedSymbol, safeInterval, safeCount, source, cancellationToken);
+-        var messageTask = _dataService.GetIntradayMessagesAsync(normalizedSymbol, source, cancellationToken);
+-        var minuteTask = _dataService.GetMinuteLineAsync(normalizedSymbol, source, cancellationToken);
+-        var newsTask = _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
+-
+-        await Task.WhenAll(quoteTask, klineTask, messageTask, minuteTask, newsTask);
+-
+-        var quote = await quoteTask;
+-        var kLines = await klineTask;
+-        var messages = await messageTask;
+-        var minuteLines = await minuteTask;
+-        var localFacts = await newsTask;
++        var quote = await _dataService.GetQuoteAsync(normalizedSymbol, source, cancellationToken);
++        var kLines = await _dataService.GetKLineAsync(normalizedSymbol, safeInterval, safeCount, source, cancellationToken);
++        var messages = await _dataService.GetIntradayMessagesAsync(normalizedSymbol, source, cancellationToken);
++        var minuteLines = await _dataService.GetMinuteLineAsync(normalizedSymbol, source, cancellationToken);
++        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
+         var newsPolicy = StockAgentNewsContextPolicy.Apply(messages, DateTime.Now).Policy;
+         var prepared = _featureEngineeringService.Prepare(normalizedSymbol, quote, kLines, minuteLines, messages, newsPolicy, StockAgentLocalFactProjection.Create(localFacts), DateTime.Now);
+ 
+@@ -108,19 +215,11 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+         var stopwatch = Stopwatch.StartNew();
+         var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
+ 
+-        var quoteTask = _dataService.GetQuoteAsync(normalizedSymbol, source, cancellationToken);
+-        var klineTask = _dataService.GetKLineAsync(normalizedSymbol, "day", 60, source, cancellationToken);
+-        var minuteTask = _dataService.GetMinuteLineAsync(normalizedSymbol, source, cancellationToken);
+-        var messageTask = _dataService.GetIntradayMessagesAsync(normalizedSymbol, source, cancellationToken);
+-        var newsTask = _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
+-
+-        await Task.WhenAll(quoteTask, klineTask, minuteTask, messageTask, newsTask);
+-
+-        var quote = await quoteTask;
+-        var kLines = await klineTask;
+-        var minuteLines = await minuteTask;
+-        var messages = await messageTask;
+-        var localFacts = await newsTask;
++        var quote = await _dataService.GetQuoteAsync(normalizedSymbol, source, cancellationToken);
++        var kLines = await _dataService.GetKLineAsync(normalizedSymbol, "day", 60, source, cancellationToken);
++        var minuteLines = await _dataService.GetMinuteLineAsync(normalizedSymbol, source, cancellationToken);
++        var messages = await _dataService.GetIntradayMessagesAsync(normalizedSymbol, source, cancellationToken);
++        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
+         var prepared = _featureEngineeringService.Prepare(
+             normalizedSymbol,
+             quote,
+@@ -180,19 +279,11 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+         var safeInterval = string.IsNullOrWhiteSpace(interval) ? "day" : interval.Trim();
+         var safeCount = Math.Clamp(count, 30, 180);
+ 
+-        var quoteTask = _dataService.GetQuoteAsync(normalizedSymbol, source, cancellationToken);
+-        var klineTask = _dataService.GetKLineAsync(normalizedSymbol, safeInterval, safeCount, source, cancellationToken);
+-        var minuteTask = _dataService.GetMinuteLineAsync(normalizedSymbol, source, cancellationToken);
+-        var messageTask = _dataService.GetIntradayMessagesAsync(normalizedSymbol, source, cancellationToken);
+-        var newsTask = _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
+-
+-        await Task.WhenAll(quoteTask, klineTask, minuteTask, messageTask, newsTask);
+-
+-        var quote = await quoteTask;
+-        var kLines = await klineTask;
+-        var minuteLines = await minuteTask;
+-        var messages = await messageTask;
+-        var localFacts = await newsTask;
++        var quote = await _dataService.GetQuoteAsync(normalizedSymbol, source, cancellationToken);
++        var kLines = await _dataService.GetKLineAsync(normalizedSymbol, safeInterval, safeCount, source, cancellationToken);
++        var minuteLines = await _dataService.GetMinuteLineAsync(normalizedSymbol, source, cancellationToken);
++        var messages = await _dataService.GetIntradayMessagesAsync(normalizedSymbol, source, cancellationToken);
++        var localFacts = await _queryLocalFactDatabaseTool.QueryAsync(normalizedSymbol, cancellationToken);
+         var prepared = _featureEngineeringService.Prepare(
+             normalizedSymbol,
+             quote,
+@@ -444,18 +535,82 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+         IReadOnlyList<string> degradedFlags,
+         IReadOnlyList<string> warnings)
+     {
++        var cache = new StockCopilotMcpCacheDto(false, "live", DateTime.UtcNow);
+         return new StockCopilotMcpEnvelopeDto<T>(
+             Guid.NewGuid().ToString("N"),
+             string.IsNullOrWhiteSpace(taskId) ? Guid.NewGuid().ToString("N") : taskId.Trim(),
+             toolName,
+             latencyMs,
+-            new StockCopilotMcpCacheDto(false, "live", DateTime.UtcNow),
++            cache,
+             warnings,
+             degradedFlags,
+             data,
+             evidence,
+             features,
+-            new StockCopilotMcpMetaDto(Version, policyClass, toolName, symbol, interval, query, marketContext));
++            new StockCopilotMcpMetaDto(Version, policyClass, toolName, symbol, interval, query, marketContext),
++            ResolveErrorCode(degradedFlags, warnings),
++            ResolveFreshnessTag(evidence, cache.GeneratedAt),
++            ResolveSourceTier(policyClass, evidence, cache.Source),
++            cache.Hit,
++            policyClass);
++    }
++
++    private static string? ResolveErrorCode(IReadOnlyList<string> degradedFlags, IReadOnlyList<string> warnings)
++    {
++        if (degradedFlags.Count > 0)
++        {
++            return degradedFlags[0];
++        }
++
++        if (warnings.Count > 0)
++        {
++            return "tool.warning_present";
++        }
++
++        return null;
++    }
++
++    private static string ResolveFreshnessTag(IReadOnlyList<StockCopilotMcpEvidenceDto> evidence, DateTime generatedAt)
++    {
++        if (evidence.Count == 0)
++        {
++            return "no_data";
++        }
++
++        var latestTimestamp = evidence
++            .Select(item => item.PublishedAt ?? item.CrawledAt ?? item.IngestedAt)
++            .Where(item => item.HasValue)
++            .Select(item => item!.Value.ToUniversalTime())
++            .DefaultIfEmpty(generatedAt)
++            .Max();
++
++        var age = generatedAt - latestTimestamp;
++        if (age <= TimeSpan.FromHours(6))
++        {
++            return "fresh";
++        }
++
++        if (age <= TimeSpan.FromHours(72))
++        {
++            return "recent";
++        }
++
++        return "stale";
++    }
++
++    private static string ResolveSourceTier(string policyClass, IReadOnlyList<StockCopilotMcpEvidenceDto> evidence, string cacheSource)
++    {
++        if (string.Equals(policyClass, "external_gated", StringComparison.OrdinalIgnoreCase))
++        {
++            return "external";
++        }
++
++        if (evidence.Any(item => item.LocalFactId.HasValue || !string.IsNullOrWhiteSpace(item.SourceRecordId)))
++        {
++            return "local";
++        }
++
++        return string.Equals(cacheSource, "live", StringComparison.OrdinalIgnoreCase) ? "live" : "cache";
+     }
+ 
+     private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildFeatureList(StockAgentDeterministicFeaturesDto features)
+@@ -719,4 +874,174 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
+     {
+         return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : null;
+     }
++
++    private async Task<(StockFundamentalSnapshotDto? Snapshot, DateTime? UpdatedAt, string? DegradedFlag, string? Warning)> ResolveFundamentalSnapshotAsync(
++        string symbol,
++        LocalFactPackageDto localFacts,
++        CancellationToken cancellationToken)
++    {
++        if (localFacts.FundamentalFacts.Count > 0)
++        {
++            return (
++                new StockFundamentalSnapshotDto(localFacts.FundamentalUpdatedAt ?? DateTime.UtcNow, ConvertFacts(localFacts.FundamentalFacts)),
++                localFacts.FundamentalUpdatedAt,
++                null,
++                null);
++        }
++
++        try
++        {
++            var snapshot = await _fundamentalSnapshotService.GetSnapshotAsync(symbol, cancellationToken);
++            return snapshot is null
++                ? (null, null, "no_fundamental_facts", null)
++                : (snapshot, snapshot.UpdatedAt, null, null);
++        }
++        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException)
++        {
++            return (null, null, "fundamental_snapshot_unavailable", $"鍩烘湰闈㈠揩鐓ф姄鍙栧け璐? {ex.Message}");
++        }
++    }
++
++    private static IReadOnlyList<StockFundamentalFactDto> ConvertFacts(IReadOnlyList<LocalFundamentalFactDto> facts)
++    {
++        return facts.Select(item => new StockFundamentalFactDto(item.Label, item.Value, item.Source)).ToArray();
++    }
++
++    private static IReadOnlyList<StockFundamentalFactDto> FilterShareholderFacts(IReadOnlyList<StockFundamentalFactDto> facts)
++    {
++        return facts.Where(IsShareholderFact).ToArray();
++    }
++
++    private static bool IsShareholderFact(StockFundamentalFactDto item)
++    {
++        return item.Label.Contains("鑲′笢", StringComparison.OrdinalIgnoreCase)
++               || item.Label.Contains("鎴峰潎", StringComparison.OrdinalIgnoreCase)
++               || item.Label.Contains("闆嗕腑搴?, StringComparison.OrdinalIgnoreCase)
++               || item.Label.Contains("鎸佽偂", StringComparison.OrdinalIgnoreCase);
++    }
++
++    private static int? TryResolveShareholderCount(IReadOnlyList<StockFundamentalFactDto>? facts)
++    {
++        var value = facts?.FirstOrDefault(item => item.Label.Contains("鑲′笢鎴锋暟", StringComparison.OrdinalIgnoreCase))?.Value;
++        return ParseInteger(value);
++    }
++
++    private static int? TryResolveShareholderCount(IReadOnlyList<LocalFundamentalFactDto>? facts)
++    {
++        var value = facts?.FirstOrDefault(item => item.Label.Contains("鑲′笢鎴锋暟", StringComparison.OrdinalIgnoreCase))?.Value;
++        return ParseInteger(value);
++    }
++
++    private static int? ParseInteger(string? value)
++    {
++        if (string.IsNullOrWhiteSpace(value))
++        {
++            return null;
++        }
++
++        var match = IntegerRegex.Match(value.Replace(",", string.Empty, StringComparison.Ordinal));
++        return match.Success && int.TryParse(match.Value, out var parsed) ? parsed : null;
++    }
++
++    private static IReadOnlyList<string> BuildWarnings(string? warning)
++    {
++        return string.IsNullOrWhiteSpace(warning) ? Array.Empty<string>() : new[] { warning };
++    }
++
++    private static IReadOnlyList<string> BuildDegradedFlags(string? degradedFlag)
++    {
++        return string.IsNullOrWhiteSpace(degradedFlag) ? Array.Empty<string>() : new[] { degradedFlag };
++    }
++
++    private static string FirstNonEmpty(params string?[] values)
++    {
++        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
++    }
++
++    private static IReadOnlyList<StockCopilotMcpEvidenceDto> BuildCompanyOverviewEvidence(
++        string symbol,
++        StockQuoteDto quote,
++        LocalFactPackageDto localFacts,
++        DateTime? fundamentalUpdatedAt,
++        int? shareholderCount)
++    {
++        var evidence = new List<StockCopilotMcpEvidenceDto>
++        {
++            new(
++                $"{FirstNonEmpty(localFacts.Name, quote.Name, symbol)} 鍏徃姒傝",
++                FirstNonEmpty(localFacts.Name, quote.Name, symbol),
++                "鍏徃鐢诲儚缂撳瓨",
++                quote.Timestamp,
++                fundamentalUpdatedAt,
++                null,
++                $"鎵€灞炴澘鍧?{FirstNonEmpty(localFacts.SectorName, quote.SectorName, "鏈煡")}; 鑲′笢鎴锋暟={(shareholderCount?.ToString() ?? "鏈煡")}; 鐜颁环={quote.Price:0.00}",
++                $"鎵€灞炴澘鍧?{FirstNonEmpty(localFacts.SectorName, quote.SectorName, "鏈煡")}; 鑲′笢鎴锋暟={(shareholderCount?.ToString() ?? "鏈煡")}; 鐜颁环={quote.Price:0.00}",
++                "local_fact",
++                "full",
++                fundamentalUpdatedAt ?? quote.Timestamp,
++                null,
++                $"company_profile:{symbol}",
++                "overview",
++                null,
++                symbol,
++                new[] { "company_overview" })
++        };
++
++        evidence.AddRange(localFacts.StockNews.Take(2).Select(ToEvidence));
++        return evidence;
++    }
++
++    private static IReadOnlyList<StockCopilotMcpEvidenceDto> BuildFactEvidence(string symbol, IReadOnlyList<StockFundamentalFactDto> facts, DateTime? updatedAt, string level)
++    {
++        return facts.Select(item => new StockCopilotMcpEvidenceDto(
++            $"{item.Label}: {item.Value}",
++            item.Label,
++            item.Source,
++            updatedAt,
++            updatedAt,
++            null,
++            item.Value,
++            item.Value,
++            "local_fact",
++            "full",
++            updatedAt,
++            null,
++            $"company_profile:{symbol}",
++            level,
++            null,
++            symbol,
++            new[] { level })).ToArray();
++    }
++
++    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildCompanyOverviewFeatures(StockQuoteDto quote, LocalFactPackageDto localFacts, int? shareholderCount, int factCount, DateTime? updatedAt)
++    {
++        return new[]
++        {
++            new StockCopilotMcpFeatureDto("sectorName", "Sector Name", "text", null, FirstNonEmpty(localFacts.SectorName, quote.SectorName), null, "Sector inferred from local company profile or latest quote."),
++            new StockCopilotMcpFeatureDto("price", "Latest Price", "number", quote.Price, null, null, "Latest cached or live quote price."),
++            new StockCopilotMcpFeatureDto("changePercent", "Change Percent", "number", quote.ChangePercent, null, "%", "Current price change percent."),
++            new StockCopilotMcpFeatureDto("shareholderCount", "Shareholder Count", "number", shareholderCount, null, null, "Latest shareholder count available to the system."),
++            new StockCopilotMcpFeatureDto("fundamentalFactCount", "Fundamental Fact Count", "number", factCount, null, null, "Number of structured company facts retained for this symbol."),
++            new StockCopilotMcpFeatureDto("fundamentalUpdatedAt", "Fundamental Updated At", "text", null, updatedAt?.ToString("yyyy-MM-dd HH:mm:ss"), null, "Timestamp of the latest structured company-profile update.")
++        };
++    }
++
++    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildFundamentalFeatures(int factCount, DateTime? updatedAt)
++    {
++        return new[]
++        {
++            new StockCopilotMcpFeatureDto("factCount", "Fact Count", "number", factCount, null, null, "Number of structured fundamental facts returned by this MCP."),
++            new StockCopilotMcpFeatureDto("updatedAt", "Updated At", "text", null, updatedAt?.ToString("yyyy-MM-dd HH:mm:ss"), null, "Timestamp of the latest fundamental snapshot.")
++        };
++    }
++
++    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildShareholderFeatures(int? shareholderCount, int factCount, DateTime? updatedAt)
++    {
++        return new[]
++        {
++            new StockCopilotMcpFeatureDto("shareholderCount", "Shareholder Count", "number", shareholderCount, null, null, "Latest shareholder count extracted from cache or upstream snapshot."),
++            new StockCopilotMcpFeatureDto("factCount", "Shareholder Fact Count", "number", factCount, null, null, "Number of shareholder-specific facts retained in the response."),
++            new StockCopilotMcpFeatureDto("updatedAt", "Updated At", "text", null, updatedAt?.ToString("yyyy-MM-dd HH:mm:ss"), null, "Timestamp of the latest shareholder-related snapshot.")
++        };
++    }
+ }
+\ No newline at end of file

@@ -383,7 +383,95 @@
         "dev": "todo",
         "test": "todo"
       },
-      "notes": "2026-03-25 已完成详细规划，并进一步拆成总约束文件 + 分任务文件。新方向完全以 `noupload/TradingAgents-main` 为准，不再受现有 README、旧 Stock Copilot 目标或原有需求偏差影响。按用户当前最新决定，旧 `Stock Copilot / GOAL-AGENT-002` 已被手动彻底删除，不再作为可复用产品层前提。总入口：`.automation/plan/GOAL-AGENT-NEW-001/README.md`；规划报告：`.automation/reports/GOAL-AGENT-NEW-001-PLAN-20260325.md`。2026-03-25 follow-up：P0 已收口为正式规格，冻结了阶段顺序、角色职责、工作台 pane、术语、底座复用清单与偏离警戒线；对应执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260325.md`。2026-03-25 second follow-up：根据用户要求，已把 P0 与 R1-R7 全部扩写到可执行粒度，新增统一开发拆解模板、实施顺序、对象/接口粒度、fail-fast 与 degraded 边界、Browser MCP 与 packaged desktop 验收要求，避免后续开发代理因子任务过粗而偏离主目标。2026-03-25 third follow-up：继续把 R1-R7 深化到下一层，逐个补上“与最终 PLAN 对应关系”、更细的交付物清单、分层测试面、回归断言与可判定完成门槛，确保子任务与用户确认的最终 PLAN 前后逐条对应，而不是停留在摘要层。补充报告：`.automation/reports/GOAL-AGENT-NEW-001-PLAN-REFINE-20260325.md`。下一步进入 R1 会话 contract 与 R2 MCP 能力矩阵。"
+      "notes": "2026-03-25 已完成详细规划，并进一步拆成总约束文件 + 分任务文件。新方向完全以 `noupload/TradingAgents-main` 为准，不再受现有 README、旧 Stock Copilot 目标或原有需求偏差影响。按用户当前最新决定，旧 `Stock Copilot / GOAL-AGENT-002` 已被手动彻底删除，不再作为可复用产品层前提。总入口：`.automation/plan/GOAL-AGENT-NEW-001/README.md`；规划报告：`.automation/reports/GOAL-AGENT-NEW-001-PLAN-20260325.md`。2026-03-25 follow-up：P0 已收口为正式规格，冻结了阶段顺序、角色职责、工作台 pane、术语、底座复用清单与偏离警戒线；对应执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260325.md`。2026-03-25 second follow-up：根据用户要求，已把 P0 与 R1-R7 全部扩写到可执行粒度，新增统一开发拆解模板、实施顺序、对象/接口粒度、fail-fast 与 degraded 边界、Browser MCP 与 packaged desktop 验收要求，避免后续开发代理因子任务过粗而偏离主目标。2026-03-25 third follow-up：继续把 R1-R7 深化到下一层，逐个补上“与最终 PLAN 对应关系”、更细的交付物清单、分层测试面、回归断言与可判定完成门槛，确保子任务与用户确认的最终 PLAN 前后逐条对应，而不是停留在摘要层。补充报告：`.automation/reports/GOAL-AGENT-NEW-001-PLAN-REFINE-20260325.md`。2026-03-26 follow-up：已按当前代码重新复核 P0 底座盘点，确认 `StockInfoTab.vue`、`StockAgentAnalysisHistories`、`TradingPlans` / `TradingPlanEvents`、`QueryLocalFactDatabaseTool`、`IStockMarketContextService`、`/api/stocks/fundamental-snapshot`、`/api/stocks/detail/cache` 与现有五类 MCP 仍然存在，P0 规格当前无需回改。跟进报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260326.md`。2026-03-26 P0-Pre follow-up：已按当前环境完成 MCP / Prompt / LLM 闸门复核与 live smoke 验收。现已确认 MCP service 与受控 loop service 的 DI 注册及 `/api/stocks/mcp/*`、`/api/stocks/copilot/turns/draft`、`/api/stocks/copilot/live-gate` 路由暴露存在；`backend/SimplerJiangAiAgent.Api/App_Data/llm-settings.local.json` 存在，active provider 为 `default`，有效 key 来自 local secret，而不是 tracked `llm-settings.json` 或环境变量。定向后端单测 `21/21` 通过，复用 `http://localhost:5119` 的 live smoke 返回真实 `LlmTraceId`、`FinalAnswerStatus = done`、`RejectedToolCallCount = 0`、`Acceptance.ExecutedToolCallCount = 3`，并已在 LLM 审计日志和 admin trace 聚合中命中同一 trace。开发报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-DEV-20260326.md`；测试验收报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-R1-TEST-20260326.md`。当前环境下 P0-Pre gate 已通过；其他机器仍需 local secret 或环境变量完成 provider 配置后再复现。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre",
+      "title": "MCP preflight gate and live validation",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-26 P0-Pre 已完成当前环境下的实现与验收收口。Phase A-F 与 Phase F R1 已在新的 stock copilot / MCP contract 路径上落地 `POST /api/stocks/copilot/live-gate` 与 `IStockCopilotLiveGateService`，直接走 `ILlmService` 产出真实 `LLM-AUDIT` trace，并把 prompt 中可见的 role contract / local-first / external-gated / stop/fallback 规则与后端强校验结合起来：越权 role、未注册 tool、未授权 direct query、未先走 local 的 external search、跨 symbol 查询都会被拒绝；只有被批准的 MCP 会执行，并把 LLM traceId 与 tool traceId 一起返回到 runtime 结果。当前机器已确认 `backend/SimplerJiangAiAgent.Api/App_Data/llm-settings.local.json` 存在，active provider 为 `default`，有效 key 来自 local secret，而不是 tracked `llm-settings.json` 或环境变量。定向后端验证命令：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~StockCopilotLiveGateServiceTests|FullyQualifiedName~StockCopilotAcceptanceServiceTests|FullyQualifiedName~StockAgentRoleContractRegistryTests|FullyQualifiedName~StockMcpGatewayPhaseATests|FullyQualifiedName~StockCopilotSessionServiceTests\"`，结果 `21/21` 通过。运行态复用现有 `http://localhost:5119` 实例，`GET /api/health` 返回 `200 {\"status\":\"ok\"}`；`POST /api/stocks/copilot/live-gate` 以 `symbol=sh600000`、`allowExternalSearch=false`、问题“看下浦发银行日线结构和本地新闻证据”成功返回 `LlmTraceId = 7c254306ff89470d8ca971c08aab3090`、`FinalAnswerStatus = done`、`RejectedToolCallCount = 0`、`Acceptance.ExecutedToolCallCount = 3`，并包含至少 3 个非空 tool trace ids，对应 `MarketContextMcp`、`StockKlineMcp`、`StockNewsMcp`。同一 trace 已在 LLM 审计日志与 admin trace 聚合中命中真实 `request/response` 与 `requestRaw/responseRaw`。当前环境下 P0-Pre gate 已通过；tracked `llm-settings.json` 继续保持无 secret 是正确状态，其他机器仍需通过 local secret 或环境变量自行补齐 provider 配置。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-R1-DEV-20260326.md`；测试验收报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-R1-TEST-20260326.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-E-Product-MCP-Blocked",
+      "title": "Phase E product MCP blocked-governance history",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-26 该 task 仅保留为 Phase E 的历史 blocked 治理记录。它承载的是 Product MCP 在“尚未确认稳定上游数据源”阶段的前置治理与阻断语义，而不是最终的最小实现完成态。当前已完成的最小真实实现已单独迁移到 `GOAL-AGENT-NEW-001-P0-Pre-Phase-E`；本 task 保留为 done 仅表示历史 blocked 治理阶段已完成并可追溯。对应历史 blocked 报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-E-BLOCKED-DEV-20260326.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-E",
+      "title": "Phase E product MCP minimum implementation",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-26 已完成 Phase E 的最小真实实现。经 Eastmoney `CompanySurveyAjax` 多标的 live probe，样本 `SH600000 / SZ000001 / SZ002594 / SH603259 / SH600460` 均确认 `jyfw(经营范围)`、`sshy(所属行业)`、`qy(所属地区)` 稳定可得，而 `zyyw(主营业务)` 普遍为空；据此按最小可验证事实集合落地 `StockProductMcp`，并将 `Product Analyst` contract 从 `blocked` 调整为 `local_required`。当前 Product 已不再阻塞 `GOAL-AGENT-NEW-001-P0-Pre`，P0-Pre 剩余阻断仅为 live LLM gate。更丰富的业务构成 / 产品结构 / segment breakdown 继续由 `GOAL-AGENT-NEW-001-P0-Pre-Phase-E-R1` 作为 backlog 跟踪，不影响当前最小实现完成态。验证命令：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~EastmoneyCompanyProfileParserTests|FullyQualifiedName~StockCopilotMcpServiceTests|FullyQualifiedName~StockMcpGatewayPhaseATests|FullyQualifiedName~StockAgentRoleContractRegistryTests|FullyQualifiedName~StockCopilotSessionServiceTests\"`，结果 48/48 通过。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-E-DEV-20260326.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-E-R1",
+      "title": "Phase E R1 richer product composition sources",
+      "status": "todo",
+      "stages": {
+        "plan": "done",
+        "dev": "todo",
+        "test": "todo"
+      },
+      "notes": "2026-03-26 作为 Phase E 的 remaining scope 管理项保留。当前最小 `StockProductMcp` 已验证并落地，但真实可得的稳定字段仍以 `经营范围 / 所属行业 / 证监会行业 / 所属地区` 为主；`主营业务(zyyw)` 在 live probe 中普遍为空，仓库内也尚未确认稳定可复用的业务构成 / 产品结构 / 地区收入拆分上游。R1 后续目标是继续评估并接入更细粒度的产品结构来源，例如 Eastmoney 其他 HSF10 页面或已入库公告/调研纪要中的结构化 product facts，同时保持不破坏当前最小 Product MCP contract。"
+    },
+      {
+        "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-F",
+        "title": "Phase F role prompt and MCP contract runtime audit",
+        "status": "done",
+        "stages": {
+          "plan": "done",
+          "dev": "done",
+          "test": "done"
+        },
+        "notes": "2026-03-26 已完成 Phase F 的 contract/runtime audit 基础层。新增 `IStockAgentRoleContractRegistry` / `StockAgentRoleContractRegistry`，把 15 个冻结角色的 MCP/Prompt 使用契约固化为后端运行时清单，字段覆盖 role id/name、role class、tool access mode、preferred MCP order、fallback rule、stop rule、minimum evidence count、direct query 权限与 blocked/disabled reason；并在 `StockCopilotSessionDto` 上新增 `RoleContractChecklist`，由 `StockCopilotSessionService.BuildDraftTurnAsync(...)` 直接输出，使该检查表成为可审计 runtime 对象而不是只存在于 markdown。`RoleToolPolicyService` 已改为直接基于 `IStockAgentRoleContractRegistry` 构造授权集合，移除手写角色工具矩阵，补齐 `market_analyst` / `fundamentals_analyst` / `portfolio_manager` 授权回归与 contract/policy 一致性回归，并清理误生成的 `.automation/tmp/phase-a-tests` 临时产物。验证命令：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~StockAgentRoleContractRegistryTests|FullyQualifiedName~StockCopilotSessionServiceTests|FullyQualifiedName~StockMcpGatewayPhaseATests\"`，结果 15/15 通过。基于该基础层继续落地的 live LLM gate runner 已迁移到 `GOAL-AGENT-NEW-001-P0-Pre-Phase-F-R1` 单独跟踪。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-DEV-20260326.md`。"
+      },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-F-R1",
+      "title": "Phase F R1 live LLM gate runner and trace audit",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-26 已完成 Phase F R1，并完成当前环境下的 live smoke 验收。当前仓库已在新的 stock copilot / MCP contract 路径上新增 `POST /api/stocks/copilot/live-gate` 与 `IStockCopilotLiveGateService` / `StockCopilotLiveGateService`，不再依赖旧 `StockAgentOrchestrator` 作为主修复路径。live gate 会直接调用 `ILlmService` 生成真实 `LLM-AUDIT` trace；prompt 中显式写入 role contract、local-first、external-gated、stop/fallback、禁止 direct query 等规则；后端再对模型返回的 tool plan 做强校验，拒绝未注册 tool、越权 role、未先走 local 的 external search、跨 symbol 查询与超预算计划，只执行被批准的 MCP，并在结果中同时暴露 LLM traceId、tool traceId、被拒绝工具清单与 acceptance baseline。当前机器已确认 `backend/SimplerJiangAiAgent.Api/App_Data/llm-settings.local.json` 存在，active provider 为 `default`，有效 key 来自 local secret。验证命令：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~StockCopilotLiveGateServiceTests|FullyQualifiedName~StockCopilotAcceptanceServiceTests|FullyQualifiedName~StockAgentRoleContractRegistryTests|FullyQualifiedName~StockMcpGatewayPhaseATests|FullyQualifiedName~StockCopilotSessionServiceTests\"`，结果 `21/21` 通过。运行态复用现有 `http://localhost:5119` 实例，`GET /api/health` 返回 `200 {\"status\":\"ok\"}`；`POST /api/stocks/copilot/live-gate` 以 `symbol=sh600000`、`allowExternalSearch=false`、问题“看下浦发银行日线结构和本地新闻证据”成功返回 `LlmTraceId = 7c254306ff89470d8ca971c08aab3090`、`FinalAnswerStatus = done`、`RejectedToolCallCount = 0`、`Acceptance.ExecutedToolCallCount = 3`，并包含至少 3 个非空 tool trace ids，对应 `MarketContextMcp`、`StockKlineMcp`、`StockNewsMcp`。同一 trace 已在 LLM 审计日志与 admin trace 聚合中命中真实 `request/response` 与 `requestRaw/responseRaw`。因此 Phase F-R1 在当前环境下已通过 live LLM key / tool trace gate；tracked `llm-settings.json` 继续保持无 secret 是正确状态，其他机器仍需 local secret 或环境变量完成 provider 配置后再复现。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-R1-DEV-20260326.md`；测试验收报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-R1-TEST-20260326.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-F-R2",
+      "title": "Phase F R2 live gate acceptance harness hardening",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-26 新增一个很小的非阻断 hardening 切片，用于降低 live gate 回归验收中的人工噪音，而不改主业务逻辑。当前已新增 `.automation/scripts/accept-live-gate.ps1`，默认复用 `http://localhost:5119`、`sh600000` 与问题“看下浦发银行日线结构和本地新闻证据”，并支持 `TaskId` 与 `SkipTests`。脚本会先做 `GET /api/health`，在未指定 `SkipTests` 时用 `dotnet test --no-build --no-restore` 跑 live gate 相关 targeted tests，以复用当前 backend 构建输出并避免运行中的 API 锁住 `SimplerJiangAiAgent.Api.exe` 带来的伪失败；随后再调用 `POST /api/stocks/copilot/live-gate`，提取 `LlmTraceId`、`FinalAnswerStatus`、`RejectedToolCallCount`、`Acceptance.ExecutedToolCallCount`、非空 tool trace ids 与 tool names，并直接到 `backend/SimplerJiangAiAgent.Api/App_Data/logs/llm-requests.txt` 校验同一 trace 是否命中 `request/response` 或 `request-stream/response-stream` 审计证据。脚本将 `done` 与 `done_with_gaps` 视为合法完成态，并对瞬时 live gate 500 做一次轻量重试。最终已在 `SJAI_DATA_ROOT=D:\\SimplerJiangAiAgent\\backend\\SimplerJiangAiAgent.Api`、`BaseUrl=http://localhost:5120` 的源码实例上通过验收：`LlmTraceId=34a032ba30c34a2596ce3d0f799b63c3`、`FinalAnswerStatus=done_with_gaps`、`RejectedToolCallCount=0`、`Acceptance.ExecutedToolCallCount=4`，且 `llm-requests.txt` 命中 `request/response`。对应开发报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-F-R2-DEV-20260326.md`。"
+    },
+    {
+      "id": "GOAL-AGENT-NEW-001-P0-Pre-Phase-A",
+      "title": "Phase A MCP foundation wiring",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-03-26 已完成 P0-Pre 的 Phase A。内容包括：1) 在 `StocksModule` 中补齐 `IStockCopilotMcpService`、`IStockCopilotSessionService`、`IStockChatHistoryService`、`IStockCopilotAcceptanceService`、`IStockAgentReplayCalibrationService` 的注册；2) 新增 `IMcpToolGateway`、`IMcpServiceRegistry`、`IRoleToolPolicyService` 与对应实现；3) 恢复 `/api/stocks/mcp/kline|minute|strategy|news|search` 和 `POST /api/stocks/copilot/turns/draft`；4) 新增 `StockMcpGatewayPhaseATests` 并连同相关既有 MCP/draft/acceptance 测试一起验证 20/20 通过。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-PRE-PHASE-A-DEV-20260326.md`。"
     },
     {
       "id": "GOAL-AGENT-NEW-001-P0",
@@ -394,7 +482,7 @@
         "dev": "done",
         "test": "done"
       },
-      "notes": "2026-03-25 已完成 P0 收口。现已把 `.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-P0.md` 扩成正式规格，内容覆盖：TradingAgents 对齐基线、阶段顺序对齐表、15 角色职责表、工作台 pane 对齐表、统一术语、可复用底座清单、禁用清单、偏离警戒线、初版 MCP 能力盘点与角色缺口矩阵。并已结合当前代码核实 `StockInfoTab.vue`、`StockAgentAnalysisHistories`、`TradingPlans`、`QueryLocalFactDatabaseTool`、`IStockMarketContextService`、现有五类 MCP 以及 `/api/stocks/fundamental-snapshot` / `/api/stocks/detail/cache` 等接缝仍然存在。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260325.md`。"
+      "notes": "2026-03-25 已完成 P0 收口。现已把 `.automation/plan/GOAL-AGENT-NEW-001/GOAL-AGENT-NEW-001-P0.md` 扩成正式规格，内容覆盖：TradingAgents 对齐基线、阶段顺序对齐表、15 角色职责表、工作台 pane 对齐表、统一术语、可复用底座清单、禁用清单、偏离警戒线、初版 MCP 能力盘点与角色缺口矩阵。并已结合当前代码核实 `StockInfoTab.vue`、`StockAgentAnalysisHistories`、`TradingPlans`、`QueryLocalFactDatabaseTool`、`IStockMarketContextService`、现有五类 MCP 以及 `/api/stocks/fundamental-snapshot` / `/api/stocks/detail/cache` 等接缝仍然存在。执行报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260325.md`。2026-03-26 follow-up：已再次按当前仓库代码复核 P0 引用依据，确认现有 P0 规格与代码状态一致，无需回改主叙事或底座盘点；本轮只补执行报告与自动化状态同步。跟进报告：`.automation/reports/GOAL-AGENT-NEW-001-P0-DEV-20260326.md`。"
     },
     {
       "id": "GOAL-AGENT-NEW-001-R1",

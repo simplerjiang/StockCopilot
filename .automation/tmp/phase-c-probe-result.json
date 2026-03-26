@@ -1,0 +1,259 @@
+[
+  {
+    "endpoint": "/api/stocks/mcp/company-overview?symbol=sh601899",
+    "status": 200,
+    "ok": true,
+    "toolName": "CompanyOverviewMcp",
+    "errorCode": null,
+    "freshnessTag": "fresh",
+    "sourceTier": "local",
+    "cacheHit": false,
+    "warnings": [],
+    "degradedFlags": [],
+    "data": {
+      "symbol": "sh601899",
+      "name": "紫金矿业",
+      "sectorName": "有色金属",
+      "price": 32.5,
+      "changePercent": -2.23,
+      "floatMarketCap": 669529027050,
+      "peRatio": 16.69,
+      "shareholderCount": 1108965,
+      "quoteTimestamp": "2026-03-26T04:01:43.835173Z",
+      "fundamentalUpdatedAt": "2026-03-26T04:01:52.5394882Z",
+      "fundamentalFactCount": 21
+    },
+    "firstEvidence": {
+      "point": "紫金矿业 公司概览",
+      "title": "紫金矿业",
+      "source": "公司画像缓存",
+      "publishedAt": "2026-03-26T04:01:43.835173Z",
+      "crawledAt": "2026-03-26T04:01:52.5394882Z",
+      "url": null,
+      "excerpt": "所属板块=有色金属; 股东户数=1108965; 现价=32.50",
+      "summary": "所属板块=有色金属; 股东户数=1108965; 现价=32.50",
+      "readMode": "local_fact",
+      "readStatus": "full",
+      "ingestedAt": "2026-03-26T04:01:52.5394882Z",
+      "localFactId": null,
+      "sourceRecordId": "company_profile:sh601899",
+      "level": "overview",
+      "sentiment": null,
+      "target": "sh601899",
+      "tags": [
+        "company_overview"
+      ]
+    }
+  },
+  {
+    "endpoint": "/api/stocks/mcp/fundamentals?symbol=sh601899",
+    "status": 200,
+    "ok": true,
+    "toolName": "StockFundamentalsMcp",
+    "errorCode": null,
+    "freshnessTag": "fresh",
+    "sourceTier": "local",
+    "cacheHit": false,
+    "warnings": [],
+    "degradedFlags": [],
+    "data": {
+      "symbol": "sh601899",
+      "updatedAt": "2026-03-26T04:01:53.083036Z",
+      "factCount": 21,
+      "facts": [
+        {
+          "label": "公司全称",
+          "value": "紫金矿业集团股份有限公司",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "英文名称",
+          "value": "Zijin Mining Group Company Limited",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "证券类别",
+          "value": "上交所主板A股",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "上市交易所",
+          "value": "上海证券交易所",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "所属行业",
+          "value": "有色金属",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "证监会行业",
+          "value": "采矿业-有色金属矿采选业",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "所属地区",
+          "value": "福建",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "注册地址",
+          "value": "福建省龙岩市上杭县紫金大道1号",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "办公地址",
+          "value": "福建省龙岩市上杭县紫金大道1号,福建省厦门市思明区环岛东路1811号",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "公司网站",
+          "value": "www.zjky.cn,www.zijinmining.com",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "总经理",
+          "value": "林泓富",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "法人代表",
+          "value": "邹来昌",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "董事长",
+          "value": "邹来昌",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "注册资本",
+          "value": "26.59亿",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "联系电话",
+          "value": "0597-3833105",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "电子邮箱",
+          "value": "IR@zijinmining.com",
+          "source": "东方财富公司概况"
+        },
+        {
+          "label": "股东户数",
+          "value": "1108965",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "股东户数统计截止",
+          "value": "2026-02-28 00:00:00",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "股权集中度",
+          "value": "非常分散",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "户均持股市值",
+          "value": "948293.18",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "户均流通股",
+          "value": "23977",
+          "source": "东方财富股东研究"
+        }
+      ]
+    },
+    "firstEvidence": {
+      "point": "公司全称: 紫金矿业集团股份有限公司",
+      "title": "公司全称",
+      "source": "东方财富公司概况",
+      "publishedAt": "2026-03-26T04:01:53.083036Z",
+      "crawledAt": "2026-03-26T04:01:53.083036Z",
+      "url": null,
+      "excerpt": "紫金矿业集团股份有限公司",
+      "summary": "紫金矿业集团股份有限公司",
+      "readMode": "local_fact",
+      "readStatus": "full",
+      "ingestedAt": "2026-03-26T04:01:53.083036Z",
+      "localFactId": null,
+      "sourceRecordId": "company_profile:sh601899",
+      "level": "fundamental",
+      "sentiment": null,
+      "target": "sh601899",
+      "tags": [
+        "fundamental"
+      ]
+    }
+  },
+  {
+    "endpoint": "/api/stocks/mcp/shareholder?symbol=sh601899",
+    "status": 200,
+    "ok": true,
+    "toolName": "StockShareholderMcp",
+    "errorCode": null,
+    "freshnessTag": "fresh",
+    "sourceTier": "local",
+    "cacheHit": false,
+    "warnings": [],
+    "degradedFlags": [],
+    "data": {
+      "symbol": "sh601899",
+      "shareholderCount": 1108965,
+      "updatedAt": "2026-03-26T04:01:53.5369947Z",
+      "factCount": 5,
+      "facts": [
+        {
+          "label": "股东户数",
+          "value": "1108965",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "股东户数统计截止",
+          "value": "2026-02-28 00:00:00",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "股权集中度",
+          "value": "非常分散",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "户均持股市值",
+          "value": "948293.18",
+          "source": "东方财富股东研究"
+        },
+        {
+          "label": "户均流通股",
+          "value": "23977",
+          "source": "东方财富股东研究"
+        }
+      ]
+    },
+    "firstEvidence": {
+      "point": "股东户数: 1108965",
+      "title": "股东户数",
+      "source": "东方财富股东研究",
+      "publishedAt": "2026-03-26T04:01:53.5369947Z",
+      "crawledAt": "2026-03-26T04:01:53.5369947Z",
+      "url": null,
+      "excerpt": "1108965",
+      "summary": "1108965",
+      "readMode": "local_fact",
+      "readStatus": "full",
+      "ingestedAt": "2026-03-26T04:01:53.5369947Z",
+      "localFactId": null,
+      "sourceRecordId": "company_profile:sh601899",
+      "level": "shareholder",
+      "sentiment": null,
+      "target": "sh601899",
+      "tags": [
+        "shareholder"
+      ]
+    }
+  }
+]

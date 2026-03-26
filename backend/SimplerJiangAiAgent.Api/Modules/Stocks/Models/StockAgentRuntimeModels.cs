@@ -105,7 +105,12 @@ public sealed record StockCopilotMcpEnvelopeDto<T>(
     T Data,
     IReadOnlyList<StockCopilotMcpEvidenceDto> Evidence,
     IReadOnlyList<StockCopilotMcpFeatureDto> Features,
-    StockCopilotMcpMetaDto Meta);
+    StockCopilotMcpMetaDto Meta,
+    string? ErrorCode = null,
+    string FreshnessTag = "unknown",
+    string SourceTier = "unknown",
+    bool CacheHit = false,
+    string RolePolicyClass = "unknown");
 
 public sealed record StockCopilotKeyLevelsDto(
     decimal? Support,
@@ -172,6 +177,111 @@ public sealed record StockCopilotSearchDataDto(
     int ResultCount,
     IReadOnlyList<StockCopilotSearchResultDto> Results);
 
+public sealed record StockCopilotMarketContextDataDto(
+    string Symbol,
+    bool Available,
+    string? StageLabel,
+    decimal? StageConfidence,
+    string? StockSectorName,
+    string? MainlineSectorName,
+    string? SectorCode,
+    decimal? MainlineScore,
+    decimal? SuggestedPositionScale,
+    string? ExecutionFrequencyLabel,
+    bool CounterTrendWarning,
+    bool IsMainlineAligned);
+
+public sealed record StockCopilotSentimentCountDto(
+    int PositiveCount,
+    int NeutralCount,
+    int NegativeCount,
+    int TotalCount,
+    DateTime? LatestPublishedAt);
+
+public sealed record StockCopilotSocialSentimentMarketProxyDto(
+    string StageLabel,
+    decimal StageConfidence,
+    string OverallSentiment,
+    DateTime SnapshotTime);
+
+public sealed record StockCopilotSocialSentimentDataDto(
+    string Symbol,
+    string Status,
+    bool Blocked,
+    string? BlockedReason,
+    string ApproximationMode,
+    string? OverallSentiment,
+    int EvidenceCount,
+    DateTime? LatestEvidenceAt,
+    StockCopilotSentimentCountDto StockNews,
+    StockCopilotSentimentCountDto SectorReports,
+    StockCopilotSentimentCountDto MarketReports,
+    StockCopilotSocialSentimentMarketProxyDto? MarketProxy);
+
+public sealed record StockCopilotCompanyOverviewDataDto(
+    string Symbol,
+    string Name,
+    string? SectorName,
+    decimal Price,
+    decimal ChangePercent,
+    decimal? FloatMarketCap,
+    decimal? PeRatio,
+    int? ShareholderCount,
+    DateTime QuoteTimestamp,
+    DateTime? FundamentalUpdatedAt,
+    int FundamentalFactCount,
+    string? MainBusiness,
+    string? BusinessScope);
+
+public sealed record StockCopilotProductFactDto(
+    string Label,
+    string Value,
+    string Source);
+
+public sealed record StockCopilotProductDataDto(
+    string Symbol,
+    DateTime? UpdatedAt,
+    string? MainBusiness,
+    string? BusinessScope,
+    string? Industry,
+    string? CsrcIndustry,
+    string? Region,
+    int FactCount,
+    string SourceSummary,
+    IReadOnlyList<StockCopilotProductFactDto> Facts);
+
+public sealed record StockCopilotFundamentalsDataDto(
+    string Symbol,
+    DateTime? UpdatedAt,
+    int FactCount,
+    IReadOnlyList<StockFundamentalFactDto> Facts);
+
+public sealed record StockCopilotShareholderDataDto(
+    string Symbol,
+    int? ShareholderCount,
+    DateTime? UpdatedAt,
+    int FactCount,
+    IReadOnlyList<StockFundamentalFactDto> Facts);
+
+public sealed record StockCopilotRoleContractDto(
+    string RoleId,
+    string RoleName,
+    string RoleClass,
+    string ToolAccessMode,
+    IReadOnlyList<string> PreferredMcpSequence,
+    string FallbackRule,
+    string StopRule,
+    int MinimumEvidenceCount,
+    bool AllowsDirectQueryTools,
+    string? Reason);
+
+public sealed record StockCopilotRoleContractChecklistDto(
+    string ChecklistId,
+    string Version,
+    string SourceTaskId,
+    DateTime GeneratedAt,
+    IReadOnlyList<StockCopilotRoleContractDto> Roles);
+
 public sealed record StockCopilotTurnDraftRequestDto(
     string Symbol,
     string Question,
@@ -179,6 +289,17 @@ public sealed record StockCopilotTurnDraftRequestDto(
     string? SessionTitle,
     string? TaskId,
     bool AllowExternalSearch);
+
+public sealed record StockCopilotLiveGateRequestDto(
+    string Symbol,
+    string Question,
+    string? SessionKey,
+    string? SessionTitle,
+    string? TaskId,
+    bool AllowExternalSearch,
+    string? Provider,
+    string? Model,
+    double? Temperature);
 
 public sealed record StockCopilotPlanStepDto(
     string StepId,
@@ -261,7 +382,17 @@ public sealed record StockCopilotTurnDto(
     StockCopilotFinalAnswerDto FinalAnswer,
     IReadOnlyList<StockCopilotFollowUpActionDto> FollowUpActions,
     StockCopilotLoopBudgetDto? LoopBudget = null,
-    StockCopilotLoopExecutionDto? LoopExecution = null);
+    StockCopilotLoopExecutionDto? LoopExecution = null,
+    string? LlmTraceId = null);
+
+public sealed record StockCopilotRejectedToolCallDto(
+    string CallId,
+    string RoleId,
+    string ToolName,
+    string PolicyClass,
+    string ApprovalStatus,
+    string Reason,
+    string? ErrorCode);
 
 public sealed record StockCopilotToolExecutionMetricDto(
     string CallId,
@@ -308,7 +439,18 @@ public sealed record StockCopilotSessionDto(
     string Title,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    IReadOnlyList<StockCopilotTurnDto> Turns);
+    IReadOnlyList<StockCopilotTurnDto> Turns,
+    StockCopilotRoleContractChecklistDto? RoleContractChecklist = null);
+
+public sealed record StockCopilotLiveGateResultDto(
+    StockCopilotSessionDto Session,
+    StockCopilotAcceptanceBaselineDto Acceptance,
+    string LlmTraceId,
+    string Provider,
+    string? Model,
+    string Prompt,
+    string RawModelResponse,
+    IReadOnlyList<StockCopilotRejectedToolCallDto> RejectedToolCalls);
 
 public sealed record StockAgentReplayHorizonMetricDto(
     int HorizonDays,

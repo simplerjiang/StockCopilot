@@ -11,7 +11,7 @@ public sealed class StockCopilotSessionServiceTests
     public async Task BuildDraftTurnAsync_ShouldExecuteApprovedToolsAndProduceGroundedAnswer()
     {
         var chatHistory = new FakeStockChatHistoryService();
-        var service = new StockCopilotSessionService(chatHistory, new FakeStockCopilotMcpService(), new FakeStockMarketContextService());
+        var service = new StockCopilotSessionService(chatHistory, new FakeStockCopilotMcpService(), new FakeStockMarketContextService(), new StockAgentRoleContractRegistry());
 
         var result = await service.BuildDraftTurnAsync(new StockCopilotTurnDraftRequestDto(
             Symbol: "SH600000",
@@ -34,12 +34,14 @@ public sealed class StockCopilotSessionServiceTests
         Assert.Equal(4000, result.Turns[0].LoopBudget?.MaxPollingSteps);
         Assert.Equal("done", result.Turns[0].LoopExecution?.Status);
         Assert.Contains(result.Turns[0].FollowUpActions, item => item.ToolName == "StockKlineMcp");
+        Assert.NotNull(result.RoleContractChecklist);
+        Assert.Equal(15, result.RoleContractChecklist!.Roles.Count);
     }
 
     [Fact]
     public async Task BuildDraftTurnAsync_ShouldBlockExternalSearchWithoutApproval()
     {
-        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new FakeStockCopilotMcpService(), new FakeStockMarketContextService());
+        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new FakeStockCopilotMcpService(), new FakeStockMarketContextService(), new StockAgentRoleContractRegistry());
 
         var result = await service.BuildDraftTurnAsync(new StockCopilotTurnDraftRequestDto(
             Symbol: "sz000001",
@@ -60,7 +62,7 @@ public sealed class StockCopilotSessionServiceTests
     [Fact]
     public async Task BuildDraftTurnAsync_ShouldApproveExternalSearchWhenExplicitlyAllowed()
     {
-        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new FakeStockCopilotMcpService(), new FakeStockMarketContextService());
+        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new FakeStockCopilotMcpService(), new FakeStockMarketContextService(), new StockAgentRoleContractRegistry());
 
         var result = await service.BuildDraftTurnAsync(new StockCopilotTurnDraftRequestDto(
             Symbol: "sz000001",
@@ -80,7 +82,7 @@ public sealed class StockCopilotSessionServiceTests
     [Fact]
     public async Task BuildDraftTurnAsync_ShouldCloseWithGapsWhenEvidenceIsWeak()
     {
-        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new WeakEvidenceStockCopilotMcpService(), new FakeStockMarketContextService());
+        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new WeakEvidenceStockCopilotMcpService(), new FakeStockMarketContextService(), new StockAgentRoleContractRegistry());
 
         var result = await service.BuildDraftTurnAsync(new StockCopilotTurnDraftRequestDto(
             Symbol: "sz000001",
@@ -92,6 +94,25 @@ public sealed class StockCopilotSessionServiceTests
 
         Assert.Equal("done_with_gaps", result.Turns[0].FinalAnswer.Status);
         Assert.Contains(result.Turns[0].FinalAnswer.Constraints, item => item.Contains("证据缺口") || item.Contains("warning"));
+    }
+
+    [Fact]
+    public async Task BuildDraftTurnAsync_ShouldExposeRoleContractChecklistInRuntimeOutput()
+    {
+        var service = new StockCopilotSessionService(new FakeStockChatHistoryService(), new FakeStockCopilotMcpService(), new FakeStockMarketContextService(), new StockAgentRoleContractRegistry());
+
+        var result = await service.BuildDraftTurnAsync(new StockCopilotTurnDraftRequestDto(
+            Symbol: "sh600000",
+            Question: "看下市场结构和最新新闻",
+            SessionKey: null,
+            SessionTitle: null,
+            TaskId: "task-role-contracts",
+            AllowExternalSearch: false));
+
+        Assert.NotNull(result.RoleContractChecklist);
+        Assert.Equal("GOAL-AGENT-NEW-001-P0-Pre-Phase-F", result.RoleContractChecklist!.SourceTaskId);
+        Assert.Equal("phase-f-20260326-r1", result.RoleContractChecklist.Version);
+        Assert.Contains(result.RoleContractChecklist.Roles, item => item.RoleId == StockAgentRoleIds.ProductAnalyst && item.ToolAccessMode == "local_required" && item.PreferredMcpSequence.Contains(StockMcpToolNames.Product));
     }
 
     private sealed class FakeStockChatHistoryService : IStockChatHistoryService
@@ -143,6 +164,36 @@ public sealed class StockCopilotSessionServiceTests
 
     private class FakeStockCopilotMcpService : IStockCopilotMcpService
     {
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotCompanyOverviewDataDto>> GetCompanyOverviewAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotProductDataDto>> GetProductAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotFundamentalsDataDto>> GetFundamentalsAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotShareholderDataDto>> GetShareholderAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotMarketContextDataDto>> GetMarketContextAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotSocialSentimentDataDto>> GetSocialSentimentAsync(string symbol, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotKlineDataDto>> GetKlineAsync(string symbol, string interval, int count, string? source, string? taskId, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new StockCopilotMcpEnvelopeDto<StockCopilotKlineDataDto>(

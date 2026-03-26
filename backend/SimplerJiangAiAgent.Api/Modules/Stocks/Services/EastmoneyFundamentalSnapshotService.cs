@@ -18,10 +18,12 @@ public sealed class EastmoneyFundamentalSnapshotService : IStockFundamentalSnaps
         var code = normalized[2..];
         var surveyUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={marketPrefix}{code}";
         var shareholderUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={marketPrefix}{code}";
+        var financeUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={marketPrefix}{code}";
 
         var surveyTask = TryGetStringAsync(surveyUrl, cancellationToken);
         var shareholderTask = TryGetStringAsync(shareholderUrl, cancellationToken);
-        await Task.WhenAll(surveyTask, shareholderTask);
+        var financeTask = TryGetStringAsync(financeUrl, cancellationToken);
+        await Task.WhenAll(surveyTask, shareholderTask, financeTask);
 
         var surveyJson = await surveyTask;
         if (string.IsNullOrWhiteSpace(surveyJson))
@@ -30,12 +32,21 @@ public sealed class EastmoneyFundamentalSnapshotService : IStockFundamentalSnaps
         }
 
         var dto = EastmoneyCompanyProfileParser.Parse(normalized, surveyJson, await shareholderTask);
-        if (dto.Facts.Count == 0)
+        var financeJson = await financeTask;
+        var allFacts = new List<StockFundamentalFactDto>(dto.Facts);
+        
+        if (!string.IsNullOrWhiteSpace(financeJson))
+        {
+            var financeFacts = EastmoneyCompanyProfileParser.ParseFinanceFacts(financeJson);
+            allFacts.AddRange(financeFacts);
+        }
+
+        if (allFacts.Count == 0)
         {
             return null;
         }
 
-        return new StockFundamentalSnapshotDto(DateTime.UtcNow, dto.Facts);
+        return new StockFundamentalSnapshotDto(DateTime.UtcNow, allFacts);
     }
 
     private async Task<string?> TryGetStringAsync(string url, CancellationToken cancellationToken)

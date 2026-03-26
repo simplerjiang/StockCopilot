@@ -24,12 +24,14 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
     private readonly IStockChatHistoryService _chatHistoryService;
     private readonly IStockCopilotMcpService _copilotMcpService;
     private readonly IStockMarketContextService _marketContextService;
+    private readonly IStockAgentRoleContractRegistry _roleContractRegistry;
 
-    public StockCopilotSessionService(IStockChatHistoryService chatHistoryService, IStockCopilotMcpService copilotMcpService, IStockMarketContextService marketContextService)
+    public StockCopilotSessionService(IStockChatHistoryService chatHistoryService, IStockCopilotMcpService copilotMcpService, IStockMarketContextService marketContextService, IStockAgentRoleContractRegistry roleContractRegistry)
     {
         _chatHistoryService = chatHistoryService;
         _copilotMcpService = copilotMcpService;
         _marketContextService = marketContextService;
+        _roleContractRegistry = roleContractRegistry;
     }
 
     public async Task<StockCopilotSessionDto> BuildDraftTurnAsync(StockCopilotTurnDraftRequestDto request, CancellationToken cancellationToken = default)
@@ -64,6 +66,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
         var planSteps = BuildPlanSteps(proposals, marketContext, loopResult.StepStatuses, loopResult.CommanderStepStatus);
         var toolCalls = BuildToolCalls(proposals);
         var followUpActions = BuildFollowUpActions(proposals, loopResult.FinalAnswer);
+        var roleContractChecklist = _roleContractRegistry.BuildChecklist();
 
         var turn = new StockCopilotTurnDto(
             TurnId: $"turn-{Guid.NewGuid():N}",
@@ -89,7 +92,8 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             session.Title,
             session.CreatedAt,
             session.UpdatedAt,
-            [turn]);
+            [turn],
+            roleContractChecklist);
     }
 
     private static string BuildSessionTitle(string question)

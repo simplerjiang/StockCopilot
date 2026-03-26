@@ -38,6 +38,7 @@ public sealed class StocksModule : IModule
         services.Configure<HighFrequencyQuoteOptions>(configuration.GetSection(HighFrequencyQuoteOptions.SectionName));
         services.Configure<TradingPlanTriggerOptions>(configuration.GetSection(TradingPlanTriggerOptions.SectionName));
         services.Configure<TradingPlanReviewOptions>(configuration.GetSection(TradingPlanReviewOptions.SectionName));
+        services.Configure<StockCopilotSearchOptions>(configuration.GetSection(StockCopilotSearchOptions.SectionName));
         services.AddScoped<IActiveWatchlistService, ActiveWatchlistService>();
         services.AddHttpClient<ILocalFactIngestionService, LocalFactIngestionService>(client => ConfigureStockHttpClient(client, stockHttpTimeout));
         services.AddScoped<ILocalFactAiEnrichmentService, LocalFactAiEnrichmentService>();
@@ -51,6 +52,16 @@ public sealed class StocksModule : IModule
         services.AddScoped<ITradingPlanDraftService, TradingPlanDraftService>();
         services.AddScoped<ITradingPlanService, TradingPlanService>();
         services.AddScoped<IStockMarketContextService, StockMarketContextService>();
+        services.AddScoped<IStockChatHistoryService, StockChatHistoryService>();
+        services.AddScoped<IStockCopilotMcpService, StockCopilotMcpService>();
+        services.AddScoped<IStockCopilotSessionService, StockCopilotSessionService>();
+        services.AddScoped<IStockCopilotLiveGateService, StockCopilotLiveGateService>();
+        services.AddScoped<IStockCopilotAcceptanceService, StockCopilotAcceptanceService>();
+        services.AddScoped<IStockAgentReplayCalibrationService, StockAgentReplayCalibrationService>();
+        services.AddScoped<IMcpToolGateway, McpToolGateway>();
+        services.AddSingleton<IMcpServiceRegistry, McpServiceRegistry>();
+        services.AddSingleton<IRoleToolPolicyService, RoleToolPolicyService>();
+        services.AddSingleton<IStockAgentRoleContractRegistry, StockAgentRoleContractRegistry>();
         services.AddScoped<ITradingPlanTriggerService, TradingPlanTriggerService>();
         services.AddScoped<ITradingPlanReviewService, TradingPlanReviewService>();
         services.AddScoped<IStockNewsImpactService, StockNewsImpactService>();
@@ -191,6 +202,198 @@ public sealed class StocksModule : IModule
             return Results.Ok(result);
         })
         .WithName("SearchStocks")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/kline", async (string symbol, string? interval, int? count, string? source, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetKlineAsync(symbol.Trim(), interval ?? "day", count ?? 60, source, taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockKlineMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/company-overview", async (string symbol, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetCompanyOverviewAsync(symbol.Trim(), taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockCompanyOverviewMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/product", async (string symbol, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetProductAsync(symbol.Trim(), taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockProductMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/fundamentals", async (string symbol, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetFundamentalsAsync(symbol.Trim(), taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockFundamentalsMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/shareholder", async (string symbol, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetShareholderAsync(symbol.Trim(), taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockShareholderMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/market-context", async (string symbol, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetMarketContextAsync(symbol.Trim(), taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockMarketContextMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/social-sentiment", async (string symbol, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetSocialSentimentAsync(symbol.Trim(), taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockSocialSentimentMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/minute", async (string symbol, string? source, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetMinuteAsync(symbol.Trim(), source, taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockMinuteMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/strategy", async (string symbol, string? interval, int? count, string? source, string[]? strategies, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetStrategyAsync(symbol.Trim(), interval ?? "day", count ?? 60, source, strategies, taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockStrategyMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/news", async (string symbol, string? level, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetNewsAsync(symbol.Trim(), level ?? "stock", taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetStockNewsMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/search", async (string query, bool? trustedOnly, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return Results.BadRequest(new { message = "query 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.SearchAsync(query.Trim(), trustedOnly ?? true, taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("SearchStockMcp")
+        .WithOpenApi();
+
+        group.MapPost("/copilot/turns/draft", async (StockCopilotTurnDraftRequestDto request, IStockCopilotSessionService sessionService, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Question))
+            {
+                return Results.BadRequest(new { message = "question 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => sessionService.BuildDraftTurnAsync(request, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("BuildStockCopilotDraftTurn")
+        .WithOpenApi();
+
+        group.MapPost("/copilot/live-gate", async (StockCopilotLiveGateRequestDto request, IStockCopilotLiveGateService liveGateService, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Question))
+            {
+                return Results.BadRequest(new { message = "question 不能为空" });
+            }
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => liveGateService.RunAsync(request, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("RunStockCopilotLiveGate")
         .WithOpenApi();
 
         group.MapGet("/quotes/batch", async (string symbols, IRealtimeMarketOverviewService realtimeService, HttpContext httpContext) =>

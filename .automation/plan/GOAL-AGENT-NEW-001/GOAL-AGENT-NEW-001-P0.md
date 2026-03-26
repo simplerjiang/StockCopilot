@@ -94,8 +94,8 @@
 | Social Sentiment Analyst | 负责社媒/情绪近似分析与情绪噪音判别 | 公司预查、内部情绪源或受控外部 fallback | sentiment analysis block | `local_preferred`，缺口未补前必须显式降级 |
 | News Analyst | 负责新闻、公告、市场/板块/个股事实研判 | 公司预查、本地事实、新闻公告、必要时外部补充 | news analysis block | `local_required`，外部只作 fallback |
 | Fundamentals Analyst | 负责财务快照、估值和基本面研判 | 公司预查、基本面快照、财报相关事实 | fundamentals analysis block | `local_required/local_preferred` |
-| Shareholder Analyst | 负责股东结构、集中度、机构/户数变化判断 | 公司预查、股东结构数据 | shareholder analysis block | 需要独立 MCP 补齐 |
-| Product Analyst | 负责主营业务、产品线、收入构成和产业链定位 | 公司预查、产品业务数据 | product analysis block | 当前缺口，必须新增 MCP |
+| Shareholder Analyst | 负责股东结构、集中度、机构/户数变化判断 | 公司预查、股东结构数据 | shareholder analysis block | `local_required`；`StockShareholderMcp` 已存在，后续重点转向字段质量与职责去重 |
+| Product Analyst | 负责主营业务、产品线、收入构成和产业链定位 | 公司预查、产品业务数据 | product analysis block | 最小 `StockProductMcp` 已可用；当前以 `经营范围 / 所属行业 / 证监会行业 / 所属地区` 为主，richer segmentation 留在 Phase E R1 |
 | Bull Researcher | 基于 analyst 输出构建看多论证 | analyst outputs、上一轮 bear 观点、可审计 memory | bull debate artifact | 禁止直接取数 |
 | Bear Researcher | 基于 analyst 输出构建看空论证 | analyst outputs、上一轮 bull 观点、可审计 memory | bear debate artifact | 禁止直接取数 |
 | Research Manager | 主持研究阶段、裁决分歧并形成投资计划 | analyst outputs、bull/bear debate、历史修正 | research decision + investment plan | 禁止直接取数 |
@@ -136,12 +136,13 @@
 3. `StockAgentAnalysisHistories` 以及相关历史服务仍然存在，可作为研究历史、交易计划联动和 replay 数据接缝之一。
 4. 交易计划主链路、`TradingPlans` / `TradingPlanEvents` 和关联服务仍然存在，可承接 final decision 的后续动作。
 5. 本地事实查询 `QueryLocalFactDatabaseTool`、市场上下文 `IStockMarketContextService`、`/api/news` 和 market/sector/stock 三层事实仍可复用。
-6. 现有 MCP 形态已具备统一 envelope 雏形：`StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp`。
-7. 基本面快照接口 `/api/stocks/fundamental-snapshot` 与详情缓存 `/api/stocks/detail/cache` 仍可作为后续 `CompanyOverviewMcp` / `StockFundamentalsMcp` 的上游能力。
+6. 统一 MCP 底座已存在：`McpToolGateway`、`McpServiceRegistry`、`RoleToolPolicyService` 与角色 contract registry 已是当前可复用基础设施，不应再被视为缺失项。
+7. 现有 MCP 形态已不止是 envelope 雏形：`StockKlineMcp`、`StockMinuteMcp`、`StockStrategyMcp`、`StockNewsMcp`、`StockSearchMcp`、`CompanyOverviewMcp`、`StockFundamentalsMcp`、`StockShareholderMcp`、`MarketContextMcp`、`SocialSentimentMcp`、`StockProductMcp` 已有统一工具名与后端路由接缝。
+8. 基本面快照接口 `/api/stocks/fundamental-snapshot` 与详情缓存 `/api/stocks/detail/cache` 仍可作为后续继续补强 `CompanyOverviewMcp` / `StockFundamentalsMcp` 的上游能力。
 
 ### 删除状态约束
 1. 旧 `Stock Copilot / GOAL-AGENT-002` 已按用户当前决定视为手动彻底删除，不再作为新工作台的实现前提。
-2. 即便仓库里仍残留 `StockCopilot*`、`/api/stocks/copilot*`、`/api/stocks/mcp*`、旧会话 DTO、旧 orchestrator 或相关测试，也只按待清理遗留处理，不视为必须沿用的底座。
+2. 旧 `StockCopilot*` 产品叙事、旧会话 DTO、旧 orchestrator 命名仍按遗留态处理；但当前 `/api/stocks/mcp*` 与 `/api/stocks/copilot/turns/draft` 已是现行 MCP / draft 底座，不应再整体归类为“仅待清理遗留”。
 3. 旧前端卡片组件如 `StockAgentCard.vue` 最多只能作为视觉或信息排布参考，不能决定新产品骨架。
 
 ## 禁用清单
@@ -163,27 +164,27 @@
 
 | 能力域 | 当前依据 | 现状判断 | P0 结论 |
 | --- | --- | --- | --- |
-| 股票搜索与标的识别 | `/api/stocks/search`、搜索服务 | 已有普通 API | 需封装到 `CompanyOverviewMcp` |
+| 股票搜索与标的识别 | `/api/stocks/search`、搜索服务、`CompanyOverviewMcp` | 已有普通 API + 正式 MCP | 可直接复用，后续继续补强公司主营与赛道描述 |
 | K 线行情 | `StockKlineMcp` | 已成熟 | 可直接复用 |
 | 分时行情 | `StockMinuteMcp` | 已成熟 | 可直接复用 |
 | 技术指标/策略信号 | `StockStrategyMcp` | 已成熟 | 可直接复用 |
 | 新闻/公告/本地事实 | `StockNewsMcp`、`QueryLocalFactDatabaseTool` | 已成熟 | 可直接复用，需做 role-to-level 映射 |
 | 外部搜索 fallback | `StockSearchMcp` | 已有但受控不足 | 只能作为 `external_gated` fallback |
-| 公司详情聚合 | `/api/stocks/detail`、`/api/stocks/detail/cache` | 能力存在但未 MCP 化 | 需新增 `CompanyOverviewMcp` |
-| 基本面快照 | `/api/stocks/fundamental-snapshot` | 能力存在但未 MCP 化 | 需新增 `StockFundamentalsMcp` |
-| 股东结构 | 东方财富股东解析能力 | 部分能力存在 | 需新增 `StockShareholderMcp` |
-| 产品业务 | 当前未发现稳定 adapter | 明显缺口 | 必须新增 `StockProductMcp` |
-| 市场上下文 | `IStockMarketContextService`、本地 market/sector facts | 能力存在但未独立工具化 | 需决定独立 `MarketContextMcp` 或并入相关 MCP |
-| 社媒情绪 | 现有内部源不足 | 缺口 | 需定义真实源或明确降级模式 |
+| 公司详情聚合 | `/api/stocks/detail`、`/api/stocks/detail/cache`、`CompanyOverviewMcp` | 已 MCP 化，但业务描述仍需补强 | 可直接复用，后续补主营描述与赛道语料 |
+| 基本面快照 | `/api/stocks/fundamental-snapshot`、`StockFundamentalsMcp` | 已 MCP 化，但财务指标覆盖仍不足 | 可直接复用，后续补财务/盈利指标 |
+| 股东结构 | 东方财富股东解析能力、`StockShareholderMcp` | 已 MCP 化，但仍需继续去重与扩展字段 | 可直接复用，后续补强独立证据链 |
+| 产品业务 | 最小 `StockProductMcp` 已落地；稳定字段以 `经营范围 / 所属行业 / 证监会行业 / 所属地区` 为主，`zyyw` live probe 中不稳定 | 最小可用但 richer segmentation 未完成 | 当前不再阻塞 P0-Pre，rich segmentation 进入 `GOAL-AGENT-NEW-001-P0-Pre-Phase-E-R1` |
+| 市场上下文 | `IStockMarketContextService`、本地 market/sector facts、`MarketContextMcp` | 已存在独立 MCP | 可直接复用，后续继续验证 freshness / evidence |
+| 社媒情绪 | `SocialSentimentMcp`、本地 proxy 与新闻情绪 | 已存在 v1 降级 contract，但真实社媒源仍不足 | 当前可复用其 degraded / blocked 语义；未来若无稳定真实源则必须继续 blocked/degraded |
 
 ## 角色缺口矩阵结论
 
 | 角色分组 | 结论 | 后续动作 |
 | --- | --- | --- |
-| 可直接落地组 | Market、News、Bull、Bear、Research Manager、Trader、三类 Risk、Portfolio Manager | 进入 R1/R2 时可直接按 contract 和权限模型展开 |
-| 需先补 MCP 封装组 | Company Overview、Fundamentals、Shareholder | R2 必须优先补齐，再进入主流程开发 |
-| 需先补真实数据源组 | Product | 没有真实能力前只能 blocked，不允许假实现 |
-| 需定义明确降级策略组 | Social Sentiment | R2 需先写清“内部源优先，外部受控 fallback”的策略 |
+| 可直接落地组 | Company Overview、Market、News、Fundamentals、Shareholder、Bull、Bear、Research Manager、Trader、三类 Risk、Portfolio Manager | 进入 R1/R2 时可直接按既有 contract 和权限模型展开；其中部分 analyst 仍需继续补强字段质量 |
+| 已有 MCP、仍需补强数据质量组 | Company Overview、Fundamentals、Shareholder | 后续重点从“补 MCP”转为“补字段覆盖、职责边界与业务可用性” |
+| 最小 contract 已落地、仍需扩展组 | Product | 最小 `StockProductMcp` 已可用，不再作为 blocker；更细业务构成 / 产品结构继续留在 `GOAL-AGENT-NEW-001-P0-Pre-Phase-E-R1` |
+| 已有降级 contract、仍需真实源治理组 | Social Sentiment | 当前已具备 `SocialSentimentMcp` 与降级语义；若未来无稳定真实源，继续维持 blocked/degraded，不得伪成功 |
 
 ## 交付物
 1. 角色职责对齐表。
