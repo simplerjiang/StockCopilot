@@ -546,6 +546,45 @@ public sealed class StockCopilotMcpServiceTests
     }
 
     [Fact]
+    public async Task GetMarketContextAsync_ShouldPopulateOverviewFields()
+    {
+        var overviewService = new FakeRealtimeMarketOverviewService();
+        var service = CreateService(
+            marketContextService: new EmptyLabelStockMarketContextService(),
+            overviewService: overviewService);
+
+        var result = await service.GetMarketContextAsync("sh600000", "task-market-overview");
+
+        // Data fields
+        Assert.NotNull(result.Data.Indices);
+        Assert.Equal(3, result.Data.Indices!.Count);
+        Assert.Equal("sh000001", result.Data.Indices[0].Symbol);
+        Assert.Equal(3200m, result.Data.Indices[0].Price);
+        Assert.NotNull(result.Data.MainCapitalFlow);
+        Assert.Equal(-50m, result.Data.MainCapitalFlow!.MainNetInflow);
+        Assert.NotNull(result.Data.NorthboundFlow);
+        Assert.Equal(30m, result.Data.NorthboundFlow!.TotalNetInflow);
+        Assert.NotNull(result.Data.Breadth);
+        Assert.Equal(2100, result.Data.Breadth!.Advancers);
+        Assert.Equal(2500, result.Data.Breadth!.Decliners);
+        Assert.Equal(45, result.Data.Breadth!.LimitUpCount);
+        Assert.Equal(8, result.Data.Breadth!.LimitDownCount);
+
+        // Evidence: 2 from sector rotation + 4 from overview (indices, capital, northbound, breadth)
+        Assert.Equal(6, result.Evidence.Count);
+        Assert.Contains(result.Evidence, e => e.SourceRecordId?.Contains("indices") == true);
+        Assert.Contains(result.Evidence, e => e.SourceRecordId?.Contains("main_capital_flow") == true);
+        Assert.Contains(result.Evidence, e => e.SourceRecordId?.Contains("northbound_flow") == true);
+        Assert.Contains(result.Evidence, e => e.SourceRecordId?.Contains("breadth") == true);
+
+        // Features: should contain index and capital features
+        Assert.Contains(result.Features, f => f.Name == "mainCapitalNetInflow");
+        Assert.Contains(result.Features, f => f.Name == "northboundNetInflow");
+        Assert.Contains(result.Features, f => f.Name == "advancers");
+        Assert.Contains(result.Features, f => f.Name == "decliners");
+    }
+
+    [Fact]
     public async Task GetCompanyOverviewAsync_ShouldSerializeUtcDatesWithSingleChinaShift()
     {
         var quoteTimestampUtc = new DateTime(2026, 3, 21, 10, 0, 0, DateTimeKind.Utc);
@@ -946,7 +985,8 @@ public sealed class StockCopilotMcpServiceTests
         IHttpClientFactory? httpClientFactory = null,
         IStockMarketContextService? marketContextService = null,
         ILlmService? llmService = null,
-        StockSyncOptions? syncOptions = null)
+        StockSyncOptions? syncOptions = null,
+        IRealtimeMarketOverviewService? overviewService = null)
     {
         return new StockCopilotMcpService(
             dataService ?? new FakeStockDataService(),
@@ -965,7 +1005,8 @@ public sealed class StockCopilotMcpServiceTests
             httpClientFactory ?? new FakeHttpClientFactory(),
             Options.Create(options ?? new StockCopilotSearchOptions { Enabled = false, Provider = "tavily" }),
             llmService,
-            Options.Create(syncOptions ?? new StockSyncOptions()));
+            Options.Create(syncOptions ?? new StockSyncOptions()),
+            overviewService);
     }
 
     private static JsonSerializerOptions CreateWebJsonOptions()
@@ -1181,6 +1222,9 @@ public sealed class StockCopilotMcpServiceTests
     private sealed class FakeStockMarketContextService : IStockMarketContextService
     {
         public Task<StockMarketContextDto?> GetLatestAsync(string symbol, CancellationToken cancellationToken = default)
+            => GetLatestAsync(symbol, null, cancellationToken);
+
+        public Task<StockMarketContextDto?> GetLatestAsync(string symbol, string? sectorNameHint, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<StockMarketContextDto?>(new StockMarketContextDto("主升", 72m, "银行", "银行", "BK001", 80m, 0.8m, "积极执行", false, true));
         }
@@ -1189,6 +1233,9 @@ public sealed class StockCopilotMcpServiceTests
     private sealed class EmptyLabelStockMarketContextService : IStockMarketContextService
     {
         public Task<StockMarketContextDto?> GetLatestAsync(string symbol, CancellationToken cancellationToken = default)
+            => GetLatestAsync(symbol, null, cancellationToken);
+
+        public Task<StockMarketContextDto?> GetLatestAsync(string symbol, string? sectorNameHint, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<StockMarketContextDto?>(new StockMarketContextDto(string.Empty, 72m, "银行", "银行", "BK001", 80m, 0.8m, string.Empty, false, true));
         }
@@ -1459,5 +1506,27 @@ public sealed class StockCopilotMcpServiceTests
             ingestedAt,
             aiTarget ?? "个股:浦发银行",
             aiTags ?? new[] { "公告" });
+    }
+
+    private sealed class FakeRealtimeMarketOverviewService : IRealtimeMarketOverviewService
+    {
+        public Task<IReadOnlyList<BatchStockQuoteDto>> GetBatchQuotesAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<BatchStockQuoteDto>>(Array.Empty<BatchStockQuoteDto>());
+
+        public Task<MarketRealtimeOverviewDto> GetOverviewAsync(IReadOnlyList<string>? indexSymbols = null, CancellationToken cancellationToken = default)
+        {
+            var snapshotTime = new DateTime(2026, 3, 28, 10, 0, 0, DateTimeKind.Utc);
+            return Task.FromResult(new MarketRealtimeOverviewDto(
+                snapshotTime,
+                new[]
+                {
+                    new BatchStockQuoteDto("sh000001", "上证指数", 3200m, 10m, 0.31m, 3210m, 3180m, 0.5m, 0m, 300_000_000_000m, 1.0m, snapshotTime),
+                    new BatchStockQuoteDto("sz399001", "深证成指", 10500m, -30m, -0.28m, 10550m, 10450m, 0.6m, 0m, 400_000_000_000m, 0.9m, snapshotTime),
+                    new BatchStockQuoteDto("sz399006", "创业板指", 2100m, 5m, 0.24m, 2120m, 2080m, 0.7m, 0m, 100_000_000_000m, 1.1m, snapshotTime)
+                },
+                new MarketCapitalFlowSnapshotDto(snapshotTime, new DateOnly(2026, 3, 28), "亿元", -50m, 20m, 15m, -40m, -45m, Array.Empty<MarketCapitalFlowPointDto>()),
+                new NorthboundFlowSnapshotDto(snapshotTime, "2026-03-28", "亿元", 20m, 100m, 10m, 80m, 30m, Array.Empty<NorthboundFlowPointDto>()),
+                new MarketBreadthDistributionDto(new DateOnly(2026, 3, 28), 2100, 2500, 200, 45, 8, Array.Empty<MarketBreadthBucketDto>())));
+        }
     }
 }

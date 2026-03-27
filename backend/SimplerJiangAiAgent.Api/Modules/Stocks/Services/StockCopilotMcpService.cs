@@ -74,6 +74,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     private readonly StockCopilotSearchOptions _searchOptions;
     private readonly ILlmService? _llmService;
     private readonly StockSyncOptions _stockSyncOptions;
+    private readonly IRealtimeMarketOverviewService? _overviewService;
     private readonly ILocalFactIngestionService? _localFactIngestionService;
     private readonly ILlmSettingsStore? _llmSettingsStore;
     private readonly ILogger<StockCopilotMcpService> _logger;
@@ -89,6 +90,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         IOptions<StockCopilotSearchOptions> searchOptions,
         ILlmService? llmService = null,
         IOptions<StockSyncOptions>? stockSyncOptions = null,
+        IRealtimeMarketOverviewService? overviewService = null,
         ILocalFactIngestionService? localFactIngestionService = null,
         ILlmSettingsStore? llmSettingsStore = null,
         ILogger<StockCopilotMcpService>? logger = null)
@@ -103,6 +105,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         _searchOptions = searchOptions.Value;
         _llmService = llmService;
         _stockSyncOptions = stockSyncOptions?.Value ?? new StockSyncOptions();
+        _overviewService = overviewService;
         _localFactIngestionService = localFactIngestionService;
         _llmSettingsStore = llmSettingsStore;
         _logger = logger ?? NullLogger<StockCopilotMcpService>.Instance;
@@ -315,6 +318,30 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             degradedFlags.Add("no_market_context_data");
         }
 
+        // Fetch realtime market overview (graceful degradation)
+        MarketRealtimeOverviewDto? overview = null;
+        if (_overviewService is not null)
+        {
+            try
+            {
+                overview = await _overviewService.GetOverviewAsync(cancellationToken: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MarketContextMcp: GetOverviewAsync failed, degrading overview fields to null.");
+                degradedFlags.Add("overview_fetch_failed");
+            }
+        }
+
+        // Map overview data to compact DTOs
+        var indices = overview?.Indices?.Select(q => new MarketContextIndexDto(q.Symbol, q.Name, q.Price, q.ChangePercent)).ToArray();
+        var mainCapitalFlow = overview?.MainCapitalFlow is { } mcf ? new MarketContextCapitalFlowDto(mcf.MainNetInflow, mcf.AmountUnit, mcf.SnapshotTime) : null;
+        var northboundFlow = overview?.NorthboundFlow is { } nbf ? new MarketContextNorthboundDto(nbf.TotalNetInflow, nbf.AmountUnit, nbf.SnapshotTime) : null;
+        var breadth = overview?.Breadth is { } b ? new MarketContextBreadthDto(b.Advancers, b.Decliners, b.LimitUpCount, b.LimitDownCount) : null;
+
+        var evidence = BuildMarketContextEvidence(normalizedSymbol, marketContext, overview);
+        var features = BuildMarketContextFeatures(marketContext, overview);
+
         stopwatch.Stop();
         return BuildEnvelope(
             toolName: StockMcpToolNames.MarketContext,
@@ -328,9 +355,13 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
                 marketContext?.StockSectorName,
                 marketContext?.MainlineSectorName,
                 marketContext?.SectorCode,
-                marketContext?.MainlineScore),
-            evidence: ApplyWindow(BuildMarketContextEvidence(normalizedSymbol, marketContext), windowOptions.EvidenceSkip, windowOptions.EvidenceTake),
-            features: BuildMarketContextFeatures(marketContext),
+                marketContext?.MainlineScore,
+                indices,
+                mainCapitalFlow,
+                northboundFlow,
+                breadth),
+            evidence: ApplyWindow(evidence, windowOptions.EvidenceSkip, windowOptions.EvidenceTake),
+            features: features,
             symbol: normalizedSymbol,
             interval: null,
             query: null,
@@ -975,83 +1006,206 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         };
     }
 
-    private static IReadOnlyList<StockCopilotMcpEvidenceDto> BuildMarketContextEvidence(string symbol, StockCopilotMcpMarketContextDto? marketContext)
+    private static IReadOnlyList<StockCopilotMcpEvidenceDto> BuildMarketContextEvidence(string symbol, StockCopilotMcpMarketContextDto? marketContext, MarketRealtimeOverviewDto? overview = null)
     {
-        if (marketContext is null)
-        {
-            return Array.Empty<StockCopilotMcpEvidenceDto>();
-        }
-
         var evidence = new List<StockCopilotMcpEvidenceDto>();
 
-        if (!string.IsNullOrWhiteSpace(marketContext.StockSectorName) || !string.IsNullOrWhiteSpace(marketContext.SectorCode))
+        if (marketContext is not null)
         {
-            var summary = $"该字段来自本地市场上下文，不是东方财富公司概况字段。个股行业={marketContext.StockSectorName ?? "未知"}，行业代码={marketContext.SectorCode ?? "未知"}。";
-            evidence.Add(new StockCopilotMcpEvidenceDto(
-                $"个股行业={marketContext.StockSectorName ?? "未知"}",
-                "本地个股行业上下文",
-                "本地市场上下文",
-                null,
-                null,
-                null,
-                summary,
-                summary,
-                "local_fact",
-                "summary_only",
-                null,
-                null,
-                $"market_context:{symbol}:stock_sector",
-                "market_context",
-                null,
-                symbol,
-                new[] { "local_market_context" }));
+            if (!string.IsNullOrWhiteSpace(marketContext.StockSectorName) || !string.IsNullOrWhiteSpace(marketContext.SectorCode))
+            {
+                var summary = $"该字段来自本地市场上下文，不是东方财富公司概况字段。个股行业={marketContext.StockSectorName ?? "未知"}，行业代码={marketContext.SectorCode ?? "未知"}。";
+                evidence.Add(new StockCopilotMcpEvidenceDto(
+                    $"个股行业={marketContext.StockSectorName ?? "未知"}",
+                    "本地个股行业上下文",
+                    "本地市场上下文",
+                    null,
+                    null,
+                    null,
+                    summary,
+                    summary,
+                    "local_fact",
+                    "summary_only",
+                    null,
+                    null,
+                    $"market_context:{symbol}:stock_sector",
+                    "market_context",
+                    null,
+                    symbol,
+                    new[] { "local_market_context" }));
+            }
+
+            if (!string.IsNullOrWhiteSpace(marketContext.MainlineSectorName) || marketContext.MainlineScore.HasValue || marketContext.StageConfidence.HasValue)
+            {
+                var summary = $"该字段来自本地市场上下文/板块轮动快照，不是东方财富字段。当前主线={marketContext.MainlineSectorName ?? "无"}，主线强度={FormatOptionalNumber(marketContext.MainlineScore)}，阶段置信度={FormatOptionalNumber(marketContext.StageConfidence)}。";
+                evidence.Add(new StockCopilotMcpEvidenceDto(
+                    $"本地主线板块={marketContext.MainlineSectorName ?? "无"}",
+                    "本地主线板块轮动",
+                    "本地市场上下文/板块轮动",
+                    null,
+                    null,
+                    null,
+                    summary,
+                    summary,
+                    "local_fact",
+                    "summary_only",
+                    null,
+                    null,
+                    $"market_context:{symbol}:mainline",
+                    "market_context",
+                    null,
+                    symbol,
+                    new[] { "local_market_context", "sector_rotation" }));
+            }
         }
 
-        if (!string.IsNullOrWhiteSpace(marketContext.MainlineSectorName) || marketContext.MainlineScore.HasValue || marketContext.StageConfidence.HasValue)
+        if (overview is not null)
         {
-            var summary = $"该字段来自本地市场上下文/板块轮动快照，不是东方财富字段。当前主线={marketContext.MainlineSectorName ?? "无"}，主线强度={FormatOptionalNumber(marketContext.MainlineScore)}，阶段置信度={FormatOptionalNumber(marketContext.StageConfidence)}。";
-            evidence.Add(new StockCopilotMcpEvidenceDto(
-                $"本地主线板块={marketContext.MainlineSectorName ?? "无"}",
-                "本地主线板块轮动",
-                "本地市场上下文/板块轮动",
-                null,
-                null,
-                null,
-                summary,
-                summary,
-                "local_fact",
-                "summary_only",
-                null,
-                null,
-                $"market_context:{symbol}:mainline",
-                "market_context",
-                null,
-                symbol,
-                new[] { "local_market_context", "sector_rotation" }));
+            if (overview.Indices is { Count: > 0 } indices)
+            {
+                var indexSummary = string.Join("；", indices.Select(q => $"{q.Name}({q.Symbol}) {q.Price:F2} {q.ChangePercent:+0.00;-0.00}%"));
+                evidence.Add(new StockCopilotMcpEvidenceDto(
+                    "三大指数实时行情",
+                    "市场实时概览",
+                    "实时行情接口",
+                    overview.SnapshotTime,
+                    overview.SnapshotTime,
+                    null,
+                    indexSummary,
+                    indexSummary,
+                    "realtime_quote",
+                    "summary_only",
+                    null,
+                    null,
+                    $"market_context:{symbol}:indices",
+                    "market_context",
+                    null,
+                    symbol,
+                    new[] { "realtime_overview", "indices" }));
+            }
+
+            if (overview.MainCapitalFlow is { } mcf)
+            {
+                var mcfSummary = $"主力资金净流入={mcf.MainNetInflow:F2}{mcf.AmountUnit}，快照时间={mcf.SnapshotTime:HH:mm}。";
+                evidence.Add(new StockCopilotMcpEvidenceDto(
+                    $"主力净流入={mcf.MainNetInflow:F2}{mcf.AmountUnit}",
+                    "主力资金流向",
+                    "实时资金流向接口",
+                    mcf.SnapshotTime,
+                    mcf.SnapshotTime,
+                    null,
+                    mcfSummary,
+                    mcfSummary,
+                    "realtime_quote",
+                    "summary_only",
+                    null,
+                    null,
+                    $"market_context:{symbol}:main_capital_flow",
+                    "market_context",
+                    null,
+                    symbol,
+                    new[] { "realtime_overview", "capital_flow" }));
+            }
+
+            if (overview.NorthboundFlow is { } nbf)
+            {
+                var nbfSummary = $"北向资金净流入={nbf.TotalNetInflow:F2}{nbf.AmountUnit}，快照时间={nbf.SnapshotTime:HH:mm}。";
+                evidence.Add(new StockCopilotMcpEvidenceDto(
+                    $"北向净流入={nbf.TotalNetInflow:F2}{nbf.AmountUnit}",
+                    "北向资金流向",
+                    "实时北向资金接口",
+                    nbf.SnapshotTime,
+                    nbf.SnapshotTime,
+                    null,
+                    nbfSummary,
+                    nbfSummary,
+                    "realtime_quote",
+                    "summary_only",
+                    null,
+                    null,
+                    $"market_context:{symbol}:northbound_flow",
+                    "market_context",
+                    null,
+                    symbol,
+                    new[] { "realtime_overview", "northbound" }));
+            }
+
+            if (overview.Breadth is { } breadth)
+            {
+                var breadthSummary = $"涨={breadth.Advancers}，跌={breadth.Decliners}，涨停={breadth.LimitUpCount}，跌停={breadth.LimitDownCount}。";
+                evidence.Add(new StockCopilotMcpEvidenceDto(
+                    $"涨跌分布: 涨{breadth.Advancers}/跌{breadth.Decliners}",
+                    "涨跌分布",
+                    "实时涨跌分布接口",
+                    overview.SnapshotTime,
+                    overview.SnapshotTime,
+                    null,
+                    breadthSummary,
+                    breadthSummary,
+                    "realtime_quote",
+                    "summary_only",
+                    null,
+                    null,
+                    $"market_context:{symbol}:breadth",
+                    "market_context",
+                    null,
+                    symbol,
+                    new[] { "realtime_overview", "breadth" }));
+            }
         }
 
         return evidence;
     }
 
-    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildMarketContextFeatures(StockCopilotMcpMarketContextDto? marketContext)
+    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildMarketContextFeatures(StockCopilotMcpMarketContextDto? marketContext, MarketRealtimeOverviewDto? overview = null)
     {
+        var features = new List<StockCopilotMcpFeatureDto>();
+
         if (marketContext is null)
         {
-            return new[]
-            {
-                new StockCopilotMcpFeatureDto("available", "Context Available", "text", null, "false", null, "Whether a local market-context snapshot was available.")
-            };
+            features.Add(new StockCopilotMcpFeatureDto("available", "Context Available", "text", null, "false", null, "Whether a local market-context snapshot was available."));
+        }
+        else
+        {
+            features.Add(new StockCopilotMcpFeatureDto("available", "Context Available", "text", null, "true", null, "Whether a local market-context snapshot was available."));
+            features.Add(new StockCopilotMcpFeatureDto("stageConfidence", "Stage Confidence", "number", marketContext.StageConfidence, null, null, "Confidence score retained from the local market-context snapshot."));
+            features.Add(new StockCopilotMcpFeatureDto("mainlineScore", "Mainline Score", "number", marketContext.MainlineScore, null, null, "Strength score retained from local market-context / sector-rotation data."));
+            features.Add(new StockCopilotMcpFeatureDto("stockSectorName", "Stock Sector Name", "text", null, marketContext.StockSectorName, null, "Stock sector carried from local market context."));
+            features.Add(new StockCopilotMcpFeatureDto("mainlineSectorName", "Mainline Sector Name", "text", null, marketContext.MainlineSectorName, null, "Mainline sector carried from local market context / sector rotation."));
+            features.Add(new StockCopilotMcpFeatureDto("sectorCode", "Sector Code", "text", null, marketContext.SectorCode, null, "Sector code carried from local market context."));
         }
 
-        return new[]
+        if (overview is not null)
         {
-            new StockCopilotMcpFeatureDto("available", "Context Available", "text", null, "true", null, "Whether a local market-context snapshot was available."),
-            new StockCopilotMcpFeatureDto("stageConfidence", "Stage Confidence", "number", marketContext.StageConfidence, null, null, "Confidence score retained from the local market-context snapshot."),
-            new StockCopilotMcpFeatureDto("mainlineScore", "Mainline Score", "number", marketContext.MainlineScore, null, null, "Strength score retained from local market-context / sector-rotation data."),
-            new StockCopilotMcpFeatureDto("stockSectorName", "Stock Sector Name", "text", null, marketContext.StockSectorName, null, "Stock sector carried from local market context."),
-            new StockCopilotMcpFeatureDto("mainlineSectorName", "Mainline Sector Name", "text", null, marketContext.MainlineSectorName, null, "Mainline sector carried from local market context / sector rotation."),
-            new StockCopilotMcpFeatureDto("sectorCode", "Sector Code", "text", null, marketContext.SectorCode, null, "Sector code carried from local market context.")
-        };
+            if (overview.Indices is { Count: > 0 })
+            {
+                foreach (var idx in overview.Indices)
+                {
+                    features.Add(new StockCopilotMcpFeatureDto($"index_{idx.Symbol}_price", $"{idx.Name} Price", "number", idx.Price, null, null, $"Latest price of index {idx.Name}."));
+                    features.Add(new StockCopilotMcpFeatureDto($"index_{idx.Symbol}_changePct", $"{idx.Name} Change%", "number", idx.ChangePercent, null, null, $"Change percent of index {idx.Name}."));
+                }
+            }
+
+            if (overview.MainCapitalFlow is { } mcf)
+            {
+                features.Add(new StockCopilotMcpFeatureDto("mainCapitalNetInflow", "Main Capital Net Inflow", "number", mcf.MainNetInflow, null, mcf.AmountUnit, "Main capital net inflow from realtime overview."));
+            }
+
+            if (overview.NorthboundFlow is { } nbf)
+            {
+                features.Add(new StockCopilotMcpFeatureDto("northboundNetInflow", "Northbound Net Inflow", "number", nbf.TotalNetInflow, null, nbf.AmountUnit, "Total northbound net inflow from realtime overview."));
+            }
+
+            if (overview.Breadth is { } breadth)
+            {
+                features.Add(new StockCopilotMcpFeatureDto("advancers", "Advancers", "number", breadth.Advancers, null, null, "Number of advancing stocks."));
+                features.Add(new StockCopilotMcpFeatureDto("decliners", "Decliners", "number", breadth.Decliners, null, null, "Number of declining stocks."));
+                features.Add(new StockCopilotMcpFeatureDto("limitUpCount", "Limit Up Count", "number", breadth.LimitUpCount, null, null, "Number of limit-up stocks."));
+                features.Add(new StockCopilotMcpFeatureDto("limitDownCount", "Limit Down Count", "number", breadth.LimitDownCount, null, null, "Number of limit-down stocks."));
+            }
+        }
+
+        return features;
     }
 
     private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildSocialSentimentFeatures(
@@ -1485,7 +1639,8 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
     private static bool IsProductFact(StockFundamentalFactDto item)
     {
-        return ProductFactLabels.Contains(item.Label);
+        return ProductFactLabels.Contains(item.Label)
+               || item.Label.StartsWith("主营构成", StringComparison.Ordinal);
     }
 
     private static int? TryResolveShareholderCount(IReadOnlyList<StockFundamentalFactDto>? facts)
@@ -2075,7 +2230,18 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
     private async Task<StockCopilotMcpMarketContextDto?> ResolveMcpMarketContextAsync(string symbol, CancellationToken cancellationToken)
     {
-        var marketContext = await _marketContextService.GetLatestAsync(symbol, cancellationToken);
+        string? sectorNameHint = null;
+        try
+        {
+            var quote = await _dataService.GetQuoteAsync(symbol, null, cancellationToken);
+            sectorNameHint = quote.SectorName;
+        }
+        catch
+        {
+            // Quote fetch may fail; proceed without hint
+        }
+
+        var marketContext = await _marketContextService.GetLatestAsync(symbol, sectorNameHint, cancellationToken);
         return ToCopilotMarketContext(marketContext);
     }
 

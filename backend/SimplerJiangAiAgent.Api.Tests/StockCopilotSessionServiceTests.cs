@@ -157,6 +157,9 @@ public sealed class StockCopilotSessionServiceTests
     private sealed class FakeStockMarketContextService : IStockMarketContextService
     {
         public Task<StockMarketContextDto?> GetLatestAsync(string symbol, CancellationToken cancellationToken = default)
+            => GetLatestAsync(symbol, null, cancellationToken);
+
+        public Task<StockMarketContextDto?> GetLatestAsync(string symbol, string? sectorNameHint, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<StockMarketContextDto?>(new StockMarketContextDto("主升", 81m, "银行", "银行", "BK001", 88m, 0.7m, "积极执行", false, true));
         }

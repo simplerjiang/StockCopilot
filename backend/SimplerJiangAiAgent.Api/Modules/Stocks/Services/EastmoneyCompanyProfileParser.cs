@@ -76,6 +76,16 @@ internal static class EastmoneyCompanyProfileParser
             facts.Add(new StockFundamentalFactDto(label, value, "东方财富公司概况"));
         }
 
+        // Derive 主营业务 from 经营范围 when zyyw is empty
+        if (!facts.Any(f => f.Label == "主营业务"))
+        {
+            var derived = DeriveMainBusinessFromScope(facts.FirstOrDefault(f => f.Label == "经营范围")?.Value);
+            if (!string.IsNullOrWhiteSpace(derived))
+            {
+                facts.Insert(0, new StockFundamentalFactDto("主营业务", derived, "东方财富公司概况(经营范围摘要)"));
+            }
+        }
+
         if (shareholderCount.HasValue)
         {
             facts.Add(new StockFundamentalFactDto("股东户数", shareholderCount.Value.ToString(), "东方财富股东研究"));
@@ -156,6 +166,42 @@ internal static class EastmoneyCompanyProfileParser
         }
 
         return Array.Empty<StockFundamentalFactDto>();
+    }
+
+    internal static string? DeriveMainBusinessFromScope(string? businessScope)
+    {
+        if (string.IsNullOrWhiteSpace(businessScope))
+        {
+            return null;
+        }
+
+        var segments = businessScope.Split(new[] { '；', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+        {
+            return null;
+        }
+
+        // Take the first 3 segments or up to 200 chars
+        var builder = new System.Text.StringBuilder();
+        var taken = 0;
+        foreach (var segment in segments)
+        {
+            if (taken >= 3 || builder.Length + segment.Length > 200)
+            {
+                break;
+            }
+
+            if (builder.Length > 0)
+            {
+                builder.Append('；');
+            }
+
+            builder.Append(segment);
+            taken++;
+        }
+
+        var result = builder.ToString().Trim();
+        return string.IsNullOrWhiteSpace(result) ? null : result;
     }
 
     private static int? ParseShareholderCount(string? shareholderJson)
@@ -342,5 +388,118 @@ internal static class EastmoneyCompanyProfileParser
                         : 0;
 
         return year * 10 + quarterWeight;
+    }
+
+    public static IReadOnlyList<StockFundamentalFactDto> ParseMainBusinessComposition(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return Array.Empty<StockFundamentalFactDto>();
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("result", out var resultNode)
+                || resultNode.ValueKind != JsonValueKind.Object
+                || !resultNode.TryGetProperty("data", out var dataNode)
+                || dataNode.ValueKind != JsonValueKind.Array
+                || dataNode.GetArrayLength() == 0)
+            {
+                return Array.Empty<StockFundamentalFactDto>();
+            }
+
+            // Find the latest REPORT_DATE
+            string? latestDate = null;
+            foreach (var item in dataNode.EnumerateArray())
+            {
+                var date = item.TryGetProperty("REPORT_DATE", out var dateNode) && dateNode.ValueKind == JsonValueKind.String
+                    ? dateNode.GetString()?.Trim()
+                    : null;
+                if (!string.IsNullOrWhiteSpace(date) && (latestDate is null || string.Compare(date, latestDate, StringComparison.Ordinal) > 0))
+                {
+                    latestDate = date;
+                }
+            }
+
+            if (latestDate is null)
+            {
+                return Array.Empty<StockFundamentalFactDto>();
+            }
+
+            var facts = new List<StockFundamentalFactDto>();
+            foreach (var item in dataNode.EnumerateArray())
+            {
+                var date = item.TryGetProperty("REPORT_DATE", out var dateNode) && dateNode.ValueKind == JsonValueKind.String
+                    ? dateNode.GetString()?.Trim()
+                    : null;
+                if (!string.Equals(date, latestDate, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var mainopType = item.TryGetProperty("MAINOP_TYPE", out var typeNode) && typeNode.ValueKind == JsonValueKind.Number
+                    ? typeNode.GetInt32()
+                    : 0;
+                if (mainopType != 2 && mainopType != 3)
+                {
+                    continue;
+                }
+
+                var itemName = item.TryGetProperty("ITEM_NAME", out var nameNode) && nameNode.ValueKind == JsonValueKind.String
+                    ? nameNode.GetString()?.Trim()
+                    : null;
+                if (string.IsNullOrWhiteSpace(itemName))
+                {
+                    continue;
+                }
+
+                var income = item.TryGetProperty("MAIN_BUSINESS_INCOME", out var incomeNode) && incomeNode.ValueKind == JsonValueKind.Number
+                    ? incomeNode.GetDecimal()
+                    : (decimal?)null;
+                var ratio = item.TryGetProperty("MBI_RATIO", out var ratioNode) && ratioNode.ValueKind == JsonValueKind.Number
+                    ? ratioNode.GetDecimal()
+                    : (decimal?)null;
+
+                var category = mainopType == 2 ? "产品" : "地区";
+                var label = $"主营构成({category})-{itemName}";
+                var value = FormatMainBusinessValue(income, ratio);
+                facts.Add(new StockFundamentalFactDto(label, value, "东方财富主营构成"));
+            }
+
+            // Add report-date summary fact
+            var displayDate = latestDate.Length > 10 ? latestDate[..10] : latestDate;
+            facts.Add(new StockFundamentalFactDto("主营构成报告期", displayDate, "东方财富主营构成"));
+
+            return facts;
+        }
+        catch
+        {
+            return Array.Empty<StockFundamentalFactDto>();
+        }
+    }
+
+    internal static string FormatMainBusinessValue(decimal? income, decimal? ratio)
+    {
+        var parts = new List<string>();
+        if (income.HasValue)
+        {
+            if (Math.Abs(income.Value) >= 100_000_000m)
+            {
+                parts.Add($"{(income.Value / 100_000_000m):0.##}亿元");
+            }
+            else
+            {
+                parts.Add($"{(income.Value / 10_000m):0.##}万元");
+            }
+        }
+
+        if (ratio.HasValue)
+        {
+            parts.Add($"{(ratio.Value * 100m):0.0#}%");
+        }
+
+        return parts.Count > 0 ? string.Join(" ", parts) : "--";
     }
 }

@@ -190,6 +190,11 @@ public sealed record StockCopilotMcpMarketContextDto(
     string? SectorCode,
     decimal? MainlineScore);
 
+public sealed record MarketContextIndexDto(string Symbol, string Name, decimal Price, decimal ChangePercent);
+public sealed record MarketContextCapitalFlowDto(decimal MainNetInflow, string AmountUnit, DateTime SnapshotTime);
+public sealed record MarketContextNorthboundDto(decimal TotalNetInflow, string AmountUnit, DateTime SnapshotTime);
+public sealed record MarketContextBreadthDto(int Advancers, int Decliners, int LimitUpCount, int LimitDownCount);
+
 public sealed record StockCopilotMarketContextDataDto(
     string Symbol,
     bool Available,
@@ -197,7 +202,11 @@ public sealed record StockCopilotMarketContextDataDto(
     string? StockSectorName,
     string? MainlineSectorName,
     string? SectorCode,
-    decimal? MainlineScore);
+    decimal? MainlineScore,
+    IReadOnlyList<MarketContextIndexDto>? Indices = null,
+    MarketContextCapitalFlowDto? MainCapitalFlow = null,
+    MarketContextNorthboundDto? NorthboundFlow = null,
+    MarketContextBreadthDto? Breadth = null);
 
 public sealed record StockCopilotSentimentCountDto(
     int PositiveCount,

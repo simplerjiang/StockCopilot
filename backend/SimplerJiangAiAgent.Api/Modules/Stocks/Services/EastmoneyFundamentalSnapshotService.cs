@@ -19,11 +19,13 @@ public sealed class EastmoneyFundamentalSnapshotService : IStockFundamentalSnaps
         var surveyUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={marketPrefix}{code}";
         var shareholderUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={marketPrefix}{code}";
         var financeUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew?type=0&code={marketPrefix}{code}";
+        var mainBusinessUrl = $"https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_FN_MAINOP&columns=ITEM_NAME,MAIN_BUSINESS_INCOME,MBI_RATIO,MAINOP_TYPE,REPORT_DATE&filter=(SECUCODE=%22{code}.{marketPrefix}%22)&sortColumns=REPORT_DATE&sortTypes=-1&pageSize=20";
 
         var surveyTask = TryGetStringAsync(surveyUrl, cancellationToken);
         var shareholderTask = TryGetStringAsync(shareholderUrl, cancellationToken);
         var financeTask = TryGetStringAsync(financeUrl, cancellationToken);
-        await Task.WhenAll(surveyTask, shareholderTask, financeTask);
+        var mainBusinessTask = TryGetStringAsync(mainBusinessUrl, cancellationToken);
+        await Task.WhenAll(surveyTask, shareholderTask, financeTask, mainBusinessTask);
 
         var surveyJson = await surveyTask;
         if (string.IsNullOrWhiteSpace(surveyJson))
@@ -40,6 +42,10 @@ public sealed class EastmoneyFundamentalSnapshotService : IStockFundamentalSnaps
             var financeFacts = EastmoneyCompanyProfileParser.ParseFinanceFacts(financeJson);
             allFacts.AddRange(financeFacts);
         }
+
+        var mainBusinessJson = await mainBusinessTask;
+        var mainBusinessFacts = EastmoneyCompanyProfileParser.ParseMainBusinessComposition(mainBusinessJson);
+        allFacts.AddRange(mainBusinessFacts);
 
         if (allFacts.Count == 0)
         {

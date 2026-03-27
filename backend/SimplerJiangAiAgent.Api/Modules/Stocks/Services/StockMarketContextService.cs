@@ -7,6 +7,7 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 public interface IStockMarketContextService
 {
     Task<StockMarketContextDto?> GetLatestAsync(string symbol, CancellationToken cancellationToken = default);
+    Task<StockMarketContextDto?> GetLatestAsync(string symbol, string? sectorNameHint, CancellationToken cancellationToken = default);
 }
 
 public sealed class StockMarketContextService : IStockMarketContextService
@@ -18,7 +19,10 @@ public sealed class StockMarketContextService : IStockMarketContextService
         _dbContext = dbContext;
     }
 
-    public async Task<StockMarketContextDto?> GetLatestAsync(string symbol, CancellationToken cancellationToken = default)
+    public Task<StockMarketContextDto?> GetLatestAsync(string symbol, CancellationToken cancellationToken = default)
+        => GetLatestAsync(symbol, null, cancellationToken);
+
+    public async Task<StockMarketContextDto?> GetLatestAsync(string symbol, string? sectorNameHint, CancellationToken cancellationToken = default)
     {
         var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
         if (string.IsNullOrWhiteSpace(normalizedSymbol))
@@ -46,7 +50,8 @@ public sealed class StockMarketContextService : IStockMarketContextService
                 .Where(item => item.Symbol == normalizedSymbol && item.SectorName != null && item.SectorName != string.Empty)
                 .OrderByDescending(item => item.UpdatedAt)
                 .Select(item => item.SectorName)
-                .FirstOrDefaultAsync(cancellationToken);
+                .FirstOrDefaultAsync(cancellationToken)
+            ?? (string.IsNullOrWhiteSpace(sectorNameHint) ? null : sectorNameHint.Trim());
 
         var latestSectorSnapshotTime = await _dbContext.SectorRotationSnapshots
             .AsNoTracking()
