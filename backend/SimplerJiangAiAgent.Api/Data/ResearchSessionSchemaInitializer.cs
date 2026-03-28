@@ -8,10 +8,14 @@ public static class ResearchSessionSchemaInitializer
     public static async Task EnsureAsync(AppDbContext dbContext, CancellationToken cancellationToken = default)
     {
         var provider = dbContext.Database.ProviderName ?? string.Empty;
-        if (!provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-            return; // SQLite — EnsureCreated handles it
-
-        await EnsureSqlServerAsync(dbContext, cancellationToken);
+        if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            await EnsureSqlServerAsync(dbContext, cancellationToken);
+        }
+        else
+        {
+            await EnsureSqliteAsync(dbContext, cancellationToken);
+        }
     }
 
     private static async Task EnsureSqlServerAsync(AppDbContext dbContext, CancellationToken cancellationToken)
@@ -276,5 +280,276 @@ public static class ResearchSessionSchemaInitializer
     {
         await dbContext.Database.ExecuteSqlRawAsync(
             $"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{indexName}') {createSql}", ct);
+    }
+
+    private static async Task EnsureSqliteAsync(AppDbContext dbContext, CancellationToken cancellationToken)
+    {
+        // ── R1-R4 core tables ────────────────────────────────────────
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchSessions (
+                Id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionKey              TEXT    NOT NULL,
+                Symbol                  TEXT    NOT NULL,
+                Name                    TEXT    NOT NULL,
+                Status                  TEXT    NOT NULL,
+                ActiveTurnId            INTEGER NULL,
+                ActiveStage             TEXT    NULL,
+                LastUserIntent          TEXT    NULL,
+                DegradedFlagsJson       TEXT    NULL,
+                LatestRating            TEXT    NULL,
+                LatestDecisionHeadline  TEXT    NULL,
+                CreatedAt               TEXT    NOT NULL,
+                UpdatedAt               TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchTurns (
+                Id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId           INTEGER NOT NULL,
+                TurnIndex           INTEGER NOT NULL,
+                UserPrompt          TEXT    NOT NULL,
+                Status              TEXT    NOT NULL,
+                ContinuationMode    TEXT    NOT NULL,
+                ReuseScope          TEXT    NULL,
+                RerunScope          TEXT    NULL,
+                ChangeSummary       TEXT    NULL,
+                StopReason          TEXT    NULL,
+                DegradedFlagsJson   TEXT    NULL,
+                RequestedAt         TEXT    NOT NULL,
+                StartedAt           TEXT    NULL,
+                CompletedAt         TEXT    NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchStageSnapshots (
+                Id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                TurnId              INTEGER NOT NULL,
+                StageType           TEXT    NOT NULL,
+                StageRunIndex       INTEGER NOT NULL,
+                ExecutionMode       TEXT    NOT NULL,
+                Status              TEXT    NOT NULL,
+                ActiveRoleIdsJson   TEXT    NULL,
+                Summary             TEXT    NULL,
+                DegradedFlagsJson   TEXT    NULL,
+                StopReason          TEXT    NULL,
+                StartedAt           TEXT    NULL,
+                CompletedAt         TEXT    NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchRoleStates (
+                Id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                StageId             INTEGER NOT NULL,
+                RoleId              TEXT    NOT NULL,
+                RunIndex            INTEGER NOT NULL,
+                Status              TEXT    NOT NULL,
+                ToolPolicyClass     TEXT    NULL,
+                InputRefsJson       TEXT    NULL,
+                OutputRefsJson      TEXT    NULL,
+                OutputContentJson   TEXT    NULL,
+                DegradedFlagsJson   TEXT    NULL,
+                ErrorCode           TEXT    NULL,
+                ErrorMessage        TEXT    NULL,
+                LlmTraceId          TEXT    NULL,
+                StartedAt           TEXT    NULL,
+                CompletedAt         TEXT    NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchFeedItems (
+                Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                TurnId          INTEGER NOT NULL,
+                StageId         INTEGER NULL,
+                RoleId          TEXT    NULL,
+                ItemType        TEXT    NOT NULL,
+                Content         TEXT    NOT NULL,
+                MetadataJson    TEXT    NULL,
+                TraceId         TEXT    NULL,
+                CreatedAt       TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchReportSnapshots (
+                Id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId               INTEGER NOT NULL,
+                TurnId                  INTEGER NOT NULL,
+                TriggeredByStageId      INTEGER NULL,
+                VersionIndex            INTEGER NOT NULL,
+                IsFinal                 INTEGER NOT NULL,
+                ReportBlocksJson        TEXT    NULL,
+                CreatedAt               TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchDecisionSnapshots (
+                Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId                   INTEGER NOT NULL,
+                TurnId                      INTEGER NOT NULL,
+                SupersededByDecisionId      INTEGER NULL,
+                Rating                      TEXT    NULL,
+                Action                      TEXT    NULL,
+                ExecutiveSummary            TEXT    NULL,
+                InvestmentThesis            TEXT    NULL,
+                FinalDecisionJson           TEXT    NULL,
+                RiskConsensus               TEXT    NULL,
+                DissentJson                 TEXT    NULL,
+                NextActionsJson             TEXT    NULL,
+                InvalidationConditionsJson  TEXT    NULL,
+                SupportingEvidenceJson      TEXT    NULL,
+                CounterEvidenceJson         TEXT    NULL,
+                ConfidenceExplanation       TEXT    NULL,
+                Confidence                  REAL    NULL,
+                CreatedAt                   TEXT    NOT NULL
+            );", cancellationToken);
+
+        // Indexes for R1-R4 tables
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_ResearchSessions_SessionKey ON ResearchSessions(SessionKey);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchSessions_Symbol_Status ON ResearchSessions(Symbol, Status);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchSessions_Symbol_UpdatedAt ON ResearchSessions(Symbol, UpdatedAt);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_ResearchTurns_SessionId_TurnIndex ON ResearchTurns(SessionId, TurnIndex);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchStageSnapshots_TurnId_StageType ON ResearchStageSnapshots(TurnId, StageType, StageRunIndex);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchRoleStates_StageId_RoleId ON ResearchRoleStates(StageId, RoleId, RunIndex);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchFeedItems_TurnId_CreatedAt ON ResearchFeedItems(TurnId, CreatedAt);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchReportSnapshots_SessionId_TurnId ON ResearchReportSnapshots(SessionId, TurnId, VersionIndex);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchDecisionSnapshots_SessionId_TurnId ON ResearchDecisionSnapshots(SessionId, TurnId);", cancellationToken);
+
+        // ── R5: Debate, Risk, Proposal tables ────────────────────────
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchDebateMessages (
+                Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId                   INTEGER NOT NULL,
+                TurnId                      INTEGER NOT NULL,
+                StageId                     INTEGER NOT NULL,
+                Side                        TEXT    NOT NULL,
+                RoleId                      TEXT    NOT NULL,
+                RoundIndex                  INTEGER NOT NULL,
+                Claim                       TEXT    NOT NULL,
+                SupportingEvidenceRefsJson  TEXT    NULL,
+                CounterTargetRole           TEXT    NULL,
+                CounterPointsJson           TEXT    NULL,
+                OpenQuestionsJson           TEXT    NULL,
+                LlmTraceId                  TEXT    NULL,
+                CreatedAt                   TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchManagerVerdicts (
+                Id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId               INTEGER NOT NULL,
+                TurnId                  INTEGER NOT NULL,
+                StageId                 INTEGER NOT NULL,
+                RoundIndex              INTEGER NOT NULL,
+                AdoptedBullPointsJson   TEXT    NULL,
+                AdoptedBearPointsJson   TEXT    NULL,
+                ShelvedDisputesJson     TEXT    NULL,
+                ResearchConclusion      TEXT    NULL,
+                InvestmentPlanDraftJson TEXT    NULL,
+                IsConverged             INTEGER NOT NULL DEFAULT 0,
+                LlmTraceId              TEXT    NULL,
+                CreatedAt               TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchTraderProposals (
+                Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId                   INTEGER NOT NULL,
+                TurnId                      INTEGER NOT NULL,
+                StageId                     INTEGER NOT NULL,
+                Version                     INTEGER NOT NULL,
+                Status                      TEXT    NOT NULL,
+                Direction                   TEXT    NULL,
+                EntryPlanJson               TEXT    NULL,
+                ExitPlanJson                TEXT    NULL,
+                PositionSizingJson          TEXT    NULL,
+                Rationale                   TEXT    NULL,
+                SupersededByProposalId      INTEGER NULL,
+                LlmTraceId                  TEXT    NULL,
+                CreatedAt                   TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchRiskAssessments (
+                Id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId               INTEGER NOT NULL,
+                TurnId                  INTEGER NOT NULL,
+                StageId                 INTEGER NOT NULL,
+                RoleId                  TEXT    NOT NULL,
+                Tier                    TEXT    NOT NULL,
+                RoundIndex              INTEGER NOT NULL,
+                RiskLimitsJson          TEXT    NULL,
+                InvalidationsJson       TEXT    NULL,
+                ProposalAssessment      TEXT    NULL,
+                AnalysisContent         TEXT    NULL,
+                ResponseToArtifactId    INTEGER NULL,
+                LlmTraceId              TEXT    NULL,
+                CreatedAt               TEXT    NOT NULL
+            );", cancellationToken);
+
+        // R5 indexes
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchDebateMessages_Session_Turn_Stage_Round ON ResearchDebateMessages(SessionId, TurnId, StageId, RoundIndex);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchManagerVerdicts_Session_Turn_Stage ON ResearchManagerVerdicts(SessionId, TurnId, StageId);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchTraderProposals_Session_Turn_Version ON ResearchTraderProposals(SessionId, TurnId, Version);", cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_ResearchRiskAssessments_Session_Turn_Role_Round ON ResearchRiskAssessments(SessionId, TurnId, StageId, RoleId, RoundIndex);", cancellationToken);
+
+        // ── R6: Report blocks ────────────────────────────────────────
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ResearchReportBlocks (
+                Id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId                   INTEGER NOT NULL,
+                TurnId                      INTEGER NOT NULL,
+                BlockType                   TEXT    NOT NULL,
+                VersionIndex                INTEGER NOT NULL DEFAULT 0,
+                Headline                    TEXT    NULL,
+                Summary                     TEXT    NULL,
+                KeyPointsJson               TEXT    NULL,
+                EvidenceRefsJson            TEXT    NULL,
+                CounterEvidenceRefsJson     TEXT    NULL,
+                DisagreementsJson           TEXT    NULL,
+                RiskLimitsJson              TEXT    NULL,
+                InvalidationsJson           TEXT    NULL,
+                RecommendedActionsJson      TEXT    NULL,
+                Status                      TEXT    NOT NULL DEFAULT 'Pending',
+                DegradedFlagsJson           TEXT    NULL,
+                MissingEvidence             TEXT    NULL,
+                ConfidenceImpact            TEXT    NULL,
+                SourceStageType             TEXT    NULL,
+                SourceArtifactId            INTEGER NULL,
+                CreatedAt                   TEXT    NOT NULL,
+                UpdatedAt                   TEXT    NOT NULL
+            );", cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS UQ_ResearchReportBlocks_Turn_Block_Version ON ResearchReportBlocks(TurnId, BlockType, VersionIndex);", cancellationToken);
+
+        // R6: Ensure columns added after initial schema exist on ResearchDecisionSnapshots
+        await EnsureSqliteColumnAsync(dbContext, "ResearchDecisionSnapshots", "SupportingEvidenceJson", "TEXT", cancellationToken);
+        await EnsureSqliteColumnAsync(dbContext, "ResearchDecisionSnapshots", "CounterEvidenceJson", "TEXT", cancellationToken);
+        await EnsureSqliteColumnAsync(dbContext, "ResearchDecisionSnapshots", "ConfidenceExplanation", "TEXT", cancellationToken);
+    }
+
+    private static async Task EnsureSqliteColumnAsync(AppDbContext dbContext, string table, string column, string sqlType, CancellationToken ct)
+    {
+        try
+        {
+            await dbContext.Database.ExecuteSqlRawAsync(
+                $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {sqlType} NULL;", ct);
+        }
+        catch
+        {
+            // Column already exists — safe to ignore
+        }
     }
 }
