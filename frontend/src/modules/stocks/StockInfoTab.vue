@@ -10,6 +10,7 @@ import StockTradingPlanBoard from './StockTradingPlanBoard.vue'
 import StockTradingPlanModal from './StockTradingPlanModal.vue'
 import StockTradingPlanSection from './StockTradingPlanSection.vue'
 import TerminalView from './TerminalView.vue'
+import TradingWorkbench from './workbench/TradingWorkbench.vue'
 import { createStockInfoTabDataRequests } from './stockInfoTabDataRequests'
 import { createStockInfoTabQuoteRuntime } from './stockInfoTabQuoteRuntime'
 import {
@@ -1201,12 +1202,9 @@ watch(currentStockKey, () => {
           </div>
         </template>
 
-        <div v-else class="copilot-card ai-placeholder-card">
-          <div class="terminal-empty compact-empty">
-            <h4>扩展区已留空</h4>
-            <p>股票助手、会话化协驾和多 Agent 分析模块已移除，后续可在这里重新接入新方案。</p>
-          </div>
-        </div>
+        <TradingWorkbench
+          :symbol="detail?.quote?.symbol ?? ''"
+        />
 
         <StockTradingPlanModal
           :workspace="activePlanModalWorkspace"

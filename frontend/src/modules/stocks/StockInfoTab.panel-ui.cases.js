@@ -241,7 +241,7 @@ export const stockInfoTabPanelUiCases = ({
   }
   },
   {
-    title: "renders a blank extension placeholder before any stock is loaded",
+    title: "renders trading workbench placeholder before any stock is loaded",
     run: async () => {
     const { fetchMock } = createChatFetchMock()
     vi.stubGlobal('fetch', fetchMock)
@@ -249,8 +249,8 @@ export const stockInfoTabPanelUiCases = ({
     const wrapper = mount(StockInfoTab)
     await flushPromises()
 
-    expect(wrapper.find('.ai-placeholder-card').exists()).toBe(true)
-    expect(wrapper.text()).toContain('股票助手、会话化协驾和多 Agent 分析模块已移除')
+    expect(wrapper.find('.trading-workbench').exists()).toBe(true)
+    expect(wrapper.text()).toContain('研究报告')
   }
   }
 ]

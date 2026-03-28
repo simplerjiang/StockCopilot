@@ -36,6 +36,8 @@ public sealed record ResearchSessionDetailDto(
     IReadOnlyList<ResearchTurnSummaryDto> Turns,
     IReadOnlyList<ResearchReportSnapshotDto> Reports,
     IReadOnlyList<ResearchDecisionSnapshotDto> Decisions,
+    IReadOnlyList<ResearchStageSnapshotDto> StageSnapshots,
+    IReadOnlyList<ResearchFeedItemDto> FeedItems,
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
@@ -72,6 +74,7 @@ public sealed record ResearchRoleStateDto(
 
 public sealed record ResearchFeedItemDto(
     long Id,
+    long TurnId,
     string ItemType,
     string? RoleId,
     string Content,

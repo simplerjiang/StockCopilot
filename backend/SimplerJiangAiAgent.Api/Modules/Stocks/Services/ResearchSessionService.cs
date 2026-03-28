@@ -54,15 +54,37 @@ public sealed class ResearchSessionService : IResearchSessionService
 
         if (session is null) return null;
 
+        var orderedTurns = session.Turns.OrderBy(t => t.TurnIndex).ToArray();
+        var latestTurn = orderedTurns.LastOrDefault();
+
+        var stageSnapshots = latestTurn?.StageSnapshots
+            .OrderBy(ss => ss.StageRunIndex)
+            .Select(ss => new ResearchStageSnapshotDto(
+                ss.Id, ss.StageType.ToString(), ss.StageRunIndex, ss.ExecutionMode.ToString(), ss.Status.ToString(),
+                ss.Summary,
+                ss.RoleStates.OrderBy(rs => rs.RunIndex).Select(rs => new ResearchRoleStateDto(
+                    rs.Id, rs.RoleId, rs.RunIndex, rs.Status.ToString(),
+                    rs.ErrorCode, rs.ErrorMessage, rs.LlmTraceId, rs.StartedAt, rs.CompletedAt)).ToArray(),
+                ss.StartedAt, ss.CompletedAt)).ToArray()
+            ?? Array.Empty<ResearchStageSnapshotDto>();
+
+        var feedItems = orderedTurns
+            .SelectMany(t => t.FeedItems.Select(fi => new ResearchFeedItemDto(
+                fi.Id, fi.TurnId, fi.ItemType.ToString(), fi.RoleId, fi.Content, fi.TraceId, fi.CreatedAt)))
+            .OrderBy(fi => fi.CreatedAt)
+            .ToArray();
+
         return new ResearchSessionDetailDto(
             session.Id, session.SessionKey, session.Symbol, session.Name,
             session.Status.ToString(), session.ActiveStage, session.LastUserIntent,
             session.LatestRating, session.LatestDecisionHeadline,
-            session.Turns.OrderBy(t => t.TurnIndex).Select(MapTurnSummary).ToArray(),
+            orderedTurns.Select(MapTurnSummary).ToArray(),
             session.Reports.OrderBy(r => r.VersionIndex)
                 .Select(r => new ResearchReportSnapshotDto(r.Id, r.TurnId, r.VersionIndex, r.IsFinal, r.ReportBlocksJson, r.CreatedAt)).ToArray(),
             session.Decisions.OrderByDescending(d => d.CreatedAt)
                 .Select(d => new ResearchDecisionSnapshotDto(d.Id, d.TurnId, d.Rating, d.Action, d.ExecutiveSummary, d.Confidence, d.CreatedAt)).ToArray(),
+            stageSnapshots,
+            feedItems,
             session.CreatedAt, session.UpdatedAt);
     }
 
