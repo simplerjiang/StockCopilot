@@ -104,9 +104,9 @@ const itemKind = item => {
   const t = (item.type || item.feedType || item.itemType || '').toLowerCase()
   const rawContent = item.summary || item.message || item.content || ''
 
-  // Hide meaningless round markers: "第 X 轮分析开始" → user query bubble, "Turn X completed" → hidden
+  // Hide meaningless round markers: "第 X 轮分析开始" → user query bubble, "Turn X completed" / "分析完成" → hidden
   if (/^第\s*\d+\s*轮分析开始$/.test(rawContent)) return 'user-query'
-  if (/^Turn\s+\d+\s+completed$/i.test(rawContent)) return 'hidden'
+  if (/^Turn\s+\d+\s+completed$/i.test(rawContent) || rawContent === '分析完成') return 'hidden'
 
   if (t.includes('stagetransition') || t.includes('stagestarted') || t.includes('stagecompleted') || t.includes('stagefailed')) return 'divider'
   if (t.includes('tooldispatched') || t.includes('toolcompleted') || t.includes('toolprogress') || t.includes('toolevent')) return 'tool'
@@ -266,7 +266,7 @@ watch(() => props.items.length, () => {
           <template v-else-if="itemKind(item) === 'hidden'" />
 
           <!-- Stage divider -->
-          <div v-if="itemKind(item) === 'divider'" class="feed-divider">
+          <div v-else-if="itemKind(item) === 'divider'" class="feed-divider">
             <span class="feed-divider-line" />
             <span class="feed-divider-text">{{ stageLabel(getContent(item)) || getContent(item) }}</span>
             <span class="feed-divider-line" />

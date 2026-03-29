@@ -70,19 +70,14 @@ public sealed class ResearchRunner : IResearchRunner
         session.UpdatedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(CancellationToken.None);
 
+        // Publish user query as the turn-started message (shows as user bubble in feed)
+        var userQueryText = turn.TurnIndex == 0
+            ? (session.Name ?? session.Symbol)
+            : (turn.UserPrompt ?? "继续分析");
+
         _eventBus.Publish(new ResearchEvent(
             ResearchEventType.TurnStarted, session.Id, turn.Id, null, null, null,
-            $"第 {turn.TurnIndex} 轮分析开始", null, DateTime.UtcNow));
-
-        // Publish user follow-up message so it appears in the feed as a user bubble
-        if (turn.TurnIndex > 1 && !string.IsNullOrWhiteSpace(turn.UserPrompt))
-        {
-            _eventBus.Publish(new ResearchEvent(
-                ResearchEventType.SystemNotice, session.Id, turn.Id, null, null, null,
-                turn.UserPrompt,
-                JsonSerializer.Serialize(new { feedItemType = "UserFollowUp" }),
-                DateTime.UtcNow));
-        }
+            userQueryText, null, DateTime.UtcNow));
 
         var upstreamArtifacts = new List<string>();
         var turnDegraded = false;
@@ -251,7 +246,7 @@ public sealed class ResearchRunner : IResearchRunner
 
             _eventBus.Publish(new ResearchEvent(
                 ResearchEventType.TurnCompleted, session.Id, turn.Id, null, null, null,
-                $"Turn {turn.TurnIndex} completed", null, DateTime.UtcNow));
+                "分析完成", null, DateTime.UtcNow));
         }
         catch (OperationCanceledException)
         {
@@ -915,6 +910,7 @@ public sealed class ResearchRunner : IResearchRunner
 
     private static ResearchFeedItemType MapEventToFeedType(ResearchEventType t) => t switch
     {
+        ResearchEventType.TurnStarted => ResearchFeedItemType.UserFollowUp,
         ResearchEventType.RoleStarted or ResearchEventType.RoleSummaryReady or
         ResearchEventType.RoleCompleted or ResearchEventType.RoleFailed => ResearchFeedItemType.RoleMessage,
         ResearchEventType.ToolDispatched or ResearchEventType.ToolProgress or
