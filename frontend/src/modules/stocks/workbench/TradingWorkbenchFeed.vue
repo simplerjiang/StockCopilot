@@ -194,10 +194,11 @@ const FEED_TEXT_PATTERNS = [
   [/\battempt\s+(\d+)/gi, '第$1次'],
   [/\bRole\s+/gi, ''],
   [/\bstarted\b/gi, '开始'],
-  [/\bCompleted\b/g, '完成'],
-  [/\bDegraded\b/g, '降级完成'],
-  [/\bRunning\b/g, '执行中'],
-  [/\bFailed\b/g, '失败'],
+  [/\bCompleted\b/gi, '完成'],
+  [/\bDegraded\b/gi, '降级完成'],
+  [/\bRunning\b/gi, '执行中'],
+  [/\bfailed after retries\b/gi, '重试后失败'],
+  [/\bFailed\b/gi, '失败'],
   [/\bLLM ready\b/gi, 'LLM就绪']
 ]
 
