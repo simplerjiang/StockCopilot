@@ -1,5 +1,10 @@
 <script setup>
-defineProps({
+import { ref, watch } from 'vue'
+
+const advancedOpen = ref(false)
+const selectedSearchIndex = ref(-1)
+
+const props = defineProps({
   symbol: { type: String, required: true },
   selectedSource: { type: String, required: true },
   refreshSeconds: { type: Number, required: true },
@@ -23,7 +28,7 @@ defineProps({
   formatPercent: { type: Function, required: true }
 })
 
-defineEmits([
+const emit = defineEmits([
   'update:symbol',
   'update:selectedSource',
   'update:refreshSeconds',
@@ -40,6 +45,26 @@ defineEmits([
   'open-context-menu',
   'delete-history-item'
 ])
+
+watch(() => props.searchOpen, open => { if (!open) selectedSearchIndex.value = -1 })
+
+const handleSearchKeydown = event => {
+  if (!props.searchOpen || !props.searchResults.length) return
+  const max = props.searchResults.length
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    selectedSearchIndex.value = (selectedSearchIndex.value + 1) % max
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    selectedSearchIndex.value = (selectedSearchIndex.value - 1 + max) % max
+  } else if (event.key === 'Enter' && selectedSearchIndex.value >= 0) {
+    event.preventDefault()
+    emit('select-search-result', props.searchResults[selectedSearchIndex.value])
+  } else if (event.key === 'Escape') {
+    event.preventDefault()
+    emit('close-search')
+  }
+}
 </script>
 
 <template>
@@ -48,7 +73,6 @@ defineEmits([
       <div class="toolbar-main-row">
         <div class="toolbar-title">
           <strong>标的查询</strong>
-          <span class="muted">顶部快速切换，不再占用图表纵向空间。</span>
         </div>
 
         <div class="field search-field toolbar-search-field">
@@ -57,6 +81,7 @@ defineEmits([
             placeholder="输入股票代码/名称/拼音缩写"
             @input="$emit('update:symbol', $event.target.value); $emit('symbol-input')"
             @keydown.enter.prevent="$emit('symbol-enter')"
+            @keydown="handleSearchKeydown"
           />
           <button @click="$emit('fetch-quote')" :disabled="isBlockingQuoteLoad">查询</button>
           <div v-if="searchOpen" class="search-dropdown">
@@ -68,9 +93,11 @@ defineEmits([
             <p v-else-if="searchLoading" class="muted">搜索中...</p>
             <ul v-else class="search-list">
               <li
-                v-for="item in searchResults"
+                v-for="(item, idx) in searchResults"
                 :key="item.symbol || item.Symbol"
+                :class="{ 'search-item-selected': idx === selectedSearchIndex }"
                 @click="$emit('select-search-result', item)"
+                @mouseenter="selectedSearchIndex = idx"
               >
                 <div class="result-name">{{ item.name ?? item.Name }}</div>
                 <div class="result-code">{{ item.symbol ?? item.Symbol }}</div>
@@ -80,27 +107,34 @@ defineEmits([
           </div>
         </div>
 
-        <div class="toolbar-settings">
-          <div class="toolbar-select-group">
-            <label class="muted">来源</label>
-            <select :value="selectedSource" @change="$emit('update:selectedSource', $event.target.value)">
-              <option value="">自动</option>
-              <option v-for="item in sources" :key="item" :value="item">{{ item }}</option>
-            </select>
-          </div>
-
-          <div class="toolbar-select-group narrow-group">
-            <label class="muted">刷新</label>
-            <input type="number" min="5" :value="refreshSeconds" @input="$emit('update:refreshSeconds', Number($event.target.value))" />
-          </div>
-
-          <label class="muted inline-check toolbar-check">
-            <input type="checkbox" :checked="autoRefresh" @change="$emit('update:autoRefresh', $event.target.checked)" /> 自动
-          </label>
-        </div>
+        <button class="toolbar-advanced-toggle" @click="advancedOpen = !advancedOpen">
+          ⚙ {{ advancedOpen ? '收起' : '高级' }}
+        </button>
       </div>
 
-      <div class="toolbar-sub-row">
+      <template v-if="advancedOpen">
+        <div class="toolbar-advanced-row">
+          <div class="toolbar-settings">
+            <div class="toolbar-select-group">
+              <label class="muted">来源</label>
+              <select :value="selectedSource" @change="$emit('update:selectedSource', $event.target.value)">
+                <option value="">自动</option>
+                <option v-for="item in sources" :key="item" :value="item">{{ item }}</option>
+              </select>
+            </div>
+
+            <div class="toolbar-select-group narrow-group">
+              <label class="muted">刷新</label>
+              <input type="number" min="5" :value="refreshSeconds" @input="$emit('update:refreshSeconds', Number($event.target.value))" />
+            </div>
+
+            <label class="muted inline-check toolbar-check">
+              <input type="checkbox" :checked="autoRefresh" @change="$emit('update:autoRefresh', $event.target.checked)" /> 自动
+            </label>
+          </div>
+        </div>
+
+        <div class="toolbar-sub-row">
         <p class="muted toolbar-status">
           数据刷新：{{ autoRefresh ? `每 ${refreshSeconds} 秒` : '手动刷新' }}
         </p>
@@ -121,6 +155,16 @@ defineEmits([
           </label>
           <button @click="$emit('refresh-history')" :disabled="historyLoading">刷新历史</button>
         </div>
+      </div>
+      </template>
+
+      <div class="toolbar-compact-status" v-if="!advancedOpen">
+        <p class="muted toolbar-status">
+          {{ autoRefresh ? `自动刷新 ${refreshSeconds}s` : '手动刷新' }}
+        </p>
+        <p v-if="error" class="muted toolbar-status error-text">{{ error }}</p>
+        <p v-else-if="isBlockingQuoteLoad" class="muted toolbar-status">查询中...</p>
+        <p v-else-if="isBackgroundQuoteRefresh" class="muted toolbar-status">后台刷新中...</p>
       </div>
 
       <div class="history-ribbon">
@@ -178,10 +222,41 @@ defineEmits([
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
 }
 
-.toolbar-main-row,
-.toolbar-sub-row {
+.toolbar-main-row {
   display: grid;
   grid-template-columns: auto minmax(320px, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.toolbar-sub-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.toolbar-advanced-toggle {
+  border: none;
+  border-radius: 10px;
+  padding: 0.4rem 0.7rem;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text-secondary, #64748b);
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.toolbar-advanced-toggle:hover {
+  background: rgba(15, 23, 42, 0.12);
+}
+
+.toolbar-advanced-row {
+  padding-top: 0.25rem;
+}
+
+.toolbar-compact-status {
+  display: flex;
   gap: 0.75rem;
   align-items: center;
 }
@@ -193,7 +268,7 @@ defineEmits([
 }
 
 .toolbar-title strong {
-  color: #0f172a;
+  color: var(--color-text-primary);
 }
 
 .toolbar-search-field {
@@ -228,6 +303,7 @@ defineEmits([
 .history-ribbon {
   display: grid;
   gap: 0.35rem;
+  position: relative;
 }
 
 .history-chip-row {
@@ -237,6 +313,8 @@ defineEmits([
   max-height: 10.5rem;
   overflow-y: auto;
   padding-right: 0.25rem;
+  mask-image: linear-gradient(to bottom, transparent, black 0.5rem, black calc(100% - 0.5rem), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 0.5rem, black calc(100% - 0.5rem), transparent);
 }
 
 .history-chip {
@@ -257,7 +335,7 @@ defineEmits([
 }
 
 .history-chip strong {
-  color: #0f172a;
+  color: var(--color-text-primary);
 }
 
 .search-dropdown,
@@ -311,6 +389,12 @@ defineEmits([
   background: rgba(226, 232, 240, 0.8);
 }
 
+.search-list li.search-item-selected {
+  background: rgba(37, 99, 235, 0.1);
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: -2px;
+}
+
 .context-menu {
   position: fixed;
   z-index: 80;
@@ -318,12 +402,12 @@ defineEmits([
 }
 
 .result-name {
-  color: #0f172a;
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
 .result-code {
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 0.86rem;
 }
 

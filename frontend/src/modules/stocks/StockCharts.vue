@@ -439,7 +439,32 @@ watch(activeView, async () => {
 .chart-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.chart-tabs .tab {
+  border: none;
+  border-radius: 8px;
+  padding: 0.32rem 0.72rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text-secondary, #64748b);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.chart-tabs .tab:hover:not(.active) {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.chart-tabs .tab.active {
+  background: #fff;
+  color: var(--color-accent, #2563eb);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
 }
 
 .chart-meta {
@@ -459,7 +484,7 @@ watch(activeView, async () => {
 }
 
 .chart-group-label {
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 0.75rem;
 }
 
@@ -656,12 +681,12 @@ watch(activeView, async () => {
   inset: 0;
   display: grid;
   place-items: center;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   margin: 0;
 }
 
 .ai-level-tip {
-  color: #64748b;
+  color: var(--color-text-secondary);
   margin: 0.35rem 0 0;
   font-size: 0.82rem;
 }

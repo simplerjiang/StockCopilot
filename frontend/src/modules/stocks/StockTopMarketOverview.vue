@@ -307,11 +307,13 @@ onUnmounted(() => { stopCountdown() })
 .bar-indices { display: grid; gap: var(--space-2, 8px); }
 .idx-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(130px, 1fr));
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
   gap: var(--space-2, 8px);
 }
 .idx-row--global {
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1-5, 6px);
 }
 
 .idx-card {
@@ -331,6 +333,41 @@ onUnmounted(() => { stopCountdown() })
   transform: translateY(-1px);
 }
 .idx-card:active { transform: translateY(0); box-shadow: none; }
+
+/* Domestic indices: larger cards */
+.idx-row:not(.idx-row--global) .idx-card {
+  padding: var(--space-3, 12px);
+}
+.idx-row:not(.idx-row--global) .idx-card-price {
+  font-size: var(--text-lg, 16px);
+}
+.idx-row:not(.idx-row--global) .idx-card-change {
+  font-size: var(--text-base, 14px);
+}
+
+/* Global indices: compact inline style */
+.idx-row--global .idx-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding: var(--space-1, 4px) var(--space-2, 8px);
+  min-width: 0;
+}
+.idx-row--global .idx-card-name {
+  font-size: 10px;
+}
+.idx-row--global .idx-card-data {
+  gap: var(--space-1, 4px);
+}
+.idx-row--global .idx-card-price {
+  font-size: var(--text-sm, 12px);
+}
+.idx-row--global .idx-card-change {
+  font-size: 10px;
+}
+.idx-row--global .idx-card-vol {
+  display: none;
+}
 
 .idx-card-name {
   display: flex;

@@ -1,4 +1,36 @@
 <script setup>
+const sourceTagDisplayNames = {
+  'sina-roll-market': '新浪财经',
+  'cls-telegraph': '财联社',
+  'eastmoney-market-news': '东方财富·全球',
+  'eastmoney-ashare-news': '东方财富·A股',
+  'gnews-cn-stocks': 'Google·A股',
+  'gnews-cn-finance': 'Google·金融',
+  'gnews-cn-macro': 'Google·宏观',
+  'gnews-us-stocks': 'Google·美股',
+  'gnews-us-macro': 'Google·美宏观',
+  'gnews-global-macro': 'Google·全球',
+  'gnews-reuters': 'Reuters',
+  'gnews-bloomberg': 'Bloomberg',
+  'gnews-ft': 'FT金融时报',
+  'gnews-wsj': 'WSJ华尔街日报',
+  'cnbc-finance-rss': 'CNBC金融',
+  'cnbc-us-markets-rss': 'CNBC美股',
+  'cnbc-economy-rss': 'CNBC经济',
+  'cnbc-world-rss': 'CNBC国际',
+  'marketwatch-top-rss': 'MarketWatch',
+  'marketwatch-pulse-rss': 'MW脉搏',
+  'bbc-business-rss': 'BBC商业',
+  'nyt-business-rss': 'NYT商业',
+  'seeking-alpha-rss': 'Seeking Alpha',
+  'investing-com-rss': 'Investing.com',
+  'sky-business-rss': 'Sky商业',
+  'cointelegraph-rss': 'CoinTelegraph'
+}
+function formatSourceTag(tag) {
+  return sourceTagDisplayNames[tag] || tag
+}
+
 defineProps({
   detail: { type: Object, default: null },
   loading: { type: Boolean, default: false },
@@ -31,7 +63,10 @@ defineEmits(['refresh', 'open-modal', 'close-modal'])
     <p v-else-if="loading" class="muted">大盘资讯加载中...</p>
     <div v-else-if="items.length" class="market-news-preview-list">
       <article v-for="item in previewItems" :key="`market-${item.title}-${item.publishTime}`" class="market-news-item">
-        <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
+        <div class="local-news-meta-row">
+          <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
+          <span v-if="item.sourceTag" class="source-tag-badge">📡 {{ formatSourceTag(item.sourceTag) }}</span>
+        </div>
         <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">{{ getLocalNewsHeadline(item) }}</a>
         <span v-else>{{ getLocalNewsHeadline(item) }}</span>
         <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
@@ -56,7 +91,10 @@ defineEmits(['refresh', 'open-modal', 'close-modal'])
       </div>
       <div class="market-news-modal-list">
         <article v-for="item in items" :key="`market-modal-${item.title}-${item.publishTime}`" class="market-news-item">
-          <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
+          <div class="local-news-meta-row">
+            <span class="impact-tag" :class="getImpactClass(item.sentiment)">{{ item.sentiment }}</span>
+            <span v-if="item.sourceTag" class="source-tag-badge">📡 {{ formatSourceTag(item.sourceTag) }}</span>
+          </div>
           <a v-if="item.url" :href="item.url" target="_blank" rel="noreferrer">{{ getLocalNewsHeadline(item) }}</a>
           <span v-else>{{ getLocalNewsHeadline(item) }}</span>
           <small v-if="item.translatedTitle && item.translatedTitle !== item.title">原题：{{ item.title }}</small>
@@ -76,9 +114,9 @@ defineEmits(['refresh', 'open-modal', 'close-modal'])
 .market-news-header,.market-news-actions,.local-news-meta-row { display:flex; gap:.55rem; flex-wrap:wrap; }
 .market-news-header { justify-content:space-between; align-items:flex-start; }
 .market-news-kicker { margin:0 0 .2rem; font-size:.7rem; letter-spacing:.16em; text-transform:uppercase; color:#7dd3fc; }
-.market-news-item,.market-news-preview-list,.market-news-modal-list { display:grid; gap:.18rem; }
+.market-news-item,.market-news-preview-list,.market-news-modal-list { display:grid; gap:.65rem; }
 .market-news-item { padding:.8rem .9rem; border-radius:16px; background:rgba(255,255,255,.06); border:1px solid rgba(148,163,184,.12); }
-.market-news-item a,.market-news-item span,h3 { color:#f8fafc; }
+.market-news-item a,.market-news-item span:not(.source-tag-badge):not(.impact-tag),h3 { color:#f8fafc; }
 .market-news-item small { color:#94a3b8; }
 .market-news-button { border:1px solid rgba(148,163,184,.3); border-radius:999px; padding:.35rem .75rem; background:rgba(255,255,255,.1); color:#e2e8f0; cursor:pointer; }
 .market-news-modal-backdrop { position:fixed; inset:0; z-index:60; display:grid; place-items:center; padding:1rem; background:rgba(15,23,42,.62); backdrop-filter:blur(10px); }
@@ -91,5 +129,6 @@ defineEmits(['refresh', 'open-modal', 'close-modal'])
 .impact-positive { color:#fca5a5; }
 .impact-negative { color:#86efac; }
 .impact-neutral { color:#f8fafc; }
+.source-tag-badge { display:inline-flex; align-items:center; border-radius:999px; padding:.1rem .5rem; font-size:.68rem; background:rgba(14,165,233,.18); color:#7dd3fc; border:1px solid rgba(14,165,233,.25); }
 .error-text { color:#fecaca; }
 </style>

@@ -1,4 +1,6 @@
 <script setup>
+import { ref } from 'vue'
+
 const props = defineProps({
   workspace: {
     type: Object,
@@ -66,7 +68,22 @@ const props = defineProps({
   }
 })
 
-defineEmits(['refresh', 'edit', 'resume', 'cancel', 'create'])
+const emit = defineEmits(['refresh', 'edit', 'resume', 'cancel', 'create'])
+
+const confirmingCancelId = ref(null)
+
+const requestCancel = (item) => {
+  confirmingCancelId.value = String(item.id)
+}
+
+const confirmCancel = (item) => {
+  confirmingCancelId.value = null
+  emit('cancel', item)
+}
+
+const dismissCancel = () => {
+  confirmingCancelId.value = null
+}
 </script>
 
 <template>
@@ -107,11 +124,18 @@ defineEmits(['refresh', 'edit', 'resume', 'cancel', 'create'])
               v-if="canCancelTradingPlan(item)"
               class="plan-danger-button"
               data-testid="cancel-plan-btn"
-              @click="$emit('cancel', item)"
-              :disabled="deletingPlanId === String(item.id)"
+              @click="requestCancel(item)"
+              :disabled="deletingPlanId === String(item.id) || confirmingCancelId === String(item.id)"
             >
               {{ deletingPlanId === String(item.id) ? '取消中...' : '取消' }}
             </button>
+            <div v-if="confirmingCancelId === String(item.id)" class="confirm-popover">
+              <span>确定取消此计划？</span>
+              <div class="confirm-actions">
+                <button class="confirm-yes" @click="confirmCancel(item)">确认</button>
+                <button class="confirm-no" @click="dismissCancel">取消</button>
+              </div>
+            </div>
           </div>
         </div>
         <div class="plan-status-row">
@@ -315,6 +339,53 @@ defineEmits(['refresh', 'edit', 'resume', 'cancel', 'create'])
 .plan-danger-button {
   background: rgba(220, 38, 38, 0.12);
   color: #b91c1c;
+}
+
+.plan-item-actions {
+  position: relative;
+}
+
+.confirm-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  min-width: 160px;
+  background: var(--color-bg-surface, #fff);
+  border: 1px solid var(--color-border-light, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  font-size: 0.85rem;
+  color: var(--color-text-body, #334155);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.confirm-yes,
+.confirm-no {
+  border: none;
+  border-radius: 8px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.confirm-yes {
+  background: rgba(220, 38, 38, 0.14);
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.confirm-no {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--color-text-secondary, #64748b);
 }
 
 .error {

@@ -48,8 +48,9 @@ describe('App', () => {
     expect(window.location.search).toContain('tab=admin-llm')
     expect(window.location.search).toContain('onboarding=1')
 
-    const activeButton = wrapper.find('button.nav-tab.active')
-    expect(activeButton.text()).toContain('LLM 设置')
+    // LLM settings is now in the settings dropdown, not the main nav
+    const activeComponent = wrapper.findComponent({ name: 'AdminLlmSettings' })
+    expect(activeComponent.exists()).toBe(true)
   })
 
   it('hides onboarding banner after settings are saved and onboarding is no longer required', async () => {
@@ -80,6 +81,6 @@ describe('App', () => {
 
     expect(wrapper.text()).not.toContain('首次启动还未配置 LLM Key')
     expect(window.location.search).not.toContain('onboarding=1')
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 })

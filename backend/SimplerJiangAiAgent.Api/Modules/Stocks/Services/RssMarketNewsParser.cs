@@ -5,7 +5,7 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 internal static class RssMarketNewsParser
 {
-    private const int MaxAcceptedAgeDays = 30;
+    private const int MaxAcceptedAgeDays = 3;
 
     public static IReadOnlyList<LocalSectorReportSeed> Parse(
         string xml,

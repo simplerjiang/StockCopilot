@@ -1,6 +1,23 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 
+const sourceTagDisplayNames = {
+  'sina-roll-market': '新浪财经', 'cls-telegraph': '财联社',
+  'eastmoney-market-news': '东方财富·全球', 'eastmoney-ashare-news': '东方财富·A股',
+  'gnews-cn-stocks': 'Google·A股', 'gnews-cn-finance': 'Google·金融',
+  'gnews-cn-macro': 'Google·宏观', 'gnews-us-stocks': 'Google·美股',
+  'gnews-us-macro': 'Google·美宏观', 'gnews-global-macro': 'Google·全球',
+  'gnews-reuters': 'Reuters', 'gnews-bloomberg': 'Bloomberg',
+  'gnews-ft': 'FT金融时报', 'gnews-wsj': 'WSJ华尔街日报',
+  'cnbc-finance-rss': 'CNBC金融', 'cnbc-us-markets-rss': 'CNBC美股',
+  'cnbc-economy-rss': 'CNBC经济', 'cnbc-world-rss': 'CNBC国际',
+  'marketwatch-top-rss': 'MarketWatch', 'marketwatch-pulse-rss': 'MW脉搏',
+  'bbc-business-rss': 'BBC商业', 'nyt-business-rss': 'NYT商业',
+  'seeking-alpha-rss': 'Seeking Alpha', 'investing-com-rss': 'Investing.com',
+  'sky-business-rss': 'Sky商业', 'cointelegraph-rss': 'CoinTelegraph'
+}
+function formatSourceTag(tag) { return sourceTagDisplayNames[tag] || tag }
+
 const keyword = ref('')
 const level = ref('')
 const sentiment = ref('')
@@ -39,6 +56,20 @@ const sentimentOptions = [
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize.value)))
 const pageSummary = computed(() => `第 ${page.value} / ${totalPages.value} 页`)
 const resultSummary = computed(() => `共 ${total.value} 条资讯`)
+
+const visiblePages = computed(() => {
+  const tp = totalPages.value
+  const cp = page.value
+  if (tp <= 7) return Array.from({ length: tp }, (_, i) => i + 1)
+  const pages = [1]
+  let start = Math.max(2, cp - 1)
+  let end = Math.min(tp - 1, cp + 1)
+  if (start > 2) pages.push('...')
+  for (let i = start; i <= end; i++) pages.push(i)
+  if (end < tp - 1) pages.push('...')
+  pages.push(tp)
+  return pages
+})
 
 const normalizeArchiveItem = item => ({
   level: item?.level ?? item?.Level ?? '',
@@ -135,16 +166,13 @@ const fetchArchive = async ({ resetPage = false } = {}) => {
 }
 
 const submitSearch = () => fetchArchive({ resetPage: true })
-const goPrev = () => {
-  if (page.value <= 1) return
-  page.value -= 1
+const goToPage = p => {
+  if (p < 1 || p > totalPages.value || p === page.value) return
+  page.value = p
   fetchArchive()
 }
-const goNext = () => {
-  if (page.value >= totalPages.value) return
-  page.value += 1
-  fetchArchive()
-}
+const goPrev = () => goToPage(page.value - 1)
+const goNext = () => goToPage(page.value + 1)
 
 onMounted(() => {
   fetchArchive()
@@ -209,10 +237,13 @@ onMounted(() => {
           <div class="archive-badges">
             <span class="archive-badge level-badge" :class="getLevelClass(item.level)">{{ getLevelLabel(item.level) }}</span>
             <span class="archive-badge sentiment-badge" :class="getSentimentClass(item.sentiment)">{{ item.sentiment }}</span>
+            <span v-if="item.sourceTag" class="archive-badge source-tag-badge">📡 {{ formatSourceTag(item.sourceTag) }}</span>
             <span v-if="item.aiTarget" class="archive-badge target-badge">{{ item.aiTarget }}</span>
             <span v-for="tag in item.aiTags" :key="`${item.level}-${item.title}-${tag}`" class="archive-badge tag-badge">{{ tag }}</span>
           </div>
-          <button v-if="item.url" class="link-button" @click="openExternal(item.url)">查看原文</button>
+          <button v-if="item.url" class="link-button link-ghost" @click="openExternal(item.url)">
+            <span class="link-ghost-icon">↗</span> 查看原文
+          </button>
         </div>
 
         <h3>{{ getHeadline(item) }}</h3>
@@ -228,9 +259,14 @@ onMounted(() => {
     </section>
 
     <footer class="archive-pagination">
+      <button @click="goToPage(1)" :disabled="loading || page <= 1">首页</button>
       <button @click="goPrev" :disabled="loading || page <= 1">上一页</button>
-      <span>{{ pageSummary }}</span>
+      <template v-for="p in visiblePages" :key="'page-' + p">
+        <span v-if="p === '...'" class="pagination-ellipsis">…</span>
+        <button v-else class="pagination-page" :class="{ 'pagination-current': p === page }" @click="goToPage(p)" :disabled="loading">{{ p }}</button>
+      </template>
       <button @click="goNext" :disabled="loading || page >= totalPages">下一页</button>
+      <button @click="goToPage(totalPages)" :disabled="loading || page >= totalPages">末页</button>
     </footer>
   </section>
 </template>
@@ -425,8 +461,8 @@ onMounted(() => {
 }
 
 .level-badge.is-sector {
-  background: #ede9fe;
-  color: #6d28d9;
+  background: var(--color-tag-sector-bg);
+  color: var(--color-tag-sector);
 }
 
 .level-badge.is-stock {
@@ -454,6 +490,12 @@ onMounted(() => {
   color: var(--color-danger);
 }
 
+.source-tag-badge {
+  background: rgba(14, 165, 233, .12);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, .2);
+}
+
 .tag-badge {
   background: var(--color-warning-bg);
   color: var(--color-warning);
@@ -465,6 +507,28 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+.link-ghost {
+  background: transparent;
+  border: 1px solid var(--color-border-light);
+  color: var(--color-accent);
+  font-weight: 500;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.link-ghost:hover {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+}
+
+.link-ghost-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
 .archive-card h3 {
   margin: 0;
   font-size: 22px;
@@ -473,7 +537,7 @@ onMounted(() => {
 
 .archive-raw-title {
   margin: 0;
-  color: #64748b;
+  color: var(--color-text-secondary);
   line-height: 1.5;
 }
 
@@ -481,7 +545,7 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  color: #475569;
+  color: var(--color-text-secondary);
   font-size: 13px;
 }
 
@@ -489,13 +553,31 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .archive-pagination button {
   background: var(--color-bg-surface);
   color: var(--color-text-heading);
   border: 1px solid var(--color-border-light);
+}
+
+.pagination-page {
+  min-width: 34px;
+  text-align: center;
+}
+
+.pagination-current {
+  background: var(--color-accent) !important;
+  color: #fff !important;
+  border-color: var(--color-accent) !important;
+}
+
+.pagination-ellipsis {
+  padding: 0 4px;
+  color: var(--color-text-secondary);
+  user-select: none;
 }
 
 @media (max-width: 960px) {

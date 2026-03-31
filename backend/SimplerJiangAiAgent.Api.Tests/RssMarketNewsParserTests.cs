@@ -52,7 +52,7 @@ public sealed class RssMarketNewsParserTests
     }
 
     [Fact]
-    public void Parse_ShouldDropItemsOlderThanThirtyDays()
+    public void Parse_ShouldDropItemsOlderThanThreeDays()
     {
         const string xml = """
         <?xml version="1.0" encoding="UTF-8"?>

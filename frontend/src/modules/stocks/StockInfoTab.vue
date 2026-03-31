@@ -629,7 +629,7 @@ const jumpToPlanSymbol = symbolKey => {
 }
 
 const marketNewsItems = computed(() => marketNewsBucket.value?.items ?? [])
-const marketNewsPreviewItems = computed(() => marketNewsItems.value.slice(0, 3))
+const marketNewsPreviewItems = computed(() => marketNewsItems.value.slice(0, 5))
 
 const sortedHistoryList = computed(() => {
   const list = [...historyList.value]

@@ -82,15 +82,18 @@ defineEmits(['refresh'])
 .news-impact-list,.news-bucket-list { list-style:none; padding:0; margin:0; }
 .news-bucket-list { max-height:18rem; overflow-y:auto; padding-right:.25rem; }
 .news-bucket-list li { display:grid; gap:.15rem; }
-.news-bucket-list a,.news-bucket-list span { color:#0f172a; font-weight:600; text-decoration:none; }
-.news-bucket-list small { color:#64748b; }
+.news-bucket-list a,.news-bucket-list span { color:var(--color-text-primary); font-weight:600; text-decoration:none; }
+.news-bucket-list small { color:var(--color-text-secondary); }
 .news-impact-list li { display:grid; grid-template-columns:auto 1fr auto; gap:.75rem; align-items:start; }
 .news-impact-header button { border:none; border-radius:999px; padding:.35rem .75rem; cursor:pointer; background:rgba(37,99,235,.12); color:#1d4ed8; }
 .news-impact-header button:disabled { opacity:.6; cursor:not-allowed; }
-.local-news-tag,.local-news-target { display:inline-flex; align-items:center; border-radius:999px; padding:.1rem .45rem; font-size:.72rem; background:rgba(148,163,184,.16); color:#475569; }
-.impact-positive { color:#dc2626; }
-.impact-negative { color:#16a34a; }
-.impact-neutral { color:#64748b; }
+.local-news-tag,.local-news-target { display:inline-flex; align-items:center; border-radius:999px; padding:.1rem .45rem; font-size:.72rem; background:rgba(148,163,184,.16); color:var(--color-text-secondary); }
+.impact-positive { color:#dc2626; background:rgba(220,38,38,.1); }
+.impact-negative { color:#16a34a; background:rgba(22,163,106,.1); }
+.impact-neutral { color:#64748b; background:rgba(100,116,139,.1); }
+.impact-tag { display:inline-flex; align-items:center; padding:.18rem .55rem; border-radius:999px; font-size:.75rem; font-weight:700; letter-spacing:.02em; white-space:nowrap; }
+.news-impact-summary span { display:inline-flex; align-items:center; padding:.35rem .7rem; border-radius:var(--radius-md,10px); font-weight:600; font-size:.85rem; background:rgba(248,250,252,.96); border:1px solid rgba(148,163,184,.16); }
+.news-impact-summary .overall { background:rgba(37,99,235,.08); border-color:rgba(37,99,235,.2); color:#1d4ed8; }
 .news-bucket-list::-webkit-scrollbar { width:8px; }
 .news-bucket-list::-webkit-scrollbar-thumb { border-radius:999px; background:rgba(148,163,184,.45); }
 @media (max-width:720px) { .news-impact-header { flex-direction:column; } .news-impact-list li { grid-template-columns:1fr; } }

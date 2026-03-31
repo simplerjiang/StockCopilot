@@ -203,6 +203,10 @@ export const stockInfoTabTradingPlanCases = ({
 
     await wrapper.find('[data-testid="cancel-plan-btn"]').trigger('click')
     await flushPromises()
+
+    // Confirm the cancellation in the confirmation popover
+    await wrapper.find('.confirm-yes').trigger('click')
+    await flushPromises()
     await flushPromises()
 
     expect(fetchMock.mock.calls.some(args => args[0] === '/api/stocks/plans/7/cancel' && args[1]?.method === 'POST')).toBe(true)

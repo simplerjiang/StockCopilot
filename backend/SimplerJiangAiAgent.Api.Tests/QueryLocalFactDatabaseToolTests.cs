@@ -312,8 +312,8 @@ public sealed class QueryLocalFactDatabaseToolTests
             Title = "全球风险偏好回升",
             Source = "WSJ US Business",
             SourceTag = "wsj-us-business-rss",
-            PublishTime = new DateTime(2026, 3, 13, 8, 0, 0),
-            CrawledAt = new DateTime(2026, 3, 13, 8, 5, 0),
+            PublishTime = DateTime.UtcNow.AddHours(-2),
+            CrawledAt = DateTime.UtcNow.AddHours(-1),
             Url = "https://example.com/market"
         });
         await dbContext.SaveChangesAsync();

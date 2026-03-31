@@ -279,9 +279,9 @@ describe('TradingWorkbenchFeed', () => {
     ]
     const wrapper = mount(TradingWorkbenchFeed, { props: { items } })
     expect(wrapper.findAll('.feed-turn-group')).toHaveLength(2)
-    // 3 items total: 1 divider + 1 role bubble + 1 user bubble
+    // 2 visible items: 1 role bubble + 1 user bubble (StageTransition is hidden)
     const msgs = wrapper.findAll('.feed-divider, .feed-msg, .feed-tool, .feed-system')
-    expect(msgs.length).toBe(3)
+    expect(msgs.length).toBe(2)
   })
 
   it('shows empty state', () => {

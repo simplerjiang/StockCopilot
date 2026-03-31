@@ -19,7 +19,7 @@ public interface ILocalFactIngestionService
 public sealed class LocalFactIngestionService : ILocalFactIngestionService
 {
     private const string SinaRollUrl = "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=60&versionNumber=1.2.8.1";
-    private const int MarketNewsMaxAcceptedAgeDays = 30;
+    private const int MarketNewsMaxAcceptedAgeDays = 3;
     private static readonly SemaphoreSlim MarketRefreshGate = new(1, 1);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> SymbolRefreshGates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, DateTime> SymbolCrawlTimestamps = new(StringComparer.OrdinalIgnoreCase);
@@ -27,17 +27,70 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
     private static readonly TimeSpan CrawlSkipWindow = TimeSpan.FromMinutes(2);
     private static readonly (string Url, string Source, string SourceTag)[] MarketRssFeeds =
     {
+        // ── Tier 1: Google News RSS – universal aggregator (requires international network) ──
+        ("https://news.google.com/rss/search?q=A%E8%82%A1+%E5%A4%A7%E7%9B%98+%E8%82%A1%E5%B8%82&hl=zh-CN&gl=CN&ceid=CN:zh-Hans", "Google News CN Stocks", "gnews-cn-stocks"),
+        ("https://news.google.com/rss/search?q=%E8%AF%81%E5%88%B8+%E5%9F%BA%E9%87%91+%E6%8A%95%E8%B5%84&hl=zh-CN&gl=CN&ceid=CN:zh-Hans", "Google News CN Finance", "gnews-cn-finance"),
+        ("https://news.google.com/rss/search?q=%E5%A4%AE%E8%A1%8C+%E8%B4%A7%E5%B8%81%E6%94%BF%E7%AD%96+%E5%88%A9%E7%8E%87&hl=zh-CN&gl=CN&ceid=CN:zh-Hans", "Google News CN Macro", "gnews-cn-macro"),
+        ("https://news.google.com/rss/search?q=stock+market+Wall+Street&hl=en-US&gl=US&ceid=US:en", "Google News US Stocks", "gnews-us-stocks"),
+        ("https://news.google.com/rss/search?q=Federal+Reserve+interest+rate+economy&hl=en-US&gl=US&ceid=US:en", "Google News US Macro", "gnews-us-macro"),
+        ("https://news.google.com/rss/search?q=global+economy+trade+tariff&hl=en-US&gl=US&ceid=US:en", "Google News Global Macro", "gnews-global-macro"),
+
+        // ── Tier 2: Google News site-specific proxies (requires international network) ──
+        ("https://news.google.com/rss/search?q=site:reuters.com+markets+economy&hl=en-US&gl=US&ceid=US:en", "Google News Reuters", "gnews-reuters"),
+        ("https://news.google.com/rss/search?q=site:bloomberg.com+markets+economy&hl=en-US&gl=US&ceid=US:en", "Google News Bloomberg", "gnews-bloomberg"),
+        ("https://news.google.com/rss/search?q=site:ft.com+markets+economy&hl=en-US&gl=US&ceid=US:en", "Google News FT", "gnews-ft"),
+        ("https://news.google.com/rss/search?q=site:wsj.com+markets+stocks&hl=en-US&gl=US&ceid=US:en", "Google News WSJ", "gnews-wsj"),
+
+        // ── Tier 3: Direct financial media RSS ──
         ("https://www.cnbc.com/id/10000664/device/rss/rss.html", "CNBC Finance", "cnbc-finance-rss"),
+        ("https://www.cnbc.com/id/100003114/device/rss/rss.html", "CNBC US Markets", "cnbc-us-markets-rss"),
+        ("https://www.cnbc.com/id/19836768/device/rss/rss.html", "CNBC Economy", "cnbc-economy-rss"),
+        ("https://www.cnbc.com/id/15839135/device/rss/rss.html", "CNBC World", "cnbc-world-rss"),
+        ("https://feeds.marketwatch.com/marketwatch/topstories/", "MarketWatch", "marketwatch-top-rss"),
+        ("https://feeds.marketwatch.com/marketwatch/marketpulse/", "MarketWatch Pulse", "marketwatch-pulse-rss"),
+        ("https://feeds.bbci.co.uk/news/business/rss.xml", "BBC Business", "bbc-business-rss"),
+        ("https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "NYT Business", "nyt-business-rss"),
         ("https://seekingalpha.com/feed.xml", "Seeking Alpha", "seeking-alpha-rss"),
-        ("https://cointelegraph.com/rss", "CoinTelegraph", "cointelegraph-rss"),
-        ("https://techcrunch.com/feed/", "TechCrunch", "techcrunch-rss"),
-        ("https://thehill.com/news/feed", "The Hill", "thehill-rss")
+        ("https://www.investing.com/rss/news.rss", "Investing.com", "investing-com-rss"),
+        ("https://feeds.skynews.com/feeds/rss/business.xml", "Sky News Business", "sky-business-rss"),
+
+        // ── Tier 4: Crypto ──
+        ("https://cointelegraph.com/rss", "CoinTelegraph", "cointelegraph-rss")
     };
     private static readonly string[] BlockedSourceKeywords = { "自媒体" };
+    private static readonly string[] BlockedTitlePatterns =
+    {
+        "Earnings Call Transcript",
+        "Earnings Call Slides",
+        "Conference Call Transcript"
+    };
     private static readonly string[] MarketKeywords =
     {
         "A股", "大盘", "沪指", "深成指", "创业板", "科创板", "两市", "收盘", "午评", "早评", "北向资金", "指数"
     };
+    private static readonly string[] FinanceRelevanceKeywords =
+    {
+        // English finance keywords
+        "stock", "market", "economy", "economic", "fed ", "federal reserve", "interest rate",
+        "inflation", "gdp", "trade", "tariff", "oil", "gold", "bond", "yield", "earnings",
+        "profit", "revenue", "ipo", "merger", "bank", "fiscal", "deficit", "surplus",
+        "recession", "rally", "crash", "bull", "bear", "dow", "s&p", "nasdaq", "ftse",
+        "investor", "hedge", "commodity", "currency", "forex", "crypto", "bitcoin",
+        "wall street", "treasury", "sanction", "chipmaker", "semiconductor",
+        // Chinese finance keywords
+        "股", "市场", "经济", "利率", "通胀", "贸易", "关税", "央行", "基金", "证券",
+        "投资", "盈利", "营收", "上市", "收购", "银行", "债券", "油价", "金价",
+        "半导体", "芯片", "制裁", "港股", "美股", "欧股", "汇率", "人民币",
+        "券商", "净利润", "北交所", "沪深", "原油", "业绩", "期货", "盘面", "大盘",
+        "标普", "恒指", "日元", "美元", "英镑", "欧元", "纳指", "道指"
+    };
+    private const string EastmoneyMarketNewsUrlTemplate = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns?client=web&biz=web_news_col&column={0}&order=1&needInteractData=0&page_index=1&page_size=20&req_trace=";
+    private static readonly (int Column, string SourceTag)[] EastmoneyMarketColumns =
+    {
+        (1350, "eastmoney-market-news"),   // 全球市场
+        (347,  "eastmoney-ashare-news"),   // A股要闻/研究
+    };
+    private const string ClsTelegraphUrl = "https://www.cls.cn/nodeapi/updateTelegraphList?app=CailianpressWeb&os=web&sv=8.4.6&rn=30";
 
     private readonly AppDbContext _dbContext;
     private readonly HttpClient _httpClient;
@@ -306,19 +359,44 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         CancellationToken cancellationToken)
     {
         var domesticTask = FetchRollMessagesSafeAsync(cancellationToken);
+        var eastmoneyTask = FetchEastmoneyMarketNewsAsync(crawledAt, cancellationToken);
+        var clsTask = FetchClsTelegraphAsync(crawledAt, cancellationToken);
         var rssTasks = MarketRssFeeds
             .Select(feed => FetchMarketFeedAsync(feed.Url, feed.Source, feed.SourceTag, crawledAt, cancellationToken))
             .ToArray();
 
         var rssResults = await Task.WhenAll(rssTasks);
         var domesticReports = BuildDomesticMarketReports(await domesticTask, crawledAt);
-        var reports = rssResults
+        var eastmoneyReports = await eastmoneyTask;
+        var clsReports = await clsTask;
+        var allItems = rssResults
             .SelectMany(items => items)
             .Concat(domesticReports)
+            .Concat(eastmoneyReports)
+            .Concat(clsReports)
             .Where(item => !IsBlockedSource(item.Source))
-            .OrderByDescending(item => item.PublishTime)
             .DistinctBy(item => item.Url ?? item.ExternalId ?? item.Title)
-            .Take(18)
+            .ToArray();
+
+        // Phase 1: guarantee at least 2 items per source for broad coverage
+        var diversityPicks = allItems
+            .GroupBy(item => item.SourceTag)
+            .SelectMany(group => group.OrderByDescending(item => item.PublishTime).Take(2))
+            .ToList();
+
+        var pickedKeys = new HashSet<string>(
+            diversityPicks.Select(item => item.Url ?? item.ExternalId ?? item.Title ?? string.Empty),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Phase 2: fill remaining slots with freshest from any source
+        var fillPicks = allItems
+            .Where(item => !pickedKeys.Contains(item.Url ?? item.ExternalId ?? item.Title ?? string.Empty))
+            .OrderByDescending(item => item.PublishTime);
+
+        var reports = diversityPicks
+            .Concat(fillPicks)
+            .OrderByDescending(item => item.PublishTime)
+            .Take(150)
             .ToArray();
 
         if (reports.Length > 0)
@@ -364,6 +442,8 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             response.EnsureSuccessStatusCode();
             return RssMarketNewsParser.Parse(content, source, sourceTag, crawledAt)
                 .Where(item => !IsBlockedSource(item.Source))
+                .Where(item => !IsBlockedTitle(item.Title))
+                .Where(item => IsFinanceRelevant(item.Title))
                 .ToArray();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -373,6 +453,65 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "抓取宏观 RSS 失败: {Source}", source);
+            return Array.Empty<LocalSectorReportSeed>();
+        }
+    }
+
+    private async Task<IReadOnlyList<LocalSectorReportSeed>> FetchEastmoneyMarketNewsAsync(
+        DateTime crawledAt,
+        CancellationToken cancellationToken)
+    {
+        var allItems = new List<LocalSectorReportSeed>();
+        foreach (var (column, sourceTag) in EastmoneyMarketColumns)
+        {
+            try
+            {
+                var traceId = Guid.NewGuid().ToString("N");
+                var url = string.Format(EastmoneyMarketNewsUrlTemplate, column) + traceId;
+                var json = await _httpClient.GetStringAsync(url, cancellationToken);
+                var items = EastmoneyMarketNewsParser.Parse(json, sourceTag, crawledAt)
+                    .Where(item => IsFinanceRelevant(item.Title))
+                    .ToArray();
+                allItems.AddRange(items);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return allItems;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "抓取东方财富大盘资讯失败: column={Column}", column);
+            }
+        }
+
+        return allItems;
+    }
+
+    private async Task<IReadOnlyList<LocalSectorReportSeed>> FetchClsTelegraphAsync(
+        DateTime crawledAt,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, ClsTelegraphUrl);
+            request.Headers.TryAddWithoutValidation("Accept", "application/json");
+            request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36");
+            request.Headers.TryAddWithoutValidation("Referer", "https://www.cls.cn/");
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            return ClsTelegraphParser.Parse(json, crawledAt)
+                .Where(item => IsFinanceRelevant(item.Title))
+                .ToArray();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Array.Empty<LocalSectorReportSeed>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "抓取财联社电报失败");
             return Array.Empty<LocalSectorReportSeed>();
         }
     }
@@ -426,7 +565,54 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
             .Where(item => item.Level == "market")
             .ToListAsync(cancellationToken);
 
-        MergeSectorReportEntities(existing, reports, _dbContext.LocalSectorReports);
+        // Additive merge: add new items and update existing, but never delete
+        // items not in the incoming set. This prevents data from intermittent
+        // sources (e.g. CLS, Sina) from being removed between refresh cycles.
+        var existingLookup = existing.ToDictionary(BuildSectorReportKey, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in reports)
+        {
+            var key = BuildSectorReportKey(item);
+
+            if (existingLookup.TryGetValue(key, out var previous))
+            {
+                previous.Symbol = item.Symbol;
+                previous.SectorName = item.SectorName;
+                previous.Level = item.Level;
+                previous.Title = item.Title;
+                previous.Source = item.Source;
+                previous.SourceTag = item.SourceTag;
+                previous.ExternalId = item.ExternalId;
+                previous.PublishTime = item.PublishTime;
+                previous.CrawledAt = item.CrawledAt;
+                previous.Url = item.Url;
+                continue;
+            }
+
+            _dbContext.LocalSectorReports.Add(new LocalSectorReport
+            {
+                Symbol = item.Symbol,
+                SectorName = item.SectorName,
+                Level = item.Level,
+                Title = item.Title,
+                Source = item.Source,
+                SourceTag = item.SourceTag,
+                ExternalId = item.ExternalId,
+                PublishTime = item.PublishTime,
+                CrawledAt = item.CrawledAt,
+                Url = item.Url,
+                IsAiProcessed = false,
+                AiSentiment = "中性"
+            });
+        }
+
+        // Time-based cleanup: remove stale market items older than 7 days
+        var staleThreshold = DateTime.UtcNow.AddDays(-7);
+        var staleItems = existing.Where(item => item.PublishTime < staleThreshold).ToArray();
+        if (staleItems.Length > 0)
+        {
+            _dbContext.LocalSectorReports.RemoveRange(staleItems);
+        }
     }
 
     internal static void MergeStockNewsEntities(
@@ -622,6 +808,26 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         }
 
         return BlockedSourceKeywords.Any(keyword => source.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsBlockedTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        return BlockedTitlePatterns.Any(pattern => title.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static bool IsFinanceRelevant(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        return FinanceRelevanceKeywords.Any(keyword => title.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     private Task<bool> HasPendingMarketAiAsync(CancellationToken cancellationToken)

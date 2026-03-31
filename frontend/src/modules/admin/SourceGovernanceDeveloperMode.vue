@@ -360,35 +360,51 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="panel">
-    <h2>来源治理 Developer Mode</h2>
+  <!-- ── 未登录：居中登录卡片（共享风格） ── -->
+  <div v-if="!isLoggedIn" class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <h2 class="login-title">治理 Developer Mode</h2>
+        <p class="login-subtitle">管理员登录后可查看诊断面板</p>
+      </div>
+      <div class="form-field">
+        <label class="form-label">账号</label>
+        <input class="form-input" v-model="username" placeholder="管理员账号" @keyup.enter="login" />
+      </div>
+      <div class="form-field">
+        <label class="form-label">密码</label>
+        <input class="form-input" v-model="password" type="password" placeholder="管理员密码" @keyup.enter="login" />
+      </div>
+      <button class="btn-primary-full" @click="login" :disabled="loginLoading">{{ loginLoading ? '登录中...' : '登   录' }}</button>
+      <p v-if="loginError" class="form-error">{{ loginError }}</p>
+    </div>
+  </div>
 
-    <div v-if="!isLoggedIn" class="login-panel">
-      <h3>管理员登录</h3>
-      <div class="field">
-        <label>账号</label>
-        <input v-model="username" placeholder="管理员账号" />
+  <!-- ── 已登录：开发者面板 ── -->
+  <div v-else class="dev-root">
+    <!-- 页面头 -->
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">来源治理 Developer Mode</h2>
+        <p class="page-desc">只读诊断面板，查看治理状态与错误快照</p>
       </div>
-      <div class="field">
-        <label>密码</label>
-        <input v-model="password" type="password" placeholder="管理员密码" />
+      <div class="page-header-actions">
+        <label class="toggle-label">
+          <input v-model="developerModeEnabled" type="checkbox" @change="loadDashboard" />
+          开启 Developer Mode
+        </label>
+        <button class="btn-ghost-sm" @click="logout">退出登录</button>
       </div>
-      <button @click="login" :disabled="loginLoading">{{ loginLoading ? '登录中...' : '登录' }}</button>
-      <p v-if="loginError" class="muted">{{ loginError }}</p>
     </div>
 
-    <div v-else class="dev-panel">
-      <div class="panel-actions">
-        <label class="inline">
-          <input v-model="developerModeEnabled" type="checkbox" @change="loadDashboard" />
-          开启 Developer Mode（只读诊断）
-        </label>
-        <button class="secondary" @click="logout">退出登录</button>
-      </div>
-
-      <p v-if="!developerModeEnabled" class="muted">开启后可查看治理状态与错误快照。</p>
-      <p v-if="loading" class="muted">加载中...</p>
-      <p v-if="errorMessage" class="muted">{{ errorMessage }}</p>
+    <p v-if="!developerModeEnabled" class="hint-text">开启后可查看治理状态与错误快照。</p>
+    <p v-if="loading" class="hint-text">加载中...</p>
+    <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
 
       <template v-if="developerModeEnabled && overview">
         <section class="help-panel">
@@ -563,303 +579,494 @@ onMounted(async () => {
           </section>
         </div>
       </template>
-    </div>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.panel {
+/* ── 登录面板（共享风格，同 AdminLlmSettings） ── */
+.login-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 100px);
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
   background: var(--color-bg-surface);
   border-radius: var(--radius-xl);
-  padding: 1.5rem;
-  box-shadow: var(--shadow-md);
+  padding: var(--space-8) var(--space-6);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--color-border-light);
+}
+.login-header {
+  text-align: center;
+  margin-bottom: var(--space-6);
+}
+.login-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  margin-bottom: var(--space-4);
+}
+.login-title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.login-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
 }
 
-.field {
+/* ── 表单字段 ── */
+.form-field {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 0.8rem;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
 }
-
-.field input,
-.trace-box input {
-  padding: 0.6rem 0.75rem;
-  border-radius: var(--radius-md);
+.form-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.form-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-family-primary);
+  font-size: var(--text-base);
+  color: var(--color-text-body);
+  background: var(--color-bg-surface);
   border: 1px solid var(--color-border-light);
-  font-size: 0.95rem;
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.form-input:hover { border-color: var(--color-border-medium); }
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-ring-accent);
+}
+.form-input::placeholder { color: var(--color-text-muted); }
+
+.form-error {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 
-button {
-  padding: 0.6rem 1rem;
-  border-radius: var(--radius-full);
-  border: none;
-  background: var(--color-accent);
-  color: #fff;
+/* ── 开发者面板根布局 ── */
+.dev-root {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ── 页面头 ── */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.page-title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.page-desc {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
+}
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  color: var(--color-text-body);
+  cursor: pointer;
+}
+.toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
   cursor: pointer;
 }
 
-button.secondary {
+.hint-text {
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+}
+
+/* ── 共用按钮 ── */
+.btn-primary-full {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.btn-primary-full:hover { background: var(--color-accent-hover); }
+.btn-primary-full:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.btn-ghost-sm {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn-ghost-sm:hover {
   background: var(--color-bg-surface-alt);
   color: var(--color-text-body);
 }
 
+button {
+  padding: 0.5rem 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-surface);
+  color: var(--color-text-body);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+button:hover {
+  background: var(--color-bg-surface-alt);
+  border-color: var(--color-border-medium);
+}
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
-
-.inline {
-  display: inline-flex;
-  gap: 0.5rem;
-  align-items: center;
+button.secondary {
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-light);
+}
+button.secondary:hover {
+  background: var(--color-bg-surface-alt);
 }
 
 .muted {
   color: var(--color-text-secondary);
+  font-size: var(--text-sm);
 }
 
-.panel-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.card {
+/* ── 帮助面板 ── */
+.help-panel,
+.llm-log-panel {
+  background: var(--color-bg-surface);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
-  padding: 0.75rem;
+  padding: var(--space-5);
+  box-shadow: var(--shadow-xs);
+}
+.help-panel h3,
+.llm-log-panel h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
 
+/* ── 指标卡片 ── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+.card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast);
+}
+.card:hover { box-shadow: var(--shadow-sm); }
 .card h4 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
+  font-weight: 500;
   color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
-
 .card p {
-  margin: 0.4rem 0 0;
-  font-size: 1.2rem;
-  font-weight: 600;
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 
+/* ── Trace ── */
 .trace-box {
   display: flex;
-  gap: 0.6rem;
-  margin-bottom: 0.8rem;
+  gap: var(--space-2);
 }
-
 .trace-box input {
   flex: 1;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  transition: border-color var(--transition-fast);
+}
+.trace-box input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-ring-accent);
 }
 
 .trace-lines {
-  max-height: 180px;
+  max-height: 200px;
   overflow: auto;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 0.75rem;
-  background: var(--color-bg-surface-alt);
+  padding: var(--space-3);
+  background: var(--color-bg-inset);
+  font-family: var(--font-family-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
 }
 
 .timeline {
-  margin: 0.6rem 0 1rem;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 0.7rem;
-}
-
-.timeline h4 {
-  margin: 0 0 0.5rem;
-}
-
-.help-panel,
-.llm-log-panel {
-  margin: 0.8rem 0 1rem;
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-  padding: 0.8rem;
+  padding: var(--space-4);
   background: var(--color-bg-surface);
 }
+.timeline h4 { margin: 0 0 var(--space-2); }
 
-.help-panel h3,
-.llm-log-panel h3 {
-  margin: 0 0 0.5rem;
-}
-
-.grid {
+/* ── LLM 日志 ── */
+.filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1rem;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
-
+.filters input {
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.filters input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
 .llm-filters {
   grid-template-columns: 1fr 120px auto;
 }
 
 .llm-log-list {
-  max-height: 320px;
+  max-height: 360px;
   overflow: auto;
-  margin-top: 0.6rem;
+  margin-top: var(--space-3);
 }
-
 .llm-log-item {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 0.55rem;
-  margin-bottom: 0.45rem;
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
   cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
-
+.llm-log-item:hover {
+  border-color: var(--color-accent-border);
+  box-shadow: var(--shadow-xs);
+}
 .llm-log-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: var(--space-2);
   align-items: center;
-  margin-bottom: 0.4rem;
-  font-size: 0.85rem;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
   color: var(--color-text-body);
 }
-
 .llm-log-raw {
   margin: 0;
   max-height: 140px;
   overflow: auto;
-  background: var(--color-bg-surface-alt);
+  background: var(--color-bg-inset);
   border-radius: var(--radius-sm);
-  padding: 0.45rem;
-  font-size: 0.8rem;
+  padding: var(--space-2);
+  font-family: var(--font-family-mono);
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: var(--leading-relaxed);
 }
 
+/* ── Log Viewer Modal ── */
 .log-viewer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.5);
+  background: var(--color-bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
-  z-index: 100;
+  padding: var(--space-5);
+  z-index: var(--z-modal);
 }
-
 .log-viewer-dialog {
   width: min(1280px, 100%);
   max-height: calc(100vh - 2rem);
   overflow: auto;
   background: var(--color-bg-surface);
-  border-radius: var(--radius-lg);
-  padding: 1rem;
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-xl);
 }
-
 .log-viewer-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 0.8rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
-
-.log-viewer-header h3,
-.log-viewer-section h4 {
+.log-viewer-header h3 {
   margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 600;
 }
-
+.log-viewer-section h4 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
 .log-viewer-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  font-size: 0.9rem;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
-  margin-bottom: 0.8rem;
+  margin-bottom: var(--space-4);
 }
-
 .log-viewer-section {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-4);
 }
-
 .log-viewer-json,
 .log-viewer-raw {
-  margin: 0.5rem 0 0;
+  margin: var(--space-2) 0 0;
   max-height: none;
-  min-height: 220px;
+  min-height: 180px;
   overflow: auto;
-  background: var(--color-text-heading);
-  color: var(--color-bg-surface-alt);
+  background: #1e293b;
+  color: #e2e8f0;
   border-radius: var(--radius-md);
-  padding: 0.85rem;
-  font-size: 0.85rem;
-  line-height: 1.5;
+  padding: var(--space-4);
+  font-family: var(--font-family-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.filters {
+/* ── 底部网格 ── */
+.grid {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 0.5rem;
-  margin-bottom: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+.grid section {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-xs);
+}
+.grid section h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
 }
 
 .change-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.35rem;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
 }
-
 .item-actions {
   display: inline-flex;
-  gap: 0.4rem;
+  gap: var(--space-1);
 }
 
 .detail-panel {
-  margin-top: 0.8rem;
+  margin-top: var(--space-3);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
-  padding: 0.7rem;
+  padding: var(--space-4);
+  background: var(--color-bg-surface-alt);
 }
 
 ul {
   margin: 0;
-  padding-left: 1rem;
+  padding-left: var(--space-4);
 }
 
+/* ── 响应式 ── */
 @media (max-width: 720px) {
-  .panel-actions {
+  .page-header {
+    flex-direction: column;
+  }
+  .page-header-actions {
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.7rem;
+    gap: var(--space-2);
   }
-
   .trace-box {
     flex-direction: column;
   }
-
-  .filters {
-    grid-template-columns: 1fr;
-  }
-
+  .filters,
   .llm-filters {
     grid-template-columns: 1fr;
   }
-
   .change-item {
     flex-direction: column;
     align-items: flex-start;
   }
-
   .log-viewer-header {
     flex-direction: column;
   }

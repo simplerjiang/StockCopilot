@@ -10,6 +10,8 @@ const props = defineProps({
   }
 })
 
+const emit = defineEmits(['search-focus'])
+
 const getChangeClass = value => {
   const number = Number(value)
   if (Number.isNaN(number)) return ''
@@ -23,7 +25,7 @@ const getChangeClass = value => {
   <section class="terminal-view" :class="{ monochrome }">
     <header class="terminal-view-header">
       <div>
-        <p class="terminal-view-label">TerminalView</p>
+        <p class="terminal-view-label">行情终端</p>
         <h3>{{ quote ? `${quote.name}（${quote.symbol}）` : '专业看盘终端' }}</h3>
       </div>
       <div v-if="quote" class="terminal-view-quote">
@@ -34,7 +36,16 @@ const getChangeClass = value => {
       </div>
     </header>
 
-    <div class="terminal-view-body">
+    <div v-if="!quote" class="terminal-empty-state">
+      <div class="terminal-empty-icon">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="4" y="12" width="40" height="28" rx="4" stroke="currentColor" stroke-width="2" fill="none"/><polyline points="10,32 18,24 24,28 34,18 38,22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="8" r="3" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+      </div>
+      <h4>选择标的以加载行情</h4>
+      <p>在上方搜索框中输入股票代码、名称或拼音缩写，快速查看实时行情与 K 线图表。</p>
+      <button class="terminal-empty-cta" @click="emit('search-focus')">开始搜索</button>
+    </div>
+
+    <div v-else class="terminal-view-body">
       <section class="terminal-view-summary">
         <slot name="summary" />
       </section>
@@ -128,5 +139,47 @@ const getChangeClass = value => {
 
 .is-fall {
   color: var(--color-market-fall);
+}
+
+.terminal-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 320px;
+  text-align: center;
+  color: rgba(148, 163, 184, 0.8);
+}
+.terminal-empty-icon {
+  color: rgba(125, 211, 252, 0.4);
+  margin-bottom: 0.5rem;
+}
+.terminal-empty-state h4 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: #e2e8f0;
+}
+.terminal-empty-state p {
+  margin: 0;
+  max-width: 360px;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: rgba(148, 163, 184, 0.7);
+}
+.terminal-empty-cta {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  border: 1px solid rgba(125, 211, 252, 0.3);
+  border-radius: 10px;
+  background: rgba(125, 211, 252, 0.08);
+  color: #7dd3fc;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.terminal-empty-cta:hover {
+  background: rgba(125, 211, 252, 0.15);
+  border-color: rgba(125, 211, 252, 0.5);
 }
 </style>

@@ -345,15 +345,17 @@ defineExpose({
       </div>
 
       <div class="chat-input">
-        <textarea
-          v-model="chatInput"
-          rows="4"
-          :placeholder="placeholder"
-          @keydown="handleKeydown"
-        />
-        <button class="chat-send" @click="sendChat()" :disabled="chatLoading || !chatInput.trim()">
-          {{ chatLoading ? '发送中...' : '发送' }}
-        </button>
+        <div class="chat-input-wrap">
+          <textarea
+            v-model="chatInput"
+            rows="4"
+            :placeholder="placeholder"
+            @keydown="handleKeydown"
+          />
+          <button class="chat-send" @click="sendChat()" :disabled="chatLoading || !chatInput.trim()">
+            {{ chatLoading ? '⏳ 发送中...' : '↑ 发送' }}
+          </button>
+        </div>
       </div>
 
       <p v-if="chatError" class="muted">{{ chatError }}</p>
@@ -391,14 +393,14 @@ defineExpose({
   border-radius: 999px;
   border: none;
   padding: 0.5rem 1rem;
-  background: #e2e8f0;
-  color: #0f172a;
+  background: var(--color-border-light);
+  color: var(--color-text-primary);
   cursor: pointer;
 }
 
 .preset-button:disabled {
-  background: #94a3b8;
-  color: #f8fafc;
+  background: var(--color-text-muted);
+  color: var(--color-text-on-dark);
   cursor: not-allowed;
 }
 
@@ -441,13 +443,13 @@ defineExpose({
 
 .chat-role {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--color-text-secondary);
   margin-bottom: 0.2rem;
 }
 
 .chat-content {
   white-space: pre-wrap;
-  color: #0f172a;
+  color: var(--color-text-primary);
 }
 
 .chat-content :deep(p) {
@@ -478,7 +480,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 0.85rem;
 }
 
@@ -517,22 +519,33 @@ defineExpose({
   gap: 0.5rem;
 }
 
+.chat-input-wrap {
+  position: relative;
+}
+
 .chat-input textarea {
+  width: 100%;
+  box-sizing: border-box;
   resize: vertical;
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.4);
-  padding: 0.6rem 0.75rem;
+  padding: 0.6rem 5rem 0.6rem 0.75rem;
   font-family: inherit;
 }
 
 .chat-send {
-  align-self: flex-end;
-  border-radius: 10px;
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  border-radius: 8px;
   border: none;
-  padding: 0.5rem 1rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 600;
   background: linear-gradient(135deg, #2563eb, #38bdf8);
   color: #ffffff;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .chat-send:disabled {
@@ -542,8 +555,8 @@ defineExpose({
 
 .chat-new,
 .chat-toggle {
-  background: #e2e8f0;
-  color: #1f2937;
+  background: var(--color-border-light);
+  color: var(--color-text-body);
   border: none;
   padding: 0.3rem 0.75rem;
   border-radius: 999px;

@@ -42,5 +42,12 @@ frontend/_ui-validate.cjs
 frontend/test-market-bar*.cjs
 frontend/ua-review*.cjs
 frontend/edge-check-*.mjs
+frontend/validate-out.txt
+
+# Temp data/test artifacts
+_news_test_output.json
+.noupload/
+/screenshots/
+ui-validation-*.png
 
 backend/SimplerJiangAiAgent.Api/wwwroot/

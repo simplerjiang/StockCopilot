@@ -8,10 +8,13 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-size: var(--text-base);
 }
 
 * {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 body {
@@ -27,9 +30,23 @@ button {
   padding: 0.5rem 1rem;
   font-size: var(--text-md);
   font-family: inherit;
+  font-weight: 500;
   background-color: var(--color-bg-surface);
   cursor: pointer;
   transition: all var(--transition-normal);
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+a {
+  color: var(--color-accent-text);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
 }
 
 #app {
@@ -81,11 +98,15 @@ button {
   background: var(--color-bg-surface);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border-light);
 }
 
 .panel h2 {
-  margin: 0 0 1rem;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 
 .field {
@@ -100,6 +121,12 @@ button {
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
   padding: 0.5rem 0.75rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.field input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-ring-accent);
 }
 
 .field select {
@@ -111,5 +138,5 @@ button {
 
 .muted {
   color: var(--color-text-muted);
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
 }

@@ -448,10 +448,59 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
 
     public async Task<LocalNewsBucketDto> QueryMarketAsync(CancellationToken cancellationToken = default)
     {
-        var marketReportRows = await _dbContext.LocalSectorReports
+        // Load a broader candidate set, then apply diversity-aware selection in memory
+        // so that multiple sources are represented rather than one source dominating.
+        const int candidatePoolSize = 200;
+        const int displayLimit = 30;
+        var freshnessThreshold = DateTime.UtcNow.AddDays(-7);
+
+        var candidates = await _dbContext.LocalSectorReports
             .Where(item => item.Level == "market")
+            .Where(item => item.PublishTime >= freshnessThreshold)
             .OrderByDescending(item => item.PublishTime)
-            .Take(12)
+            .Take(candidatePoolSize)
+            .ToListAsync(cancellationToken);
+
+        // Phase 1: guarantee one item per source (always retained)
+        var perSourceTop = candidates
+            .GroupBy(item => item.SourceTag ?? item.Source)
+            .Select(group => group.OrderByDescending(item => item.PublishTime).First())
+            .OrderByDescending(item => item.PublishTime)
+            .ToList();
+
+        var selectedIds = new HashSet<long>(perSourceTop.Select(item => item.Id));
+
+        // Phase 2: fill remaining slots with freshest unpicked items, capping per source
+        // to prevent any single source from dominating the display.
+        const int perSourceCap = 4;
+        var remainingSlots = Math.Max(0, displayLimit - perSourceTop.Count);
+
+        // Count how many items per source are already selected from Phase 1
+        var sourceCounters = perSourceTop
+            .GroupBy(item => item.SourceTag ?? item.Source)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        var fill = candidates
+            .Where(item => !selectedIds.Contains(item.Id))
+            .OrderByDescending(item => item.PublishTime)
+            .Where(item =>
+            {
+                var src = item.SourceTag ?? item.Source;
+                var count = sourceCounters.GetValueOrDefault(src, 0);
+                if (count >= perSourceCap) return false;
+                sourceCounters[src] = count + 1;
+                return true;
+            })
+            .Take(remainingSlots);
+
+        // perSourceTop always included first, then fill; final sort for display order
+        var selected = perSourceTop
+            .Concat(fill)
+            .OrderByDescending(item => item.PublishTime)
+            .Take(displayLimit)
+            .ToList();
+
+        var marketReportRows = selected
             .Select(item => new LocalNewsItemDto(
                 item.Id,
                 $"sector_report:{item.Id}",
@@ -471,7 +520,7 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                 item.IngestedAt,
                 item.AiTarget,
                 ParseAiTags(item.AiTags)))
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         return new LocalNewsBucketDto(string.Empty, "market", "大盘环境", marketReportRows);
     }

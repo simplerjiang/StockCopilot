@@ -273,185 +273,425 @@ if (token.value) {
 </script>
 
 <template>
-  <section class="panel">
-    <h2>LLM 接口设置</h2>
+  <!-- ── 未登录：居中登录卡片 ── -->
+  <div v-if="!isLoggedIn" class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <h2 class="login-title">管理员登录</h2>
+        <p class="login-subtitle">登录后可管理 LLM 接口配置</p>
+      </div>
+      <div class="form-field">
+        <label class="form-label">账号</label>
+        <input class="form-input" v-model="username" placeholder="管理员账号" @keyup.enter="login" />
+      </div>
+      <div class="form-field">
+        <label class="form-label">密码</label>
+        <input class="form-input" v-model="password" type="password" placeholder="管理员密码" @keyup.enter="login" />
+      </div>
+      <button class="btn-primary-lg" @click="login" :disabled="loginLoading">
+        {{ loginLoading ? '登录中...' : '登   录' }}
+      </button>
+      <p v-if="loginError" class="form-error">{{ loginError }}</p>
+    </div>
+  </div>
 
-    <div v-if="!isLoggedIn" class="login-panel">
-      <h3>管理员登录</h3>
-      <div class="field">
-        <label>账号</label>
-        <input v-model="username" placeholder="管理员账号" />
+  <!-- ── 已登录：设置面板 ── -->
+  <div v-else class="settings-root">
+    <!-- 页面头 -->
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">LLM 接口设置</h2>
+        <p class="page-desc">管理 AI 模型通道与密钥</p>
       </div>
-      <div class="field">
-        <label>密码</label>
-        <input v-model="password" type="password" placeholder="管理员密码" />
+      <div class="page-header-actions">
+        <span class="user-badge">🟢 已登录</span>
+        <button class="btn-ghost-sm" @click="logout">退出登录</button>
       </div>
-      <button @click="login" :disabled="loginLoading">{{ loginLoading ? '登录中...' : '登录' }}</button>
-      <p v-if="loginError" class="muted">{{ loginError }}</p>
     </div>
 
-    <div v-else class="settings-panel">
-      <div class="panel-actions">
-        <p class="muted">已登录管理员</p>
-        <button class="secondary" @click="logout">退出登录</button>
+    <!-- 激活通道卡片 -->
+    <div class="settings-card">
+      <div class="card-section-title">
+        <span class="section-dot section-dot--active"></span>
+        激活通道
       </div>
-
-      <div class="field compact-row">
-        <div class="field grow">
-          <label>激活通道</label>
-          <select v-model="activeProviderKey">
+      <div class="row-fields">
+        <div class="form-field grow">
+          <select class="form-input" v-model="activeProviderKey">
             <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </div>
-        <button class="secondary compact-action" @click="saveActiveProvider" :disabled="settingsLoading">{{ settingsLoading ? '切换中...' : '切换激活通道' }}</button>
+        <button class="btn-secondary" @click="saveActiveProvider" :disabled="settingsLoading">
+          {{ settingsLoading ? '切换中...' : '切换激活通道' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 配置编辑卡片 -->
+    <div class="settings-card">
+      <div class="card-section-title">
+        <span class="section-dot section-dot--edit"></span>
+        通道配置
       </div>
 
-      <div class="field">
-        <label>编辑 Provider</label>
-        <select v-model="provider" @change="loadSettings">
+      <div class="form-field">
+        <label class="form-label">编辑 Provider</label>
+        <select class="form-input" v-model="provider" @change="loadSettings">
           <option v-for="option in providerOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
       </div>
 
-      <div class="field">
-        <label>主 LLM API Key</label>
-        <input v-model="apiKey" placeholder="填写新的主模型 Key（留空保持不变）" />
-        <p v-if="hasApiKey" class="muted">当前已保存：{{ apiKeyMasked }}</p>
+      <!-- 密钥组 -->
+      <div class="field-group">
+        <div class="field-group-header">密钥配置</div>
+        <div class="form-field">
+          <label class="form-label">主 LLM API Key</label>
+          <input class="form-input" v-model="apiKey" placeholder="填写新的主模型 Key（留空保持不变）" />
+          <p v-if="hasApiKey" class="form-hint">当前已保存：{{ apiKeyMasked }}</p>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Tavily API Key（外部搜索）</label>
+          <input class="form-input" v-model="tavilyApiKey" placeholder="填写 Tavily Key（留空保持不变）" />
+          <p class="form-hint">仅用于外部搜索工具，不影响主 LLM API Key。</p>
+          <p v-if="hasTavilyApiKey" class="form-hint">当前已保存 Tavily Key：{{ tavilyApiKeyMasked }}</p>
+        </div>
       </div>
 
-      <div class="field">
-        <label>Tavily API Key（外部搜索）</label>
-        <input v-model="tavilyApiKey" placeholder="填写 Tavily Key（留空保持不变）" />
-        <p class="muted">仅用于外部搜索工具，不会替代主 LLM API Key。</p>
-        <p v-if="hasTavilyApiKey" class="muted">当前已保存 Tavily Key：{{ tavilyApiKeyMasked }}</p>
+      <!-- 模型组 -->
+      <div class="field-group">
+        <div class="field-group-header">模型设置</div>
+        <div class="form-field">
+          <label class="form-label">Base URL</label>
+          <input class="form-input" v-model="baseUrl" placeholder="https://api.openai.com/v1" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">模型</label>
+          <input class="form-input" v-model="model" placeholder="gpt-4o-mini" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">预设提示词</label>
+          <textarea class="form-input form-textarea" v-model="systemPrompt" rows="4" placeholder="用于引导模型的系统提示词"></textarea>
+        </div>
       </div>
 
-      <div class="field">
-        <label>Base URL</label>
-        <input v-model="baseUrl" placeholder="https://api.openai.com/v1" />
+      <!-- 高级组 -->
+      <div class="field-group">
+        <div class="field-group-header">高级选项</div>
+        <div class="row-fields">
+          <div class="form-field grow">
+            <label class="form-label">Organization</label>
+            <input class="form-input" v-model="organization" placeholder="可选" />
+          </div>
+          <div class="form-field grow">
+            <label class="form-label">Project</label>
+            <input class="form-input" v-model="project" placeholder="可选" />
+          </div>
+        </div>
+        <div class="toggle-row">
+          <label class="toggle-label"><input type="checkbox" v-model="forceChinese" /> 强制中文回复</label>
+          <label class="toggle-label"><input type="checkbox" v-model="enabled" /> 启用该 Provider</label>
+        </div>
       </div>
 
-      <div class="field">
-        <label>模型</label>
-        <input v-model="model" placeholder="gpt-4o-mini" />
+      <!-- 操作栏 -->
+      <div class="form-actions">
+        <button class="btn-primary-lg" @click="saveSettings" :disabled="settingsLoading">
+          {{ settingsLoading ? '保存中...' : '保存设置' }}
+        </button>
+        <p v-if="saveMessage" class="form-success">{{ saveMessage }}</p>
+        <p v-if="settingsError" class="form-error">{{ settingsError }}</p>
       </div>
-
-      <div class="field">
-        <label>预设提示词</label>
-        <textarea v-model="systemPrompt" rows="4" placeholder="用于引导模型的系统提示词"></textarea>
-      </div>
-
-      <div class="field">
-        <label class="inline">
-          <input type="checkbox" v-model="forceChinese" /> 强制中文回复
-        </label>
-      </div>
-
-      <div class="field">
-        <label>Organization</label>
-        <input v-model="organization" placeholder="可选" />
-      </div>
-
-      <div class="field">
-        <label>Project</label>
-        <input v-model="project" placeholder="可选" />
-      </div>
-
-      <div class="field">
-        <label class="inline">
-          <input type="checkbox" v-model="enabled" /> 启用该 Provider
-        </label>
-      </div>
-
-      <button @click="saveSettings" :disabled="settingsLoading">{{ settingsLoading ? '保存中...' : '保存设置' }}</button>
-      <p v-if="saveMessage" class="muted">{{ saveMessage }}</p>
-      <p v-if="settingsError" class="muted">{{ settingsError }}</p>
     </div>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.panel {
-  background: var(--color-bg-surface);
-  border-radius: var(--radius-xl);
-  padding: var(--space-6);
-  box-shadow: var(--shadow-md);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-bottom: 0.8rem;
-}
-
-.compact-row {
-  flex-direction: row;
-  align-items: flex-end;
-  gap: 0.75rem;
-}
-
-.grow {
-  flex: 1;
-  margin-bottom: 0;
-}
-
-.field input,
-.field select,
-.field textarea {
-  padding: 0.6rem 0.75rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-light);
-  font-size: 0.95rem;
-}
-
-.field textarea {
-  resize: vertical;
-}
-
-.field label.inline {
+/* ── 登录面板（居中卡片） ── */
+.login-wrapper {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;
+  min-height: calc(100vh - 100px);
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8) var(--space-6);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--color-border-light);
+}
+.login-header {
+  text-align: center;
+  margin-bottom: var(--space-6);
+}
+.login-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  margin-bottom: var(--space-4);
+}
+.login-title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.login-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
 }
 
-button {
-  padding: 0.6rem 1.2rem;
+/* ── 设置页根布局 ── */
+.settings-root {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ── 页面头 ── */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.page-title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.page-desc {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
+}
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+.user-badge {
+  font-size: var(--text-sm);
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+/* ── 设置卡片 ── */
+.settings-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-sm);
+}
+.card-section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-5);
+}
+.section-dot {
+  width: 8px;
+  height: 8px;
   border-radius: var(--radius-full);
-  border: none;
-  background: var(--color-accent);
-  color: #fff;
+}
+.section-dot--active { background: var(--color-success); }
+.section-dot--edit   { background: var(--color-accent); }
+
+/* ── 字段组 ── */
+.field-group {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-4);
+  background: var(--color-bg-surface-alt);
+}
+.field-group-header {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* ── 表单字段 ── */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+.form-field:last-child { margin-bottom: 0; }
+
+.form-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.form-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-family-primary);
+  font-size: var(--text-base);
+  color: var(--color-text-body);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.form-input:hover { border-color: var(--color-border-medium); }
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-ring-accent);
+}
+.form-input::placeholder { color: var(--color-text-muted); }
+.form-textarea {
+  height: auto;
+  min-height: 90px;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+  line-height: var(--leading-normal);
+}
+.form-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ── 行内排列 ── */
+.row-fields {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+.grow { flex: 1; }
+
+/* ── Toggle 行 ── */
+.toggle-row {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  color: var(--color-text-body);
+  cursor: pointer;
+}
+.toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
   cursor: pointer;
 }
 
-button.secondary {
+/* ── 按钮 ── */
+.btn-primary-lg {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.btn-primary-lg:hover { background: var(--color-accent-hover); }
+.btn-primary-lg:active { background: var(--color-accent-active); transform: scale(0.99); }
+.btn-primary-lg:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-secondary {
+  height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  color: var(--color-text-body);
+  font-size: var(--text-base);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+.btn-secondary:hover {
+  border-color: var(--color-border-medium);
+  background: var(--color-bg-surface-alt);
+}
+
+.btn-ghost-sm {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn-ghost-sm:hover {
   background: var(--color-bg-surface-alt);
   color: var(--color-text-body);
 }
 
-.compact-action {
-  white-space: nowrap;
+/* ── 反馈消息 ── */
+.form-error {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+.form-success {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.muted {
-  color: var(--color-text-secondary);
-  margin-top: 0.4rem;
-}
-
-.panel-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-}
-
-.login-panel,
-.settings-panel {
-  margin-top: 1rem;
+/* ── 操作栏 ── */
+.form-actions {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border-light);
 }
 </style>

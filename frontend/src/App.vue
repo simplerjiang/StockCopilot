@@ -6,15 +6,35 @@ import StockRecommendTab from './modules/stocks/StockRecommendTab.vue'
 import MarketSentimentTab from './modules/market/MarketSentimentTab.vue'
 import AdminLlmSettings from './modules/admin/AdminLlmSettings.vue'
 import SourceGovernanceDeveloperMode from './modules/admin/SourceGovernanceDeveloperMode.vue'
+import AppToast from './components/AppToast.vue'
 
-const tabs = [
+const mainTabs = [
   { key: 'stock-info', name: '股票信息', shortName: '股票', component: StockInfoTab },
   { key: 'market-sentiment', name: '情绪轮动', shortName: '情绪', component: MarketSentimentTab },
   { key: 'news-archive', name: '全量资讯库', shortName: '资讯', component: NewsArchiveTab },
-  { key: 'stock-recommend', name: '股票推荐', shortName: '推荐', component: StockRecommendTab },
+  { key: 'stock-recommend', name: '股票推荐', shortName: '推荐', component: StockRecommendTab }
+]
+
+const adminTabs = [
   { key: 'admin-llm', name: 'LLM 设置', shortName: 'LLM', component: AdminLlmSettings },
   { key: 'source-governance-dev', name: '治理开发者模式', shortName: '治理', component: SourceGovernanceDeveloperMode }
 ]
+
+const tabs = [...mainTabs, ...adminTabs]
+
+/* ── 设置下拉 ── */
+const settingsOpen = ref(false)
+const settingsRef = ref(null)
+const toggleSettings = () => { settingsOpen.value = !settingsOpen.value }
+const closeSettings = (e) => {
+  if (settingsRef.value && !settingsRef.value.contains(e.target)) {
+    settingsOpen.value = false
+  }
+}
+const selectAdminTab = (tabKey) => {
+  setActiveTab(tabKey)
+  settingsOpen.value = false
+}
 
 /* ── 时钟 ── */
 const clockText = ref('')
@@ -24,6 +44,19 @@ const updateClock = () => {
   clockText.value = [now.getHours(), now.getMinutes(), now.getSeconds()]
     .map(n => String(n).padStart(2, '0')).join(':')
 }
+
+/* ── 连接状态 ── */
+const backendOnline = ref(null) // null=unknown, true=online, false=offline
+let healthTimer = null
+const checkHealth = async () => {
+  try {
+    const r = await fetch('/api/app/version', { signal: AbortSignal.timeout(5000) })
+    backendOnline.value = r.ok
+  } catch {
+    backendOnline.value = false
+  }
+}
+const connectionLabel = computed(() => backendOnline.value === null ? '检测中' : backendOnline.value ? '已连接' : '离线')
 
 /* ── Tab 指示线 ── */
 const tabNavRef = ref(null)
@@ -123,6 +156,9 @@ const loadOnboardingStatus = async ({ allowAutoRedirect = false } = {}) => {
 onMounted(async () => {
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
+  checkHealth()
+  healthTimer = setInterval(checkHealth, 30000)
+  document.addEventListener('click', closeSettings)
 
   try {
     const versionResponse = await fetch('/api/app/version')
@@ -140,6 +176,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer)
+  if (healthTimer) clearInterval(healthTimer)
+  document.removeEventListener('click', closeSettings)
 })
 </script>
 
@@ -155,7 +193,7 @@ onBeforeUnmount(() => {
       </div>
       <nav ref="tabNavRef" class="nav-tabs">
         <button
-          v-for="tab in tabs"
+          v-for="tab in mainTabs"
           :key="tab.key"
           class="nav-tab"
           :class="{ active: tab.key === activeTab }"
@@ -167,7 +205,25 @@ onBeforeUnmount(() => {
         <div class="nav-indicator" :style="indicatorStyle" />
       </nav>
       <div class="header-status">
+        <span class="connection-indicator" :class="{ online: backendOnline === true, offline: backendOnline === false }" :title="connectionLabel">
+          <span class="connection-dot" />
+          <span class="connection-label">{{ connectionLabel }}</span>
+        </span>
         <span class="header-clock">{{ clockText }}</span>
+        <div ref="settingsRef" class="settings-dropdown-wrap">
+          <button class="settings-trigger" :class="{ active: settingsOpen || adminTabs.some(t => t.key === activeTab) }" @click.stop="toggleSettings" title="管理设置">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6.5 1.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75v.3a5.28 5.28 0 0 1 1.46.6l.21-.21a.75.75 0 0 1 1.06 0l1.06 1.06a.75.75 0 0 1 0 1.06l-.21.21c.26.45.46.94.6 1.46h.3a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-.75.75h-.3c-.14.52-.34 1.01-.6 1.46l.21.21a.75.75 0 0 1 0 1.06l-1.06 1.06a.75.75 0 0 1-1.06 0l-.21-.21c-.45.26-.94.46-1.46.6v.3a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1-.75-.75v-.3a5.28 5.28 0 0 1-1.46-.6l-.21.21a.75.75 0 0 1-1.06 0L2.71 12.4a.75.75 0 0 1 0-1.06l.21-.21a5.28 5.28 0 0 1-.6-1.46h-.3a.75.75 0 0 1-.75-.75v-1.5a.75.75 0 0 1 .75-.75h.3c.14-.52.34-1.01.6-1.46l-.21-.21a.75.75 0 0 1 0-1.06L3.77 2.88a.75.75 0 0 1 1.06 0l.21.21c.45-.26.94-.46 1.46-.6v-.3ZM8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" fill="currentColor"/></svg>
+          </button>
+          <div v-if="settingsOpen" class="settings-dropdown">
+            <button
+              v-for="tab in adminTabs"
+              :key="tab.key"
+              class="settings-item"
+              :class="{ active: tab.key === activeTab }"
+              @click="selectAdminTab(tab.key)"
+            >{{ tab.name }}</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -188,6 +244,7 @@ onBeforeUnmount(() => {
         @settings-saved="loadOnboardingStatus()"
       />
     </main>
+    <AppToast />
   </div>
 </template>
 
@@ -198,8 +255,8 @@ onBeforeUnmount(() => {
   align-items: center;
   height: 52px;
   padding: 0 var(--space-6);
-  background: var(--color-bg-header);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, #111827 0%, #1e293b 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
@@ -293,11 +350,100 @@ onBeforeUnmount(() => {
 .header-status {
   flex-shrink: 0;
   margin-left: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 .header-clock {
   font-size: var(--text-sm);
   color: var(--color-text-on-dark-muted);
   font-family: var(--font-family-mono);
+}
+
+.connection-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--color-text-on-dark-muted);
+  cursor: default;
+}
+
+.connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-on-dark-muted);
+  transition: background 0.3s;
+}
+
+.connection-indicator.online .connection-dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
+.connection-indicator.offline .connection-dot {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.connection-label {
+  opacity: 0.8;
+}
+
+/* ── 设置下拉 ── */
+.settings-dropdown-wrap {
+  position: relative;
+}
+.settings-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-on-dark-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.settings-trigger:hover,
+.settings-trigger.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+.settings-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  padding: var(--space-1);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: calc(var(--z-sticky) + 10);
+}
+.settings-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-body);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.settings-item:hover {
+  background: var(--color-bg-surface-alt);
+}
+.settings-item.active {
+  color: var(--color-accent);
+  font-weight: 600;
 }
 
 /* ── 内容区 ── */

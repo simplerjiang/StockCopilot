@@ -190,7 +190,9 @@ watch(realtimeContextEnabled, value => {
       <p class="muted">使用 LLM 汇总新闻、推荐与行情分析。</p>
     </div>
 
-    <section class="recommend-market-card">
+    <div class="recommend-split">
+      <aside class="recommend-sidebar" :class="{ collapsed: !realtimeContextEnabled }">
+        <section class="recommend-market-card">
       <div class="recommend-market-head">
         <div>
           <p class="recommend-market-kicker">Realtime Context</p>
@@ -237,8 +239,10 @@ watch(realtimeContextEnabled, value => {
         </template>
       </template>
     </section>
+      </aside>
 
-    <ChatWindow
+      <div class="recommend-main">
+        <ChatWindow
       ref="chatRef"
       title="推荐助手"
       :presets="presets"
@@ -260,6 +264,8 @@ watch(realtimeContextEnabled, value => {
         </div>
       </template>
     </ChatWindow>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -270,6 +276,35 @@ watch(realtimeContextEnabled, value => {
   box-shadow: var(--shadow-md);
   border-radius: var(--radius-xl);
   padding: var(--space-6);
+}
+
+.recommend-split {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.recommend-sidebar {
+  min-width: 0;
+  overflow-y: auto;
+  max-height: calc(100vh - 200px);
+}
+
+.recommend-sidebar.collapsed {
+  grid-column: 1;
+}
+
+.recommend-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 960px) {
+  .recommend-split {
+    grid-template-columns: 1fr;
+  }
 }
 
 .panel-header {

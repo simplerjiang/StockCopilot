@@ -1,38 +1,39 @@
 /* ═══════════════════════════════════════════════════
-   SimplerJiang AI Agent — Design Tokens v1
+   SimplerJiang AI Agent — Design Tokens v2
    全局设计变量，所有组件必须引用此文件中的变量
    ═══════════════════════════════════════════════════ */
 
 :root {
   /* ── 颜色 · 背景 ─────────────────────────────── */
-  --color-bg-body:        #f1f3f7;       /* 页面底层背景 */
+  --color-bg-body:        #f4f6f9;       /* 页面底层背景（偏暖灰） */
   --color-bg-surface:     #ffffff;       /* 卡片/面板默认背景 */
-  --color-bg-surface-alt: #f8f9fb;       /* 次级面板背景（表单区、嵌套区） */
-  --color-bg-inset:       #f0f2f5;       /* 内嵌区域（代码块、引用块） */
-  --color-bg-header:      #0f1729;       /* 顶栏背景（深蓝黑） */
-  --color-bg-header-hover:#1a2540;       /* 顶栏交互态 */
+  --color-bg-surface-alt: #f8f9fc;       /* 次级面板背景（表单区、嵌套区） */
+  --color-bg-inset:       #f0f2f6;       /* 内嵌区域（代码块、引用块） */
+  --color-bg-header:      #111827;       /* 顶栏背景（深灰黑） */
+  --color-bg-header-hover:#1f2937;       /* 顶栏交互态 */
   --color-bg-overlay:     rgba(15, 23, 42, 0.55); /* 遮罩背景 */
 
   /* ── 颜色 · 文字 ─────────────────────────────── */
-  --color-text-primary:   #0f172a;       /* 主文字（标题、关键数据） */
-  --color-text-body:      #1e293b;       /* 正文（段落、表格正文） */
-  --color-text-secondary: #475569;       /* 二级文字（说明、次要标签） */
-  --color-text-muted:     #94a3b8;       /* 灰化文字（占位符、时间戳） */
-  --color-text-disabled:  #cbd5e1;       /* 禁用态文字 */
-  --color-text-on-dark:   #f1f5f9;       /* 深色背景上的文字 */
-  --color-text-on-dark-muted: #94a3b8;   /* 深色背景上的次级文字 */
+  --color-text-primary:   #111827;       /* 主文字（标题、关键数据） */
+  --color-text-body:      #1f2937;       /* 正文（段落、表格正文） */
+  --color-text-secondary: #6b7280;       /* 二级文字（说明、次要标签） */
+  --color-text-muted:     #9ca3af;       /* 灰化文字（占位符、时间戳） */
+  --color-text-disabled:  #d1d5db;       /* 禁用态文字 */
+  --color-text-on-dark:   #f9fafb;       /* 深色背景上的文字 */
+  --color-text-on-dark-muted: #9ca3af;   /* 深色背景上的次级文字 */
 
   /* ── 颜色 · 品牌/强调 ────────────────────────── */
-  --color-accent:         #2563eb;       /* 主品牌蓝（按钮、活跃态、链接） */
-  --color-accent-hover:   #1d4ed8;       /* 品牌蓝 hover */
-  --color-accent-active:  #1e40af;       /* 品牌蓝 active/pressed */
-  --color-accent-subtle:  rgba(37, 99, 235, 0.08);  /* 品牌蓝浅底（选中行、活跃 tab 底） */
-  --color-accent-border:  rgba(37, 99, 235, 0.30);  /* 品牌蓝边框（聚焦态） */
+  --color-accent:         #4f46e5;       /* 主品牌靛蓝（按钮、活跃态、链接） */
+  --color-accent-hover:   #4338ca;       /* 品牌靛蓝 hover */
+  --color-accent-active:  #3730a3;       /* 品牌靛蓝 active/pressed */
+  --color-accent-subtle:  rgba(79, 70, 229, 0.06);  /* 品牌靛蓝浅底 */
+  --color-accent-border:  rgba(79, 70, 229, 0.25);  /* 品牌靛蓝边框（聚焦态） */
+  --color-accent-text:    #4f46e5;       /* 品牌色文字 */
 
   /* ── 颜色 · 边框 ─────────────────────────────── */
   --color-border-light:   #e5e7eb;       /* 默认边框（卡片、输入框） */
-  --color-border-medium:  #cbd5e1;       /* 加重边框（分割线、hover 态边框） */
-  --color-border-strong:  #94a3b8;       /* 强边框（活跃/聚焦边框） */
+  --color-border-medium:  #d1d5db;       /* 加重边框（分割线、hover 态边框） */
+  --color-border-strong:  #9ca3af;       /* 强边框（活跃/聚焦边框） */
 
   /* ── 颜色 · 状态 ─────────────────────────────── */
   /* 市场色：中国A股惯例 红=涨 绿=跌 */
@@ -42,25 +43,29 @@
   --color-market-fall-bg: rgba(22, 163, 74, 0.08);
 
   /* 系统状态色 */
-  --color-success:        #16a34a;
-  --color-success-bg:     rgba(22, 163, 74, 0.08);
-  --color-success-border: rgba(22, 163, 74, 0.25);
+  --color-success:        #059669;
+  --color-success-bg:     rgba(5, 150, 105, 0.07);
+  --color-success-border: rgba(5, 150, 105, 0.20);
 
   --color-warning:        #d97706;
-  --color-warning-bg:     rgba(217, 119, 6, 0.08);
-  --color-warning-border: rgba(217, 119, 6, 0.25);
+  --color-warning-bg:     rgba(217, 119, 6, 0.07);
+  --color-warning-border: rgba(217, 119, 6, 0.20);
 
   --color-danger:         #dc2626;
-  --color-danger-bg:      rgba(220, 38, 38, 0.08);
-  --color-danger-border:  rgba(220, 38, 38, 0.25);
+  --color-danger-bg:      rgba(220, 38, 38, 0.07);
+  --color-danger-border:  rgba(220, 38, 38, 0.20);
 
-  --color-info:           #2563eb;
-  --color-info-bg:        rgba(37, 99, 235, 0.08);
-  --color-info-border:    rgba(37, 99, 235, 0.25);
+  --color-info:           #4f46e5;
+  --color-info-bg:        rgba(79, 70, 229, 0.06);
+  --color-info-border:    rgba(79, 70, 229, 0.20);
 
-  --color-neutral:        #64748b;
-  --color-neutral-bg:     rgba(100, 116, 139, 0.08);
-  --color-neutral-border: rgba(100, 116, 139, 0.25);
+  --color-neutral:        #6b7280;
+  --color-neutral-bg:     rgba(107, 114, 128, 0.07);
+  --color-neutral-border: rgba(107, 114, 128, 0.20);
+
+  /* 标签语义色（资讯层级） */
+  --color-tag-sector:     #7c3aed;
+  --color-tag-sector-bg:  rgba(124, 58, 237, 0.08);
 
   /* ── 间距 ────────────────────────────────────── */
   --space-0:    0px;
@@ -78,13 +83,13 @@
 
   /* ── 字号 ────────────────────────────────────── */
   --text-xs:    0.6875rem;  /* 11px — 极小标签、版本号 */
-  --text-sm:    0.75rem;    /* 12px — 辅助文字、时间戳、badge */
-  --text-base:  0.8125rem;  /* 13px — 正文基准（数据密集工作台） */
-  --text-md:    0.875rem;   /* 14px — 表单标签、按钮文字 */
-  --text-lg:    0.9375rem;  /* 15px — 卡片标题 */
-  --text-xl:    1.0625rem;  /* 17px — 区块标题 */
-  --text-2xl:   1.25rem;    /* 20px — 页面标题 */
-  --text-3xl:   1.5rem;     /* 24px — 大号数据展示 */
+  --text-sm:    0.8125rem;  /* 13px — 辅助文字、时间戳、badge */
+  --text-base:  0.875rem;   /* 14px — 正文基准 */
+  --text-md:    0.9375rem;  /* 15px — 表单标签、按钮文字 */
+  --text-lg:    1rem;       /* 16px — 卡片标题 */
+  --text-xl:    1.125rem;   /* 18px — 区块标题 */
+  --text-2xl:   1.375rem;   /* 22px — 页面标题 */
+  --text-3xl:   1.75rem;    /* 28px — 大号数据展示 */
 
   /* ── 行高 ────────────────────────────────────── */
   --leading-tight:   1.3;
@@ -92,27 +97,28 @@
   --leading-relaxed: 1.65;
 
   /* ── 圆角 ────────────────────────────────────── */
-  --radius-sm:   4px;       /* 小组件（badge、内嵌tag） */
-  --radius-md:   8px;       /* 默认（按钮、输入框、小卡片） */
-  --radius-lg:   12px;      /* 标准卡片/面板 */
-  --radius-xl:   16px;      /* 大卡片、弹窗 */
+  --radius-sm:   6px;       /* 小组件（badge、内嵌tag） */
+  --radius-md:   10px;      /* 默认（按钮、输入框、小卡片） */
+  --radius-lg:   14px;      /* 标准卡片/面板 */
+  --radius-xl:   20px;      /* 大卡片、弹窗 */
   --radius-full: 9999px;    /* 圆形（头像、pill badge） */
 
   /* ── 阴影 ────────────────────────────────────── */
-  --shadow-xs:  0 1px 2px  rgba(15, 23, 42, 0.04);
-  --shadow-sm:  0 2px 6px  rgba(15, 23, 42, 0.06);
-  --shadow-md:  0 4px 14px rgba(15, 23, 42, 0.08);
-  --shadow-lg:  0 10px 28px rgba(15, 23, 42, 0.10);
-  --shadow-xl:  0 20px 50px rgba(15, 23, 42, 0.14);
+  --shadow-xs:  0 1px 2px  rgba(0, 0, 0, 0.04);
+  --shadow-sm:  0 1px 3px  rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md:  0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg:  0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  --shadow-xl:  0 20px 25px -5px rgba(0, 0, 0, 0.10), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+  --shadow-ring-accent: 0 0 0 3px var(--color-accent-subtle); /* 聚焦环 */
 
   /* ── 字体 ────────────────────────────────────── */
-  --font-family-primary: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  --font-family-mono:    "Cascadia Code", "Consolas", "SF Mono", "Menlo", monospace;
+  --font-family-primary: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-family-mono:    "JetBrains Mono", "Cascadia Code", "Consolas", "SF Mono", monospace;
 
   /* ── 过渡 ────────────────────────────────────── */
   --transition-fast:   120ms ease;
-  --transition-normal: 200ms ease;
-  --transition-slow:   350ms ease;
+  --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow:   350ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* ── Z-Index 分层 ─────────────────────────────── */
   --z-base:     0;
