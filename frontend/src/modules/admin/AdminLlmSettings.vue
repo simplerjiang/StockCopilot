@@ -243,8 +243,11 @@ const loadSettings = async () => {
     enabled.value = data.enabled ?? true
     apiKeyMasked.value = data.apiKeyMasked || ''
     hasApiKey.value = data.hasApiKey || false
-    tavilyApiKeyMasked.value = data.tavilyApiKeyMasked || ''
-    hasTavilyApiKey.value = data.hasTavilyApiKey || false
+    // Tavily is global — only overwrite display if this provider actually has one
+    if (data.hasTavilyApiKey) {
+      tavilyApiKeyMasked.value = data.tavilyApiKeyMasked || ''
+      hasTavilyApiKey.value = true
+    }
 
     if (provider.value === 'antigravity') {
       await loadAntigravityModels()

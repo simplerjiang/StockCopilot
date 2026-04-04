@@ -157,7 +157,8 @@ const fetchArchive = async ({ resetPage = false } = {}) => {
       throw new Error(payload?.message || '资讯库加载失败')
     }
 
-    const payload = await response.json()
+    const text = await response.text()
+    const payload = (text && text.trim()) ? JSON.parse(text) : null
     total.value = Number(payload?.total ?? payload?.Total ?? 0)
     items.value = Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items).map(normalizeArchiveItem) : []
   } catch (err) {

@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import NewsArchiveTab from './NewsArchiveTab.vue'
 
-const makeResponse = ({ ok = true, status = 200, json }) => ({
-  ok,
-  status,
-  json: json || (async () => ({}))
-})
+const makeResponse = ({ ok = true, status = 200, json }) => {
+  const jsonFn = json || (async () => ({}))
+  return {
+    ok,
+    status,
+    json: jsonFn,
+    text: async () => JSON.stringify(await jsonFn())
+  }
+}
 
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
 

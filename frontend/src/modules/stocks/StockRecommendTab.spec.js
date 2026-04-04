@@ -3,12 +3,15 @@ import { mount } from '@vue/test-utils'
 import StockRecommendTab from './StockRecommendTab.vue'
 import RecommendReportCard from './recommend/RecommendReportCard.vue'
 
-const makeResponse = ({ ok, status, json, text }) => ({
-  ok: ok ?? true,
-  status: status ?? 200,
-  json: json || (async () => ({})),
-  text: text || (async () => '')
-})
+const makeResponse = ({ ok, status, json, text }) => {
+  const jsonFn = json || (async () => ({}))
+  return {
+    ok: ok ?? true,
+    status: status ?? 200,
+    json: jsonFn,
+    text: text || (async () => JSON.stringify(await jsonFn()))
+  }
+}
 
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
 

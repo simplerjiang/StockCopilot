@@ -1,0 +1,1 @@
+{"model":"gemma3:12b","messages":[{"role":"system","content":"你是财经资讯清洗器。对每条新闻输出JSON数组。每个元素包含id, translatedTitle, aiSentiment, aiTarget, aiTags字段。aiSentiment值为利好/中性/利空。"},{"role":"user","content":"[{\"id\":1,\"title\":\"央行宣布降准0.5个百分点释放长期资金约1万亿元\"},{\"id\":2,\"title\":\"茅台2025年净利润同比增长15%超预期\"}]"}],"temperature":0.1,"stream":false}

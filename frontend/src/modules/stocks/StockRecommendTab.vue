@@ -151,7 +151,9 @@ const fetchJson = async (url, options) => {
     const payload = await response.json().catch(() => null)
     throw new Error(payload?.message || `请求失败: ${response.status}`)
   }
-  return response.json()
+  const text = await response.text()
+  if (!text || !text.trim()) return null
+  return JSON.parse(text)
 }
 
 const fetchMarketContext = async () => {

@@ -434,7 +434,9 @@ const fetchJson = async url => {
     const payload = await response.json().catch(() => null)
     throw new Error(payload?.message || '情绪轮动数据加载失败')
   }
-  return response.json()
+  const text = await response.text()
+  if (!text || !text.trim()) return null
+  return JSON.parse(text)
 }
 
 const fetchDetail = async sectorCode => {
