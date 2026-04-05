@@ -518,3 +518,31 @@ public sealed class StockCopilotSearchOptions
     public string? ApiKey { get; set; }
     public string BaseUrl { get; set; } = "https://api.tavily.com";
 }
+
+public sealed record StockCopilotFinancialReportDataDto(
+    string Symbol,
+    int PeriodCount,
+    IReadOnlyList<FinancialReportPeriodDto> Periods);
+
+public sealed record FinancialReportPeriodDto(
+    string ReportDate,
+    string ReportType,
+    string SourceChannel,
+    IReadOnlyDictionary<string, object?> KeyMetrics);
+
+public sealed record StockCopilotFinancialTrendDataDto(
+    string Symbol,
+    int PeriodCount,
+    IReadOnlyList<FinancialTrendPointDto> Revenue,
+    IReadOnlyList<FinancialTrendPointDto> NetProfit,
+    IReadOnlyList<FinancialTrendPointDto> TotalAssets,
+    IReadOnlyList<FinancialDividendDto> RecentDividends);
+
+public sealed record FinancialTrendPointDto(
+    string Period,
+    double? Value,
+    double? YoY);
+
+public sealed record FinancialDividendDto(
+    string Plan,
+    decimal? DividendPerShare);

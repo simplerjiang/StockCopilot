@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
 using System.Text;
@@ -26,7 +27,9 @@ public sealed class LlmModule : IModule
         }
 
         services.AddSingleton<ILlmSettingsStore>(serviceProvider =>
-            new JsonFileLlmSettingsStore(serviceProvider.GetRequiredService<AppRuntimePaths>()));
+            new JsonFileLlmSettingsStore(
+                serviceProvider.GetRequiredService<AppRuntimePaths>(),
+                serviceProvider.GetRequiredService<ILogger<JsonFileLlmSettingsStore>>()));
         services.AddSingleton<ILlmService, LlmService>();
         services.AddSingleton<IAdminAuthService, AdminAuthService>();
         services.AddHttpClient<OpenAiProvider>(client =>
@@ -257,6 +260,174 @@ public sealed class LlmModule : IModule
             return Results.Ok(new LlmChatResponseDto(result.Content));
         })
         .WithName("TestLlmProvider")
+        .WithOpenApi();
+
+        secureAdminGroup.MapGet("/ollama/status", async (IHttpClientFactory httpClientFactory) =>
+        {
+            using var httpClient = httpClientFactory.CreateClient();
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                var resp = await httpClient.GetAsync("http://localhost:11434/", cts.Token);
+                if (resp.IsSuccessStatusCode)
+                {
+                    var modelsResp = await httpClient.GetAsync("http://localhost:11434/api/tags", cts.Token);
+                    object? models = null;
+                    if (modelsResp.IsSuccessStatusCode)
+                    {
+                        var json = await modelsResp.Content.ReadAsStringAsync(cts.Token);
+                        try { models = System.Text.Json.JsonSerializer.Deserialize<object>(json); }
+                        catch { models = null; }
+                    }
+                    return Results.Ok(new { status = "running", installed = true, models });
+                }
+            }
+            catch { /* not running, fall through */ }
+
+            // Not running — check if ollama is installed
+            var installed = true;
+            try
+            {
+                var checkPsi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ollama",
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                using var p = System.Diagnostics.Process.Start(checkPsi);
+                if (p != null) { p.WaitForExit(3000); }
+                else { installed = false; }
+            }
+            catch (System.ComponentModel.Win32Exception) { installed = false; }
+            catch { /* assume installed but other error */ }
+
+            return Results.Ok(new { status = "not_running", installed, models = (object?)null });
+        })
+        .WithName("GetOllamaStatus")
+        .WithOpenApi();
+
+        secureAdminGroup.MapPost("/ollama/start", async (IHttpClientFactory httpClientFactory) =>
+        {
+            using var httpClient = httpClientFactory.CreateClient();
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                var resp = await httpClient.GetAsync("http://localhost:11434/", cts.Token);
+                if (resp.IsSuccessStatusCode)
+                    return Results.Ok(new { success = true, message = "Ollama 已在运行" });
+            }
+            catch { /* not running, proceed to start */ }
+
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "ollama",
+                    Arguments = "serve",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                var process = System.Diagnostics.Process.Start(psi);
+                if (process == null)
+                    return Results.Ok(new { success = false, message = "无法启动 Ollama 进程，请确认 ollama 已安装" });
+
+                for (int i = 0; i < 30; i++)
+                {
+                    await Task.Delay(500);
+                    try
+                    {
+                        using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                        var check = await httpClient.GetAsync("http://localhost:11434/", cts2.Token);
+                        if (check.IsSuccessStatusCode)
+                            return Results.Ok(new { success = true, message = "Ollama 已启动" });
+                    }
+                    catch { /* still starting */ }
+                }
+                return Results.Ok(new { success = false, message = "Ollama 进程已启动但服务未就绪，请稍后重试" });
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                return Results.Ok(new { success = false, message = "未找到 ollama 命令，请先安装 Ollama（https://ollama.com）" });
+            }
+            catch (Exception ex)
+            {
+                return Results.Ok(new { success = false, message = $"启动失败：{ex.Message}" });
+            }
+        })
+        .WithName("StartOllama")
+        .WithOpenApi();
+
+        secureAdminGroup.MapPost("/ollama/stop", () =>
+        {
+            try
+            {
+                var processes = System.Diagnostics.Process.GetProcessesByName("ollama");
+                if (processes.Length == 0)
+                    return Results.Ok(new { success = true, message = "Ollama 未在运行" });
+
+                foreach (var p in processes)
+                {
+                    try { p.Kill(entireProcessTree: true); p.WaitForExit(5000); }
+                    catch { /* ignore individual process kill errors */ }
+                    finally { p.Dispose(); }
+                }
+                return Results.Ok(new { success = true, message = "Ollama 已停止" });
+            }
+            catch (Exception ex)
+            {
+                return Results.Ok(new { success = false, message = $"停止失败：{ex.Message}" });
+            }
+        })
+        .WithName("StopOllama")
+        .WithOpenApi();
+
+        secureAdminGroup.MapPost("/ollama/pull", async (HttpContext httpContext, IHttpClientFactory httpClientFactory) =>
+        {
+            var body = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, string>>(httpContext.Request.Body);
+            var model = body?.GetValueOrDefault("model")?.Trim();
+            if (string.IsNullOrWhiteSpace(model))
+                return Results.BadRequest(new { success = false, message = "请指定模型名称" });
+
+            using var httpClient = httpClientFactory.CreateClient();
+
+            // Check if Ollama is running
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await httpClient.GetAsync("http://localhost:11434/", cts.Token);
+            }
+            catch
+            {
+                return Results.Ok(new { success = false, message = "Ollama 未运行，请先启动" });
+            }
+
+            // Call Ollama pull API
+            try
+            {
+                var pullRequest = new { name = model, stream = false };
+                var json = System.Text.Json.JsonSerializer.Serialize(pullRequest);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                using var cts2 = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                var resp = await httpClient.PostAsync("http://localhost:11434/api/pull", content, cts2.Token);
+                var result = await resp.Content.ReadAsStringAsync(cts2.Token);
+
+                if (resp.IsSuccessStatusCode)
+                    return Results.Ok(new { success = true, message = $"模型 {model} 拉取完成" });
+                else
+                    return Results.Ok(new { success = false, message = $"拉取失败：{result}" });
+            }
+            catch (TaskCanceledException)
+            {
+                return Results.Ok(new { success = false, message = "拉取超时（>10分钟），请手动执行 ollama pull " + model });
+            }
+            catch (Exception ex)
+            {
+                return Results.Ok(new { success = false, message = $"拉取异常：{ex.Message}" });
+            }
+        })
+        .WithName("PullOllamaModel")
         .WithOpenApi();
 
         secureAdminGroup.MapGet("/source-governance/overview", async (ISourceGovernanceReadService readService) =>

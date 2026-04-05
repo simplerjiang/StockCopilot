@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 const emit = defineEmits(['settings-saved'])
 
@@ -65,6 +65,16 @@ const antigravityAuthLoading = ref(false)
 const antigravityAuthError = ref('')
 const antigravityEmail = ref('')
 
+// Ollama 服务状态
+const ollamaStatus = ref('unknown')
+const ollamaModels = ref([])
+const ollamaMsg = ref('')
+const keepAlive = ref(localStorage.getItem('ollama-keepalive') === 'true')
+const pullModelName = ref('')
+const pulling = ref(false)
+const pullMsg = ref('')
+let keepAliveTimer = null
+
 const isLoggedIn = computed(() => Boolean(token.value))
 const isAntigravity = computed(() => provider.value === 'antigravity')
 const isOllamaProvider = computed(() => provider.value === 'ollama')
@@ -104,6 +114,7 @@ const login = async () => {
       provider.value = activeProviderKey.value
       await loadSettings()
       await loadNewsCleansing()
+      checkOllama()
     }
   } catch (error) {
     loginError.value = error.message || '登录失败'
@@ -194,6 +205,129 @@ const applyProviderPreset = selectedProvider => {
     project.value = 'rising-fact-p41fc'
     loadAntigravityModels()
   }
+}
+
+async function checkOllama() {
+  ollamaStatus.value = 'checking'
+  ollamaMsg.value = ''
+  try {
+    const resp = await fetch('/api/admin/ollama/status', { headers: authHeaders() })
+    if (resp.status === 401 || resp.status === 403) {
+      handleUnauthorized()
+      return
+    }
+    const data = await resp.json()
+    if (data.status === 'not_running' && data.installed === false) {
+      ollamaStatus.value = 'not_installed'
+    } else {
+      ollamaStatus.value = data.status === 'running' ? 'running' : 'not_running'
+    }
+    if (data.models?.models && data.status === 'running') {
+      ollamaModels.value = data.models.models
+    } else {
+      ollamaModels.value = []
+    }
+  } catch (e) {
+    ollamaStatus.value = 'error'
+    ollamaMsg.value = e.message
+  }
+}
+
+async function startOllama() {
+  ollamaStatus.value = 'starting'
+  ollamaMsg.value = '正在启动 Ollama...'
+  try {
+    const resp = await fetch('/api/admin/ollama/start', { method: 'POST', headers: authHeaders() })
+    if (resp.status === 401 || resp.status === 403) {
+      handleUnauthorized()
+      return
+    }
+    const data = await resp.json()
+    ollamaMsg.value = data.message
+    if (data.success) {
+      ollamaStatus.value = 'running'
+      await checkOllama()
+    } else {
+      ollamaStatus.value = 'not_running'
+    }
+  } catch (e) {
+    ollamaStatus.value = 'error'
+    ollamaMsg.value = `启动请求失败: ${e.message}`
+  }
+}
+
+async function stopOllama() {
+  ollamaStatus.value = 'stopping'
+  ollamaMsg.value = '正在停止 Ollama...'
+  try {
+    const resp = await fetch('/api/admin/ollama/stop', { method: 'POST', headers: authHeaders() })
+    if (resp.status === 401 || resp.status === 403) { handleUnauthorized(); return }
+    const data = await resp.json()
+    ollamaMsg.value = data.message
+    ollamaStatus.value = data.success ? 'not_running' : 'running'
+    ollamaModels.value = []
+  } catch (e) {
+    ollamaMsg.value = `停止失败: ${e.message}`
+    ollamaStatus.value = 'error'
+  }
+}
+
+async function pullModel() {
+  const name = pullModelName.value.trim()
+  if (!name || pulling.value) return
+  pulling.value = true
+  pullMsg.value = `正在拉取 ${name}，大模型首次拉取可能需要数分钟...`
+  try {
+    const resp = await fetch('/api/admin/ollama/pull', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: name })
+    })
+    if (resp.status === 401 || resp.status === 403) { handleUnauthorized(); return }
+    const data = await resp.json()
+    pullMsg.value = data.message
+    if (data.success) {
+      pullModelName.value = ''
+      await checkOllama()
+    }
+  } catch (e) {
+    pullMsg.value = `拉取异常: ${e.message}`
+  } finally {
+    pulling.value = false
+  }
+}
+
+function formatSize(bytes) {
+  if (!bytes) return ''
+  const gb = bytes / (1024 * 1024 * 1024)
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`
+}
+
+function onKeepAliveChange() {
+  localStorage.setItem('ollama-keepalive', keepAlive.value)
+  if (keepAlive.value) {
+    startKeepAlive()
+  } else {
+    stopKeepAlive()
+  }
+}
+
+function startKeepAlive() {
+  stopKeepAlive()
+  keepAliveTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/admin/ollama/status', { headers: authHeaders() })
+      const data = await resp.json()
+      if (data.status !== 'running' && keepAlive.value) {
+        ollamaMsg.value = '检测到 Ollama 离线，自动重启中...'
+        await startOllama()
+      }
+    } catch { /* ignore check errors */ }
+  }, 30000)
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null }
 }
 
 const loadActiveProvider = async () => {
@@ -316,7 +450,15 @@ const saveSettings = async () => {
     hasTavilyApiKey.value = data.hasTavilyApiKey || false
     apiKey.value = ''
     tavilyApiKey.value = ''
-    saveMessage.value = '已保存'
+
+    // 自动激活刚保存的通道（如果与当前激活通道不同）
+    if (provider.value !== activeProviderKey.value) {
+      activeProviderKey.value = provider.value
+      await saveActiveProvider()
+      saveMessage.value = `✅ 配置已保存并已切换激活通道为「${providerPresets[provider.value]?.label || provider.value}」`
+    } else {
+      saveMessage.value = '✅ 配置已保存'
+    }
     emit('settings-saved', data)
   } catch (error) {
     settingsError.value = error.message || '保存失败'
@@ -543,9 +685,18 @@ if (token.value) {
       provider.value = activeProviderKey.value
       loadSettings()
       loadNewsCleansing()
+      checkOllama()
     }
   })
 }
+
+onMounted(() => {
+  if (keepAlive.value) startKeepAlive()
+})
+
+onUnmounted(() => {
+  stopKeepAlive()
+})
 </script>
 
 <template>
@@ -588,6 +739,83 @@ if (token.value) {
       <div class="page-header-actions">
         <span class="user-badge">🟢 已登录</span>
         <button class="btn-ghost-sm" @click="logout">退出登录</button>
+      </div>
+    </div>
+
+    <!-- Ollama 本地模型管理 -->
+    <div class="ollama-panel">
+      <h3 class="panel-title">🦙 Ollama 本地模型管理</h3>
+
+      <!-- 状态行 -->
+      <div class="status-row">
+        <span class="status-label">服务状态</span>
+        <span :class="['ollama-dot', ollamaStatus === 'running' ? 'green' : 'red']"></span>
+        <span class="ollama-status-text">
+          {{ ollamaStatus === 'running' ? '运行中' :
+             ollamaStatus === 'starting' ? '启动中...' :
+             ollamaStatus === 'stopping' ? '停止中...' :
+             ollamaStatus === 'checking' ? '检查中...' :
+             ollamaStatus === 'not_running' ? '未运行' :
+             ollamaStatus === 'not_installed' ? '未安装' : '未知' }}
+        </span>
+        <div class="status-actions">
+          <button v-if="ollamaStatus === 'not_running' || ollamaStatus === 'error'"
+                  class="ollama-action-btn start" @click="startOllama" :disabled="ollamaStatus === 'starting'">
+            ▶ 启动
+          </button>
+          <button v-if="ollamaStatus === 'running'"
+                  class="ollama-action-btn stop" @click="stopOllama" :disabled="ollamaStatus === 'stopping'">
+            ⏹ 停止
+          </button>
+          <button class="ollama-action-btn" @click="checkOllama" :disabled="ollamaStatus === 'checking'">
+            🔄 刷新
+          </button>
+        </div>
+      </div>
+
+      <!-- 未安装提示 -->
+      <div v-if="ollamaStatus === 'not_installed'" class="install-hint">
+        <p>Ollama 未安装。请先安装：</p>
+        <code>winget install Ollama.Ollama</code>
+        <span class="or-text">或访问</span>
+        <a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a>
+      </div>
+
+      <!-- 保持活跃 -->
+      <div class="keepalive-row" v-if="ollamaStatus !== 'not_installed'">
+        <label class="keepalive-label">
+          <input type="checkbox" v-model="keepAlive" @change="onKeepAliveChange" />
+          保持活跃（掉线自动重启）
+        </label>
+      </div>
+
+      <!-- 消息 -->
+      <p v-if="ollamaMsg" class="ollama-msg" :class="{ error: ollamaMsg.includes('失败') || ollamaMsg.includes('异常') }">
+        {{ ollamaMsg }}
+      </p>
+
+      <!-- 已安装模型 -->
+      <div v-if="ollamaModels.length" class="models-section">
+        <h4>已安装模型 ({{ ollamaModels.length }})</h4>
+        <div class="models-list">
+          <div v-for="m in ollamaModels" :key="m.name" class="model-item">
+            <span class="model-name">{{ m.name }}</span>
+            <span class="model-size">{{ formatSize(m.size) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 拉取新模型 -->
+      <div v-if="ollamaStatus === 'running'" class="pull-section">
+        <h4>拉取模型</h4>
+        <div class="pull-row">
+          <input type="text" v-model="pullModelName" placeholder="例如：qwen2.5:7b, llama3.2"
+                 @keyup.enter="pullModel" class="pull-input" />
+          <button class="ollama-action-btn" @click="pullModel" :disabled="pulling || !pullModelName.trim()">
+            {{ pulling ? '拉取中...' : '拉取' }}
+          </button>
+        </div>
+        <p v-if="pullMsg" class="pull-msg">{{ pullMsg }}</p>
       </div>
     </div>
 
@@ -1082,4 +1310,82 @@ if (token.value) {
 }
 .status-dot--ok { background: var(--color-success); }
 .status-dot--warn { background: #f59e0b; }
+
+/* ── Ollama 管理面板 ── */
+.ollama-panel {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
+}
+.ollama-panel .panel-title {
+  margin: 0 0 var(--space-3) 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.status-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+.ollama-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.ollama-dot.green { background: var(--color-success); box-shadow: 0 0 6px var(--color-success); }
+.ollama-dot.red { background: var(--color-danger); }
+.ollama-status-text { font-size: var(--text-sm); color: var(--color-text-primary); min-width: 60px; }
+.status-actions { display: flex; gap: 6px; margin-left: auto; }
+.ollama-action-btn {
+  padding: 4px 10px; border: 1px solid var(--color-border-light); border-radius: var(--radius-sm);
+  background: var(--color-bg-surface); color: var(--color-text-primary);
+  cursor: pointer; font-size: var(--text-sm); white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+.ollama-action-btn.start { border-color: var(--color-success); color: var(--color-success); }
+.ollama-action-btn.stop { border-color: var(--color-danger); color: var(--color-danger); }
+.ollama-action-btn:hover:not(:disabled) { background: var(--color-bg-surface-alt); }
+.ollama-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.install-hint {
+  padding: var(--space-3); background: var(--color-bg-surface-alt); border-radius: var(--radius-md);
+  margin-bottom: var(--space-3); font-size: var(--text-sm); color: var(--color-text-secondary);
+}
+.install-hint code {
+  display: inline-block; padding: 2px 8px; background: var(--color-bg-surface); border-radius: var(--radius-sm);
+  font-family: 'Consolas', monospace; color: var(--color-success); margin: 4px 0;
+}
+.install-hint a { color: var(--color-accent); text-decoration: underline; }
+.or-text { margin: 0 6px; }
+.keepalive-row { margin-bottom: var(--space-3); }
+.keepalive-label {
+  font-size: var(--text-sm); color: var(--color-text-secondary); cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+}
+.keepalive-label input[type="checkbox"] { accent-color: var(--color-success); }
+.ollama-msg { font-size: var(--text-sm); color: var(--color-text-secondary); margin: 6px 0; }
+.ollama-msg.error { color: var(--color-danger); }
+.models-section { margin-top: var(--space-3); }
+.models-section h4 { margin: 0 0 var(--space-2) 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.models-list { display: flex; flex-direction: column; gap: 4px; }
+.model-item {
+  display: flex; justify-content: space-between; padding: 4px 8px;
+  background: var(--color-bg-surface-alt); border-radius: var(--radius-sm); font-size: var(--text-sm);
+}
+.model-name { color: var(--color-text-primary); }
+.model-size { color: var(--color-text-muted); }
+.pull-section { margin-top: var(--space-3); }
+.pull-section h4 { margin: 0 0 var(--space-2) 0; font-size: var(--text-sm); color: var(--color-text-secondary); }
+.pull-row { display: flex; gap: 8px; }
+.pull-input {
+  flex: 1; padding: 4px 8px; background: var(--color-bg-surface-alt);
+  border: 1px solid var(--color-border-light); border-radius: var(--radius-sm);
+  color: var(--color-text-primary); font-size: var(--text-sm);
+}
+.pull-msg { font-size: var(--text-sm); color: var(--color-text-secondary); margin-top: 6px; }
 </style>

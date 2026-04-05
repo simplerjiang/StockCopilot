@@ -142,6 +142,16 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
 
             if (shouldPersistMarketSnapshot)
             {
+                // Log if any supplementary sources failed but we still persist
+                if (!limitUpTask.Result.Succeeded || !limitDownTask.Result.Succeeded || !brokenBoardTask.Result.Succeeded || !maxStreakTask.Result.Succeeded)
+                {
+                    _logger.LogWarning(
+                        "MarketSentimentSnapshot 以降级模式落库：部分数据源失败。limitUp={LimitUpSucceeded}, limitDown={LimitDownSucceeded}, brokenBoard={BrokenBoardSucceeded}, maxStreak={MaxStreakSucceeded}",
+                        limitUpTask.Result.Succeeded,
+                        limitDownTask.Result.Succeeded,
+                        brokenBoardTask.Result.Succeeded,
+                        maxStreakTask.Result.Succeeded);
+                }
                 _dbContext.MarketSentimentSnapshots.Add(marketSnapshot);
             }
             else
@@ -376,15 +386,17 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
         bool brokenBoardSucceeded,
         bool maxStreakSucceeded)
     {
-        if (!breadthSucceeded || !limitUpSucceeded || !limitDownSucceeded || !brokenBoardSucceeded || !maxStreakSucceeded)
+        // Core requirement: breadth data must succeed (provides Advancers/Decliners for stage score)
+        if (!breadthSucceeded)
         {
             return false;
         }
 
         var breadthTotal = marketSnapshot.Advancers + marketSnapshot.Decliners + marketSnapshot.FlatCount;
+        // Require non-zero breadth and turnover; supplementary sources (limitUp/limitDown/brokenBoard/maxStreak)
+        // are best-effort — their fallback defaults (0) are acceptable for snapshot persistence.
         return breadthTotal > 0
-            && marketSnapshot.TotalTurnover > 0
-            && (marketSnapshot.Top3SectorTurnoverShare > 0 || marketSnapshot.Top10SectorTurnoverShare > 0);
+            && marketSnapshot.TotalTurnover > 0;
     }
 
     private sealed record FetchResult<T>(T Value, bool Succeeded);

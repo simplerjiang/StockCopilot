@@ -9,7 +9,8 @@ const tabs = [
   { key: 'plans', label: '交易计划', icon: '📋' },
   { key: 'news',  label: '新闻影响', icon: '📰' },
   { key: 'ai',    label: 'AI 分析',  icon: '🤖' },
-  { key: 'board', label: '全局总览', icon: '🌐' }
+  { key: 'board', label: '全局总览', icon: '🌐' },
+  { key: 'financial', label: '财务报表', icon: '📊' }
 ]
 
 const activeTab = usePersistedRef('sidebar_active_tab', 'plans')
@@ -37,6 +38,7 @@ const activeTab = usePersistedRef('sidebar_active_tab', 'plans')
       <div v-show="activeTab === 'news'"><slot name="news" /></div>
       <div v-show="activeTab === 'ai'"><slot name="ai" /></div>
       <div v-show="activeTab === 'board'"><slot name="board" /></div>
+      <div v-show="activeTab === 'financial'"><slot name="financial" :active="activeTab === 'financial'" /></div>
     </div>
   </div>
 </template>

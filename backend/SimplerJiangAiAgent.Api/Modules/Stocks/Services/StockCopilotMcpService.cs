@@ -31,6 +31,8 @@ public interface IStockCopilotMcpService
     Task<StockCopilotMcpEnvelopeDto<StockCopilotStrategyDataDto>> GetStrategyAsync(string symbol, string interval, int count, string? source, IReadOnlyList<string>? strategies, string? taskId, StockCopilotMcpWindowOptions? window = null, CancellationToken cancellationToken = default);
     Task<StockCopilotMcpEnvelopeDto<StockCopilotNewsDataDto>> GetNewsAsync(string symbol, string level, string? taskId, StockCopilotMcpWindowOptions? window = null, CancellationToken cancellationToken = default);
     Task<StockCopilotMcpEnvelopeDto<StockCopilotSearchDataDto>> SearchAsync(string query, bool trustedOnly, string? taskId, CancellationToken cancellationToken = default);
+    Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
+    Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
 }
 
 public sealed class StockCopilotMcpService : IStockCopilotMcpService
@@ -81,6 +83,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     private readonly ILocalFactIngestionService? _localFactIngestionService;
     private readonly ILlmSettingsStore? _llmSettingsStore;
     private readonly IPortfolioSnapshotService? _portfolioSnapshotService;
+    private readonly IFinancialDataReadService? _financialDataReadService;
     private readonly ILogger<StockCopilotMcpService> _logger;
 
     public StockCopilotMcpService(
@@ -98,6 +101,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         ILocalFactIngestionService? localFactIngestionService = null,
         ILlmSettingsStore? llmSettingsStore = null,
         IPortfolioSnapshotService? portfolioSnapshotService = null,
+        IFinancialDataReadService? financialDataReadService = null,
         ILogger<StockCopilotMcpService>? logger = null)
     {
         _dataService = dataService;
@@ -114,6 +118,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         _localFactIngestionService = localFactIngestionService;
         _llmSettingsStore = llmSettingsStore;
         _portfolioSnapshotService = portfolioSnapshotService;
+        _financialDataReadService = financialDataReadService;
         _logger = logger ?? NullLogger<StockCopilotMcpService>.Instance;
     }
 
@@ -822,6 +827,80 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         return normalized;
+    }
+
+    public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(
+        string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+    {
+        var sw = Stopwatch.StartNew();
+        var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
+
+        var summary = _financialDataReadService?.GetReportSummary(normalizedSymbol, periods);
+
+        var periodDtos = summary?.Periods?.Select(p => new FinancialReportPeriodDto(
+            p.ReportDate, p.ReportType, p.SourceChannel,
+            p.KeyMetrics as IReadOnlyDictionary<string, object?> ??
+                new Dictionary<string, object?>(p.KeyMetrics)
+        )).ToList() ?? new List<FinancialReportPeriodDto>();
+
+        var degradedFlags = summary == null || periodDtos.Count == 0
+            ? new List<string> { "no_financial_report_data" }
+            : new List<string>();
+
+        sw.Stop();
+        return Task.FromResult(BuildEnvelope(
+            toolName: StockMcpToolNames.FinancialReport,
+            policyClass: "local_required",
+            taskId: taskId,
+            latencyMs: sw.ElapsedMilliseconds,
+            data: new StockCopilotFinancialReportDataDto(normalizedSymbol, periodDtos.Count, periodDtos),
+            evidence: Array.Empty<StockCopilotMcpEvidenceDto>(),
+            features: Array.Empty<StockCopilotMcpFeatureDto>(),
+            symbol: normalizedSymbol,
+            interval: null,
+            query: null,
+            marketContext: null,
+            degradedFlags: degradedFlags,
+            warnings: Array.Empty<string>()));
+    }
+
+    public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(
+        string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+    {
+        var sw = Stopwatch.StartNew();
+        var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
+
+        var summary = _financialDataReadService?.GetTrendSummary(normalizedSymbol, periods);
+
+        var revenue = summary?.Revenue?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY)).ToList()
+            ?? new List<FinancialTrendPointDto>();
+        var netProfit = summary?.NetProfit?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY)).ToList()
+            ?? new List<FinancialTrendPointDto>();
+        var totalAssets = summary?.TotalAssets?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY)).ToList()
+            ?? new List<FinancialTrendPointDto>();
+        var dividends = summary?.RecentDividends?.Select(d => new FinancialDividendDto(d.Plan, d.DividendPerShare)).ToList()
+            ?? new List<FinancialDividendDto>();
+
+        var periodCount = Math.Max(revenue.Count, Math.Max(netProfit.Count, totalAssets.Count));
+        var degradedFlags = summary == null || periodCount == 0
+            ? new List<string> { "no_financial_trend_data" }
+            : new List<string>();
+
+        sw.Stop();
+        return Task.FromResult(BuildEnvelope(
+            toolName: StockMcpToolNames.FinancialTrend,
+            policyClass: "local_required",
+            taskId: taskId,
+            latencyMs: sw.ElapsedMilliseconds,
+            data: new StockCopilotFinancialTrendDataDto(normalizedSymbol, periodCount, revenue, netProfit, totalAssets, dividends),
+            evidence: Array.Empty<StockCopilotMcpEvidenceDto>(),
+            features: Array.Empty<StockCopilotMcpFeatureDto>(),
+            symbol: normalizedSymbol,
+            interval: null,
+            query: null,
+            marketContext: null,
+            degradedFlags: degradedFlags,
+            warnings: Array.Empty<string>()));
     }
 
     private static IReadOnlyList<StockCopilotStrategySignalDto> BuildStrategySignals(IReadOnlyList<KLinePointDto> kLines, IReadOnlyList<MinuteLinePointDto> minuteLines, IReadOnlyList<string> strategies, string interval)

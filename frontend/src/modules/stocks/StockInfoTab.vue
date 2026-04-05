@@ -77,6 +77,7 @@ import {
   getTradingPlanStatusClass,
 } from './tradingPlanReview'
 import SidebarTabs from './SidebarTabs.vue'
+import FinancialReportTab from './FinancialReportTab.vue'
 import ResizeSplitter from './ResizeSplitter.vue'
 import { useResizable } from './useResizable'
 import { useCollapsible } from './useCollapsible'
@@ -1401,6 +1402,10 @@ watch(currentStockKey, (newKey) => {
               @refresh="refreshTradingPlanBoard(true)"
               @jump="jumpToPlanSymbol($event)"
             />
+          </template>
+
+          <template #financial="{ active }">
+            <FinancialReportTab :symbol="detail?.quote?.symbol ?? ''" :active="active" />
           </template>
         </SidebarTabs>
 

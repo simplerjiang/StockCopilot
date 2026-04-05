@@ -78,6 +78,12 @@ internal sealed class StubMcpToolGateway : IMcpToolGateway
 
     public Task<WebReadResult> WebReadUrlAsync(string url, int maxChars = 8000, CancellationToken ct = default)
         => Task.FromResult(new WebReadResult("", url, 0, false));
+
+    public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException();
+
+    public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException();
 }
 
 internal sealed class StubRoleToolPolicyService : IRoleToolPolicyService

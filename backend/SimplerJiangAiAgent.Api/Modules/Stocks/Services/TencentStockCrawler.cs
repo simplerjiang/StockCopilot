@@ -276,7 +276,7 @@ public sealed class TencentStockCrawler : IStockCrawlerSource
             "week" => Math.Max(365, count * 12),
             "month" => Math.Max(365 * 3, count * 35),
             "year" => Math.Max(365 * 10, count * 370),
-            _ => Math.Max(120, count * 2)
+            _ => Math.Max(365, count * 2)
         };
     }
 

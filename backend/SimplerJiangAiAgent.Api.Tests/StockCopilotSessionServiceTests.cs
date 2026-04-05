@@ -304,6 +304,16 @@ public sealed class StockCopilotSessionServiceTests
                 },
                 new StockCopilotMcpMetaDto("v1", "external_gated", "StockSearchMcp", null, null, query, null)));
         }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public virtual Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class WeakEvidenceStockCopilotMcpService : FakeStockCopilotMcpService

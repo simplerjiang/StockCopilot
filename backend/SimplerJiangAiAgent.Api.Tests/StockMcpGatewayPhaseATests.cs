@@ -37,7 +37,9 @@ public sealed class StockMcpGatewayPhaseATests
             item => Assert.Equal((StockMcpToolNames.Search, "external_gated"), (item.ToolName, item.PolicyClass)),
             item => Assert.Equal((StockMcpToolNames.WebSearch, "external_gated"), (item.ToolName, item.PolicyClass)),
             item => Assert.Equal((StockMcpToolNames.WebSearchNews, "external_gated"), (item.ToolName, item.PolicyClass)),
-            item => Assert.Equal((StockMcpToolNames.WebReadUrl, "external_gated"), (item.ToolName, item.PolicyClass)));
+            item => Assert.Equal((StockMcpToolNames.WebReadUrl, "external_gated"), (item.ToolName, item.PolicyClass)),
+            item => Assert.Equal((StockMcpToolNames.FinancialReport, "local_required"), (item.ToolName, item.PolicyClass)),
+            item => Assert.Equal((StockMcpToolNames.FinancialTrend, "local_required"), (item.ToolName, item.PolicyClass)));
     }
 
     [Fact]
@@ -271,6 +273,12 @@ public sealed class StockMcpGatewayPhaseATests
         {
             throw new NotSupportedException();
         }
+
+        public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 
     private sealed class StubWebSearchService : IWebSearchService

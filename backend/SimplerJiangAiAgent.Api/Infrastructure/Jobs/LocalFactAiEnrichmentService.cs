@@ -43,7 +43,7 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
         var pending = await _dbContext.LocalSectorReports
             .Where(item => item.Level == "market" && !item.IsAiProcessed)
             .OrderBy(item => item.PublishTime)
-            .Take(60)
+            .Take(500)
             .ToListAsync(cancellationToken);
 
         await ProcessBatchesAsync(
@@ -67,13 +67,13 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
         var stockItems = await _dbContext.LocalStockNews
             .Where(item => item.Symbol == normalized && !item.IsAiProcessed)
             .OrderBy(item => item.PublishTime)
-            .Take(60)
+            .Take(200)
             .ToListAsync(cancellationToken);
 
         var sectorItems = await _dbContext.LocalSectorReports
             .Where(item => item.Symbol == normalized && item.Level == "sector" && !item.IsAiProcessed)
             .OrderBy(item => item.PublishTime)
-            .Take(40)
+            .Take(200)
             .ToListAsync(cancellationToken);
 
         var envelopes = new List<PendingNewsEnvelope>();

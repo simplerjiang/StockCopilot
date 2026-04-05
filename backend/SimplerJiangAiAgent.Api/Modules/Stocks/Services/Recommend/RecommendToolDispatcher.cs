@@ -124,6 +124,18 @@ public sealed class RecommendToolDispatcher : IRecommendToolDispatcher
                         GetRequiredSymbol(args),
                         null, null, ct), JsonOpts),
 
+                "stock_financial_report" => JsonSerializer.Serialize(
+                    await _gateway.GetFinancialReportAsync(
+                        GetRequiredSymbol(args),
+                        GetInt(args, "periods", 4),
+                        null, ct), JsonOpts),
+
+                "stock_financial_trend" => JsonSerializer.Serialize(
+                    await _gateway.GetFinancialTrendAsync(
+                        GetRequiredSymbol(args),
+                        GetInt(args, "periods", 8),
+                        null, ct), JsonOpts),
+
                 "stock_strategy" => JsonSerializer.Serialize(
                     await _gateway.GetStrategyAsync(
                         GetRequiredSymbol(args),

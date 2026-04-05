@@ -79,9 +79,27 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
         return EastmoneyStockParser.ParseIntradayMessages(symbol, json, DateTimeOffset.UtcNow);
     }
 
+    private static readonly IReadOnlyDictionary<string, string> GlobalIndexSecIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["hsi"] = "100.HSI",
+        ["hstech"] = "124.HSTECH",
+        ["n225"] = "100.N225",
+        ["ndx"] = "100.NDX",
+        ["spx"] = "100.SPX",
+        ["ftse"] = "100.FTSE",
+        ["ks11"] = "100.KS11"
+    };
+
     private static string ToEastmoneySecId(string symbol)
     {
+        var raw = symbol.Trim();
+        if (GlobalIndexSecIds.TryGetValue(raw, out var rawSecId))
+            return rawSecId;
+
         var normalized = StockSymbolNormalizer.Normalize(symbol);
+        if (GlobalIndexSecIds.TryGetValue(normalized, out var globalSecId))
+            return globalSecId;
+
         var code = normalized.Replace("sh", string.Empty).Replace("sz", string.Empty);
         var market = normalized.StartsWith("sh") ? "1" : "0";
         return $"{market}.{code}";
@@ -192,7 +210,7 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
             "week" => Math.Max(365, count * 12),
             "month" => Math.Max(365 * 3, count * 35),
             "year" => Math.Max(365 * 10, count * 370),
-            _ => Math.Max(120, count * 2)
+            _ => Math.Max(365, count * 2)
         };
     }
 

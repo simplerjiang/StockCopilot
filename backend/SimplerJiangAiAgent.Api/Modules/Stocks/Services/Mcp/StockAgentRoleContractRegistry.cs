@@ -104,7 +104,7 @@ public sealed class StockAgentRoleContractRegistry : IStockAgentRoleContractRegi
             "Fundamentals Analyst",
             "analyst",
             "local_required",
-            [StockMcpToolNames.Fundamentals, StockMcpToolNames.CompanyOverview, StockMcpToolNames.MarketContext],
+            [StockMcpToolNames.Fundamentals, StockMcpToolNames.FinancialReport, StockMcpToolNames.FinancialTrend, StockMcpToolNames.CompanyOverview, StockMcpToolNames.MarketContext],
             "只允许复用本地 company overview 与 market context 作为上下文，本角色不触发 external search。",
             "StockFundamentalsMcp 无数据时立即停止，不得用新闻或推断替代基本面。",
             2,

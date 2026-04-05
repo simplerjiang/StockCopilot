@@ -58,7 +58,7 @@ public sealed class SectorRotationIngestionServiceTests
 	}
 
 	[Fact]
-	public async Task SyncAsync_SkipsMarketSentimentSnapshot_WhenCriticalMarketSourceFails()
+	public async Task SyncAsync_PersistsSnapshotWithFallback_WhenNonCriticalSourceFails()
 	{
 		await using var dbContext = CreateDbContext();
 		var client = new FakeSectorRotationClient
@@ -92,7 +92,13 @@ public sealed class SectorRotationIngestionServiceTests
 
 		await service.SyncAsync();
 
-		Assert.Empty(await dbContext.MarketSentimentSnapshots.ToListAsync());
+		var sentiment = await dbContext.MarketSentimentSnapshots.SingleAsync();
+		Assert.Equal(0, sentiment.LimitUpCount);
+		Assert.Equal(6, sentiment.LimitDownCount);
+		Assert.Equal(8, sentiment.BrokenBoardCount);
+		Assert.Equal(4, sentiment.MaxLimitUpStreak);
+		Assert.Equal(2200, sentiment.Advancers);
+		Assert.Equal(1800, sentiment.Decliners);
 		Assert.Single(await dbContext.SectorRotationSnapshots.ToListAsync());
 		Assert.Single(await dbContext.SectorRotationLeaderSnapshots.ToListAsync());
 	}

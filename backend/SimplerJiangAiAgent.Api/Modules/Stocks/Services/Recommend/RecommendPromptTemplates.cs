@@ -184,6 +184,8 @@ public static class RecommendPromptTemplates
         - stock_search({"query":"关键词"}) — 按板块名或关键词搜索股票
         - stock_kline({"symbol":"代码","interval":"day","count":60}) — 获取日 K 线
         - stock_fundamentals({"symbol":"代码"}) — 获取基本面数据
+        - stock_financial_report({"symbol":"代码","periods":4}) — 获取最近N期财务报表核心指标（营收、净利润、ROE、资产负债率等）
+        - stock_financial_trend({"symbol":"代码","periods":8}) — 获取财务趋势（营收/净利润/总资产历史变化、同比增长率、分红记录）
         - web_search({"query":"关键词","max_results":5}) — 搜索龙头股相关信息
 
         ## 工具调用格式
@@ -204,6 +206,8 @@ public static class RecommendPromptTemplates
         - stock_search({"query":"关键词"}) — 按板块名或关键词搜索股票
         - stock_kline({"symbol":"代码","interval":"day","count":60}) — 获取日 K 线
         - stock_fundamentals({"symbol":"代码"}) — 获取基本面数据
+        - stock_financial_report({"symbol":"代码","periods":4}) — 获取最近N期财务报表核心指标（营收、净利润、ROE、资产负债率等）
+        - stock_financial_trend({"symbol":"代码","periods":8}) — 获取财务趋势（营收/净利润/总资产历史变化、同比增长率、分红记录）
         - web_search_news({"query":"关键词","max_results":5}) — 搜索潜力股催化新闻
         - web_read_url({"url":"URL地址"}) — 读取特定网页内容
 

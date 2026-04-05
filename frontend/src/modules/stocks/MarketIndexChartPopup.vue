@@ -173,11 +173,28 @@ const renderChart = (container, data, styles, periodType = 'minute') => {
   chart.setStyles(styles)
   chart.setDataLoader({ getBars: ({ callback }) => callback(data, false) })
   chart.createIndicator({ name: 'VOL', shortName: 'VOL' }, false, { id: 'volume_pane', height: 60 })
+  if (periodType !== 'minute') {
+    chart.createIndicator({ name: 'MA', calcParams: [5, 10, 20] }, false, { id: 'candle_pane' })
+  }
   chart.setSymbol({ ticker: 'INDEX', pricePrecision: 2, volumePrecision: 0 })
   chart.setPeriod({ type: periodType, span: 1 })
   chart.resetData()
   chart.scrollToRealTime?.(0)
   chart.resize()
+  if (periodType === 'minute' && data.length > 0) {
+    const basePrice = data[0]?.close
+    if (Number.isFinite(basePrice)) {
+      chart.createOverlay({
+        name: 'priceLine',
+        lock: true,
+        points: [{ timestamp: data[0].timestamp, value: basePrice }],
+        styles: {
+          line: { color: '#94a3b8', style: 'dashed', size: 1 },
+          text: { color: '#94a3b8', backgroundColor: 'rgba(15, 23, 42, 0.88)', borderColor: '#94a3b8' }
+        }
+      })
+    }
+  }
   return chart
 }
 

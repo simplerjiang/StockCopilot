@@ -1123,6 +1123,17 @@
       "status": "done",
       "stages": { "plan": "done", "dev": "done", "test": "done" },
         "notes": "2026-04-01 验收完成。后端 402/402 测试通过(含 41 推荐专项)；前端 142/142 测试通过(含 8 推荐专项)；桌面打包 EXE 产出确认。2026-04-01 优化 follow-up batch 已完成：Recommend SSE 端点补齐可恢复历史语义（SSE id 行、Last-Event-ID resume、TurnSwitched、keepalive heartbeat），RecommendEventBus 改为短暂保留 reconnect history 并延迟清理终态 turn，RecommendFollowUpRouter 加入确定性 guardrails，显式 rerun/workbench 意图不再被 DirectAnswer 覆盖。验证：RecommendationSessionServiceTests 5/5 通过，RecommendFollowUpRouterTests 32/32 通过；fresh restart 后 source-backend API probe 确认 重新推荐 -> FullRerun、换个方向看看消费板块 -> PartialRerun、板块再选几只股票 -> PartialRerun、详细分析600519 -> WorkbenchHandoff、为什么推荐这只股票？ -> DirectAnswer；SSE 抽查返回 id 行，样例 55:1。"
+    },
+    {
+      "id": "GOAL-COMPANYPDF-001",
+      "title": "Financial report data collection system (12-step)",
+      "status": "done",
+      "stages": {
+        "plan": "done",
+        "dev": "done",
+        "test": "done"
+      },
+      "notes": "2026-04-05 全部 12 步完成并通过零容忍验收。包含独立 FinancialWorker 进程（port 5120）、三级数据源降级（东方财富 emweb→datacenter→同花顺）、巨潮 PDF 三引擎投票解析管线、LiteDB 本地存储、FinancialReportMcp/FinancialTrendMcp MCP 工具注入 LLM 角色、前端财务报表侧边栏 Tab（理杏仁风格）、管理员配置/测试面板。安全修复（AdminAuthFilter）、指标对齐（16/16 字段）、空状态分支、格式修复均已通过。后端 455 / 前端 180 测试全通过。"
     }
   ]
 }

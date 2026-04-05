@@ -26,7 +26,9 @@ public sealed class McpServiceRegistry : IMcpServiceRegistry
         new(StockMcpToolNames.Search, "external_gated"),
         new(StockMcpToolNames.WebSearch, "external_gated"),
         new(StockMcpToolNames.WebSearchNews, "external_gated"),
-        new(StockMcpToolNames.WebReadUrl, "external_gated")
+        new(StockMcpToolNames.WebReadUrl, "external_gated"),
+        new(StockMcpToolNames.FinancialReport, "local_required"),
+        new(StockMcpToolNames.FinancialTrend, "local_required")
     ];
 
     private readonly Dictionary<string, McpToolRegistration> _registrations = Registrations

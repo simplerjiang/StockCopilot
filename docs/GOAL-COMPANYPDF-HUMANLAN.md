@@ -926,19 +926,81 @@ User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 | PDF 解析 | Docnet + PdfPig + iText7 三路验证 |
 | 叙述解析 | LLM 摘要（复用现有 Provider） |
 
+### 9.11 理杏仁（LiXinger）功能参考研究（2026-04-04）
+
+对理杏仁（www.lixinger.com）进行了功能研究，作为前端公司详情页的设计参考。
+
+#### 理杏仁平台功能清单
+
+理杏仁是面向量化分析师和价值投资者的 A 股/港股金融数据平台，提供 7 大数据域、60+ API 端点：
+
+**1. 估值数据（Fundamental/Valuation）**
+- PE(TTM)、PB、市值、股息率
+- **百分位排名**：当前 PE 在 3年/5年/10年历史中的位置（`pe_ttm.y3.cvpos`）
+- 按公司类型区分：一般企业 / 银行 / 券商 / 保险 / 其他金融
+
+**2. 财务三表（Financial Statements）**
+- 命名体系：`q.profitStatement.np.ttm`（净利润TTM）、`q.balanceSheet.ta.t`（总资产）
+- 后缀语义：`.t` = 当期值、`.ttm` = 滚动12月、`.ttm_y2y` = TTM同比
+- 单股最多可查 128 个财务指标，10年跨度
+
+**3. 营收构成**
+- 按业务线分解营收占比
+- 前五大客户/供应商占比
+
+**4. 热门指标**
+- 换手率、股东人数变化、质押比例、限售解禁
+- 每股分红与再投资收益率
+
+**5. 股东数据**
+- 前十大流通股东、股东人数变化趋势
+- 基金持仓、基金公司合计持仓
+- 高管变动
+
+**6. 资金流向**
+- 沪港通/港股通持仓
+- 融资融券余额
+
+**7. 宏观数据**
+- 国债利率（中国/美国）、基准利率、汇率
+
+#### 对我们前端设计的借鉴
+
+| 理杏仁功能 | 借鉴方向 | 优先级 | 目标阶段 |
+|------------|---------|--------|----------|
+| 估值百分位排名 | 在指标卡片中显示当前 PE/PB 在历史中的位置 | ⭐⭐⭐ | Phase 1 |
+| TTM + YoY 双维度 | 每个关键指标同时显示 TTM 值和同比变化 | ⭐⭐⭐ | Phase 1 |
+| 公司类型区分 | 银行/保险/券商用不同指标集，复用 Eastmoney companyType | ⭐⭐ | Phase 1 |
+| 趋势迷你图 | 关键指标的 8 季度折线图 | ⭐⭐ | Phase 1 |
+| 营收构成饼图 | 业务线营收占比可视化 | ⭐ | Phase 2 |
+| 股东人数变化 | 股东趋势图，判断筹码集中度 | ⭐ | Phase 2 |
+| 宏观利率参考线 | 估值图中叠加无风险利率线 | ⭐ | Phase 3 |
+
+#### Phase 1 前端设计参考要点
+
+基于理杏仁的设计模式，我们的财务报表 Tab 应包含：
+
+1. **估值概览卡片**：PE(TTM) + 百分位 | PB + 百分位 | 市值 | 股息率
+2. **盈利指标卡片**：营收(TTM) + YoY | 净利(TTM) + YoY | ROE | 毛利率
+3. **趋势图区**：营收/净利/ROE 最近 8 季度折线图
+4. **三表切换浏览**：资产负债表 / 利润表 / 现金流量表，表格+关键行高亮
+5. **数据源+采集状态**：底部显示数据来源通道和最后更新时间
+
 ## 10. 前端交互方案
 
 ### 10.1 数据消费：双模式设计
 
 **模式一：独立财务报表 Tab**
 - 在右侧边栏（`SidebarTabs.vue`）新增第5个Tab：**「财务报表」**
-- Tab 内容包含：
-  - 报告期选择器（下拉，按季度/年度）
-  - 三张报表切换（资产负债表 / 利润表 / 现金流量表）
-  - 关键指标摘要卡片（营收、净利、ROE、毛利率等）
-  - 趋势迷你图（最近8个季度关键指标折线）
-  - 数据源标记（显示本次数据来自哪个通道：emweb/datacenter/同花顺）
-  - 采集状态指示（最后采集时间、是否有最新数据）
+- Tab 内容包含（参照理杏仁设计模式）：
+  - **估值概览卡片**：PE(TTM) + 历史百分位 | PB + 百分位 | 市值 | 股息率
+  - **盈利指标卡片**：营收(TTM) + YoY | 净利(TTM) + YoY | ROE | 毛利率
+  - **趋势图区**：营收/净利/ROE 最近 8 季度折线图（迷你图）
+  - **三表切换浏览**：资产负债表 / 利润表 / 现金流量表，表格+关键行高亮
+  - **报告期选择**：下拉选择季度/年度
+  - **数据源标记**：显示本次数据来自哪个通道（emweb/datacenter/同花顺）
+  - **采集状态**：最后采集时间、是否有最新数据
+  - 按公司类型（一般企业/银行/保险/券商）自动适配指标集
 
 **模式二：AI 分析引用**
 - MCP 工具 `financial-report` / `financial-trend` 供 AI Agent 查询
@@ -1159,16 +1221,89 @@ Phase 1 目标：完成财报采集全链路 MVP，包含后端三通道采集 +
 - [ ] 请求 DTO 和响应 DTO 定义
 - [ ] 路由注册到 StocksModule 或新建 FinanceModule
 
-### Step 10: MCP 工具集成
+### Step 10: MCP 工具集成 + LLM 提示词更新
 
-**输入**：Step 9 的 API 层
-**输出**：AI 可调用的 MCP 工具
+**输入**：Step 9 的 API 层 + LiteDB 数据
+**输出**：所有 LLM Agent 可正确调用财报数据
 
-- [ ] `financial-report` MCP 工具：查询指定股票指定期间财报
-- [ ] `financial-trend` MCP 工具：查询财务趋势和变化
-- [ ] MCP DTO 定义（遵循 `StockCopilotMcpEnvelopeDto<T>` 模式）
-- [ ] 注册到 `IMcpToolGateway`
-- [ ] 单元测试
+> **关键发现**：现有 LLM 通过中文 Prompt 嵌入工具描述发现 MCP 工具（非 OpenAI function schema）。
+> 仅注册端点不够，必须同步更新角色合约和提示词模板，LLM 才能"知道"新工具存在。
+
+#### Step 10a: 新建 MCP 端点
+
+- [ ] `StockMcpToolNames.cs` → 新增常量 `FinancialReportMcp`、`FinancialTrendMcp`
+- [ ] `StocksModule.cs` → 注册 `/api/stocks/mcp/financial-report`、`/api/stocks/mcp/financial-trend`
+- [ ] `IMcpToolGateway` / `McpToolGateway.cs` → 新增 `GetFinancialReportAsync`、`GetFinancialTrendAsync`
+- [ ] `StockCopilotMcpService.cs` → 实现从 LiteDB 查询财报数据逻辑
+- [ ] DTO 定义：`FinancialReportDataDto`、`FinancialTrendDataDto`（遵循 `StockCopilotMcpEnvelopeDto<T>` 模式）
+- [ ] `/mcp/financial-report`：返回指定股票指定报告期的三表 + 关键指标
+- [ ] `/mcp/financial-trend`：返回多报告期对比趋势（营收/净利/ROE/毛利率等）
+
+#### Step 10b: 扩展现有 MCP 端点
+
+- [ ] `/mcp/fundamentals` → 扩展 `StockCopilotFundamentalsDataDto`，添加来自 LiteDB 的深度财报字段
+- [ ] `/mcp/company-overview` → 补充股本结构、市值等字段（如 LiteDB 有数据）
+- [ ] `/mcp/shareholder` → 补充高管持股变动数据
+- [ ] `/mcp/news` → 补充公司公告来源（来自 cninfo PDF 元数据）
+
+#### Step 10c: Research 流程 LLM 提示词更新
+
+> Research Workbench 使用 15 个角色（CompanyOverviewAnalyst, FundamentalsAnalyst 等），
+> 工具通过 `StockAgentRoleContractRegistry` 绑定角色，通过 `TradingWorkbenchPromptTemplates` 在 Prompt 中描述。
+> Research 流程是**预分派模式**（工具并行调用后结果注入 Prompt，LLM 不自主选择工具）。
+
+- [ ] `StockAgentRoleContractRegistry.cs` → 在 `FundamentalsAnalyst` 角色的 `PreferredMcpSequence` 中追加 `FinancialReportMcp`、`FinancialTrendMcp`
+- [ ] `TradingWorkbenchPromptTemplates.cs` → 更新 `FundamentalsAnalyst` 的系统提示词：
+  - 描述 `FinancialReportMcp` 返回的数据结构（三表明细 + 关键指标）
+  - 描述 `FinancialTrendMcp` 返回的数据结构（多期趋势对比）
+  - 指导 LLM 如何使用新数据进行深度财务分析
+  - 新增分析维度：盈利质量、资产结构、现金流健康度、偿债能力
+- [ ] 确保现有 `Fundamentals` 数据与新 `FinancialReport` 数据不重复、互补展示
+
+#### Step 10d: Recommend 流程 LLM 提示词更新
+
+> Recommend 系统使用 13 个角色（MacroAnalyst, LeaderPicker, GrowthPicker 等），
+> 工具通过 `RecommendRoleContractRegistry` 的 `ToolHints` 列表指定，
+> 通过 `RecommendToolDispatcher` 路由执行。
+> Recommend 流程是**工具调用循环模式**（LLM 自主选择调用哪个工具）。
+
+- [ ] `RecommendRoleContractRegistry.cs` → 给以下角色添加 ToolHints：
+  - `LeaderPicker` → 添加 `financial_report`、`financial_trend`
+  - `GrowthPicker` → 添加 `financial_trend`（关注成长趋势）
+  - `ChartValidator` → 添加 `financial_report`（基本面交叉验证）
+  - `StockBull` / `StockBear` → 添加 `financial_report`、`financial_trend`
+  - `RiskReviewer` → 添加 `financial_report`（偿债/流动性风险）
+- [ ] `RecommendToolDispatcher.cs` → 添加 dispatch case：
+  - `"financial_report"` → 调用 `McpToolGateway.GetFinancialReportAsync`
+  - `"financial_trend"` → 调用 `McpToolGateway.GetFinancialTrendAsync`
+- [ ] `RecommendPromptTemplates.cs` → 更新相关角色的 Prompt：
+  - 描述新工具名称、用途、返回数据格式
+  - LeaderPicker：用财报确认行业龙头的财务优势
+  - GrowthPicker：用趋势数据验证营收/利润增长
+  - RiskReviewer：用财报评估偿债能力和现金流风险
+
+#### Step 10e: 访问控制与质量
+
+- [ ] `RoleToolPolicyService.cs` → 为新工具设置 `local_required` 访问模式
+- [ ] 新工具的 `evidence` 字段：标注数据来源（Eastmoney / datacenter / 同花顺 / LiteDB 缓存）
+- [ ] `freshnessTag` 根据数据时效性标记（real-time / cached / stale）
+- [ ] 单元测试：验证 MCP 端点返回格式、角色筛选、Prompt 注入
+
+#### 需修改的完整文件清单
+
+| 文件 | 修改类型 |
+|------|---------|
+| `StockMcpToolNames.cs` | 新增常量 |
+| `StocksModule.cs` | 新增2个端点注册 |
+| `McpToolGateway.cs` + `IMcpToolGateway` | 新增2个方法 |
+| `StockCopilotMcpService.cs` + 接口 | 新增2个数据查询实现 |
+| `StockAgentRoleContractRegistry.cs` | FundamentalsAnalyst 扩展 |
+| `TradingWorkbenchPromptTemplates.cs` | FundamentalsAnalyst Prompt 更新 |
+| `RecommendRoleContractRegistry.cs` | 5个角色 ToolHints 扩展 |
+| `RecommendToolDispatcher.cs` | 2个新 dispatch case |
+| `RecommendPromptTemplates.cs` | 5个角色 Prompt 更新 |
+| `RoleToolPolicyService.cs` | 新工具访问策略 |
+| 新增 DTO 文件 | FinancialReportDataDto, FinancialTrendDataDto |
 
 ### Step 11: 前端 - 财务报表 Tab
 
@@ -1232,3 +1367,40 @@ Step 5 + Step 7
               ├─→ Step 11 (前端Tab)
               └─→ Step 12 (前端配置+测试面板)
 ```
+
+---
+
+## 10. 实现完成总结 (2026-04-05)
+
+### 全部 12 步已完成
+
+| Step | 内容 | 关键产出 |
+|------|------|----------|
+| 1 | Worker 项目 + LiteDB 存储 | `FinancialWorker/`, `App_Data/financial-data.db` |
+| 2 | 东方财富 emweb 客户端 | `EastmoneyFinanceClient.cs` |
+| 3 | 东方财富 datacenter 客户端 | `EastmoneyDatacenterClient.cs` |
+| 4 | 同花顺客户端 | `ThsFinanceClient.cs` |
+| 5 | 三级降级编排器 | `FinancialDataOrchestrator.cs` |
+| 6 | 分红 + 融资融券 | `DividendCollector.cs`, `MarginTradingCollector.cs` |
+| 7 | PDF 采集管线 | `CninfoClient.cs`, `PdfVotingEngine.cs`, `FinancialTableParser.cs`, `PdfProcessingPipeline.cs` |
+| 8 | Worker 调度 + HTTP API | `FinancialCollectionScheduler.cs`, port 5120 |
+| 9 | 主 API 集成 | `FinancialDataReadService.cs`, `StocksModule.cs` 扩展 |
+| 10 | MCP + LLM 集成 | `FinancialReportMcp`, `FinancialTrendMcp`, 角色 prompt 注入 |
+| 11 | 前端财务报表 Tab | `FinancialReportTab.vue`, 8 个单元测试 |
+| 12 | 管理员测试面板 | `FinancialDataTestPanel.vue`, App.vue 集成 |
+
+### 架构决策
+
+| 决策项 | 选择 |
+|--------|------|
+| 财务数据存储 | LiteDB 5.0.21（与 SQLite 并行） |
+| 主 API 访问方式 | 直接 LiteDB ReadOnly=true |
+| Worker 端口 | 5120（主 API 5119） |
+| PDF 解析 | Docnet + PdfPig + iText7 三引擎投票 |
+| 数据源优先级 | emweb(3) → datacenter(2) → 同花顺(1) → cninfo PDF(0) |
+
+### 测试结果
+
+- 后端：455 passed / 0 failed（含 10 个 PDF 管线专项测试）
+- 前端：180 passed / 0 failed（含 8 个 FinancialReportTab 测试）
+- 零容忍验收：5 项阻塞修复后二轮通过

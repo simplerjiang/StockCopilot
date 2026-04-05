@@ -20,6 +20,9 @@ backend/SimplerJiangAiAgent.Api/App_Data/*.local.json
 Thumbs.db
 noupload
 backend/SimplerJiangAiAgent.Api/App_Data/logs/llm-requests.txt
+App_Data/financial-reports/
+App_Data/financial-data.db
+App_Data/financial-data-log.db
 artifacts/
 .copilotbrowser-mcp/
 

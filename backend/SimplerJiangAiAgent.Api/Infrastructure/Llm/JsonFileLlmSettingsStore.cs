@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 
 namespace SimplerJiangAiAgent.Api.Infrastructure.Llm;
@@ -11,6 +12,7 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
     private const string LegacyOpenAiProviderKey = "openai";
     private readonly string _defaultsFilePath;
     private readonly string _localSecretsFilePath;
+    private readonly ILogger? _logger;
     private readonly SemaphoreSlim _mutex = new(1, 1);
     private readonly JsonSerializerOptions _serializerOptions = new()
     {
@@ -18,16 +20,18 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
         WriteIndented = true
     };
 
-    public JsonFileLlmSettingsStore(AppRuntimePaths runtimePaths)
+    public JsonFileLlmSettingsStore(AppRuntimePaths runtimePaths, ILogger<JsonFileLlmSettingsStore>? logger = null)
     {
+        _logger = logger;
         runtimePaths.EnsureWritableDirectories();
         runtimePaths.EnsureBundledDefaultsCopied();
         _defaultsFilePath = runtimePaths.WritableLlmSettingsFilePath;
         _localSecretsFilePath = runtimePaths.WritableLocalLlmSecretsFilePath;
     }
 
-    public JsonFileLlmSettingsStore(IWebHostEnvironment environment)
+    public JsonFileLlmSettingsStore(IWebHostEnvironment environment, ILogger<JsonFileLlmSettingsStore>? logger = null)
     {
+        _logger = logger;
         var baseDir = Path.Combine(environment.ContentRootPath, "App_Data");
         _defaultsFilePath = Path.Combine(baseDir, "llm-settings.json");
         _localSecretsFilePath = Path.Combine(baseDir, "llm-settings.local.json");
@@ -71,11 +75,14 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
             var defaultsDocument = NormalizeDocument(await LoadDocumentAsync(_defaultsFilePath, cancellationToken, requireLock: false));
             var localSecretsDocument = NormalizeDocument(await LoadDocumentAsync(_localSecretsFilePath, cancellationToken, requireLock: false));
             var merged = MergeDocuments(defaultsDocument, localSecretsDocument);
-            var resolved = ResolveProviderKey(provider, merged);
-            if (!merged.Providers.ContainsKey(resolved))
+            var normalizedKey = NormalizeProviderKey(provider);
+            if (!string.Equals(normalizedKey, ActiveProviderAlias, StringComparison.OrdinalIgnoreCase)
+                && !merged.Providers.ContainsKey(normalizedKey))
             {
-                throw new InvalidOperationException($"未找到 provider: {provider}");
+                throw new InvalidOperationException(
+                    $"未找到 provider '{provider}', 可用的 providers: [{string.Join(", ", merged.Providers.Keys)}]");
             }
+            var resolved = ResolveProviderKey(provider, merged);
 
             defaultsDocument.ActiveProviderKey = resolved;
             await SaveDocumentAsync(_defaultsFilePath, defaultsDocument, cancellationToken);
@@ -90,7 +97,16 @@ public sealed class JsonFileLlmSettingsStore : ILlmSettingsStore
     public async Task<string> ResolveProviderKeyAsync(string? provider, CancellationToken cancellationToken = default)
     {
         var document = await LoadMergedAsync(cancellationToken);
-        return ResolveProviderKey(provider, document);
+        var resolvedKey = ResolveProviderKey(provider, document);
+        if (!string.IsNullOrWhiteSpace(document.ActiveProviderKey)
+            && !string.Equals(resolvedKey, document.ActiveProviderKey, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(provider?.Trim() ?? ActiveProviderAlias, ActiveProviderAlias, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger?.LogWarning(
+                "Active provider key '{ActiveKey}' not found in providers dictionary. Falling back to '{FallbackKey}'. Available providers: [{Available}]",
+                document.ActiveProviderKey, resolvedKey, string.Join(", ", document.Providers.Keys));
+        }
+        return resolvedKey;
     }
 
     public async Task<LlmProviderSettings?> GetProviderAsync(string provider, CancellationToken cancellationToken = default)

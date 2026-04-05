@@ -7,6 +7,7 @@ import TradeLogTab from './modules/stocks/TradeLogTab.vue'
 import MarketSentimentTab from './modules/market/MarketSentimentTab.vue'
 import AdminLlmSettings from './modules/admin/AdminLlmSettings.vue'
 import SourceGovernanceDeveloperMode from './modules/admin/SourceGovernanceDeveloperMode.vue'
+import FinancialDataTestPanel from './modules/admin/FinancialDataTestPanel.vue'
 import AppToast from './components/AppToast.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 
@@ -20,7 +21,8 @@ const mainTabs = [
 
 const adminTabs = [
   { key: 'admin-llm', name: 'LLM 设置', shortName: 'LLM', component: AdminLlmSettings },
-  { key: 'source-governance-dev', name: '治理开发者模式', shortName: '治理', component: SourceGovernanceDeveloperMode }
+  { key: 'source-governance-dev', name: '治理开发者模式', shortName: '治理', component: SourceGovernanceDeveloperMode },
+  { key: 'financial-data-test', name: '财务数据测试', shortName: '财务', component: FinancialDataTestPanel }
 ]
 
 const tabs = [...mainTabs, ...adminTabs]

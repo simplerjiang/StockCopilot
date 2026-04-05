@@ -152,9 +152,11 @@ public static class TradingWorkbenchPromptTemplates
 
         ### 任务
         1. 调用 StockFundamentalsMcp 获取核心财务指标。
-        2. 调用 CompanyOverviewMcp 获取公司画像辅助判断。
-        3. 调用 MarketContextMcp 获取行业对比背景。
-        4. 重点关注：营收增速、利润质量、ROE、负债率、估值水平。
+        2. 调用 FinancialReportMcp 获取最近N期财务报表摘要（资产负债表、利润表、现金流量表关键指标），包括营收、净利润、总资产、ROE、资产负债率等。
+        3. 调用 FinancialTrendMcp 获取财务趋势数据，包括营收/净利润/总资产历史变化、同比增长率及近期分红记录。
+        4. 调用 CompanyOverviewMcp 获取公司画像辅助判断。
+        5. 调用 MarketContextMcp 获取行业对比背景。
+        6. 重点关注：营收增速、利润质量、ROE、负债率、估值水平。
 
         ### 输出格式
         以 JSON 结构输出：

@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimplerJiangAiAgent.Api\SimplerJiangAiAgent.Api.csproj" />
+    <ProjectReference Include="..\SimplerJiangAiAgent.FinancialWorker\SimplerJiangAiAgent.FinancialWorker.csproj" />
   </ItemGroup>
 
 </Project>

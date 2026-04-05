@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
+using SimplerJiangAiAgent.Api.Infrastructure.Security;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
@@ -96,6 +97,7 @@ public sealed class StocksModule : IModule
         services.AddSingleton<IWebSearchService, WebSearchService>();
         services.AddHostedService<TradingPlanTriggerWorker>();
         services.AddHostedService<TradingPlanReviewWorker>();
+        services.AddSingleton<IFinancialDataReadService, FinancialDataReadService>();
     }
 
     private static void ConfigureStockHttpClient(HttpClient client, TimeSpan timeout)
@@ -383,6 +385,30 @@ public sealed class StocksModule : IModule
                 httpContext.RequestAborted);
         })
         .WithName("SearchStockMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/financial-report", async (string symbol, int? periods, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetFinancialReportAsync(symbol.Trim(), periods ?? 4, taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetFinancialReportMcp")
+        .WithOpenApi();
+
+        group.MapGet("/mcp/financial-trend", async (string symbol, int? periods, string? taskId, IMcpToolGateway gateway, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            return await StockMcpEndpointExecutor.ExecuteAsync(
+                cancellationToken => gateway.GetFinancialTrendAsync(symbol.Trim(), periods ?? 8, taskId, cancellationToken),
+                httpContext.RequestAborted);
+        })
+        .WithName("GetFinancialTrendMcp")
         .WithOpenApi();
 
         group.MapPost("/copilot/turns/draft", async (StockCopilotTurnDraftRequestDto request, IStockCopilotSessionService sessionService, HttpContext httpContext) =>
@@ -1971,6 +1997,108 @@ public sealed class StocksModule : IModule
             return Results.Ok(result);
         })
         .WithName("GetPortfolioContext")
+        .WithOpenApi();
+
+        // ── Financial data query endpoints (LiteDB read-only) ──────────
+
+        group.MapGet("/financial/reports/{symbol}", (string symbol, int? limit, IFinancialDataReadService fin) =>
+        {
+            var reports = fin.GetReports(symbol.Trim(), limit ?? 20);
+            return Results.Ok(reports);
+        })
+        .WithName("GetFinancialReports")
+        .WithOpenApi();
+
+        group.MapGet("/financial/indicators/{symbol}", (string symbol, int? limit, IFinancialDataReadService fin) =>
+        {
+            var indicators = fin.GetIndicators(symbol.Trim(), limit ?? 20);
+            return Results.Ok(indicators);
+        })
+        .WithName("GetFinancialIndicators")
+        .WithOpenApi();
+
+        group.MapGet("/financial/dividends/{symbol}", (string symbol, IFinancialDataReadService fin) =>
+        {
+            var dividends = fin.GetDividends(symbol.Trim());
+            return Results.Ok(dividends);
+        })
+        .WithName("GetFinancialDividends")
+        .WithOpenApi();
+
+        group.MapGet("/financial/margin/{symbol}", (string symbol, int? limit, IFinancialDataReadService fin) =>
+        {
+            var margin = fin.GetMarginTrading(symbol.Trim(), limit ?? 100);
+            return Results.Ok(margin);
+        })
+        .WithName("GetFinancialMarginTrading")
+        .WithOpenApi();
+
+        group.MapGet("/financial/logs", (string? symbol, int? limit, IFinancialDataReadService fin) =>
+        {
+            var logs = fin.GetCollectionLogs(symbol?.Trim(), limit ?? 50);
+            return Results.Ok(logs);
+        })
+        .WithName("GetFinancialCollectionLogs")
+        .WithOpenApi();
+
+        group.MapGet("/financial/config", (IFinancialDataReadService fin) =>
+        {
+            var config = fin.GetConfig();
+            return config is null ? Results.NotFound() : Results.Ok(config);
+        })
+        .WithName("GetFinancialConfig")
+        .WithOpenApi();
+
+        group.MapGet("/financial/summary/{symbol}", (string symbol, int? periods, IFinancialDataReadService fin) =>
+        {
+            var summary = fin.GetReportSummary(symbol.Trim(), periods ?? 4);
+            return summary is null ? Results.NotFound() : Results.Ok(summary);
+        })
+        .WithName("GetFinancialReportSummary")
+        .WithOpenApi();
+
+        group.MapGet("/financial/trend/{symbol}", (string symbol, int? periods, IFinancialDataReadService fin) =>
+        {
+            var trend = fin.GetTrendSummary(symbol.Trim(), periods ?? 8);
+            return trend is null ? Results.NotFound() : Results.Ok(trend);
+        })
+        .WithName("GetFinancialTrend")
+        .WithOpenApi();
+
+        group.MapPut("/financial/config", async (HttpContext httpContext, HttpClient httpClient, CancellationToken ct) =>
+        {
+            try
+            {
+                var body = await new StreamReader(httpContext.Request.Body).ReadToEndAsync(ct);
+                var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                var resp = await httpClient.PutAsync("http://localhost:5120/api/config", content, ct);
+                var result = await resp.Content.ReadAsStringAsync(ct);
+                return Results.Content(result, "application/json", statusCode: (int)resp.StatusCode);
+            }
+            catch (HttpRequestException)
+            {
+                return Results.Json(new { error = "Financial Worker 未运行或不可达" }, statusCode: 503);
+            }
+        })
+        .AddEndpointFilter<AdminAuthFilter>()
+        .WithName("PutFinancialConfig")
+        .WithOpenApi();
+
+        group.MapPost("/financial/collect/{symbol}", async (string symbol, HttpClient httpClient, CancellationToken ct) =>
+        {
+            try
+            {
+                var resp = await httpClient.PostAsync($"http://localhost:5120/api/collect/{symbol.Trim()}", null, ct);
+                var content = await resp.Content.ReadAsStringAsync(ct);
+                return Results.Content(content, "application/json");
+            }
+            catch (HttpRequestException)
+            {
+                return Results.Json(new { error = "Financial Worker 未运行或不可达" }, statusCode: 503);
+            }
+        })
+        .AddEndpointFilter<AdminAuthFilter>()
+        .WithName("TriggerFinancialCollection")
         .WithOpenApi();
     }
 

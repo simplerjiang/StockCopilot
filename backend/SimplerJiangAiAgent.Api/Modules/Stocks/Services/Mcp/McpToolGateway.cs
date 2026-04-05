@@ -20,6 +20,8 @@ public interface IMcpToolGateway
     Task<WebSearchResult> WebSearchAsync(string query, WebSearchOptions? options = null, CancellationToken cancellationToken = default);
     Task<WebSearchResult> WebSearchNewsAsync(string query, WebSearchOptions? options = null, CancellationToken cancellationToken = default);
     Task<WebReadResult> WebReadUrlAsync(string url, int maxChars = 8000, CancellationToken cancellationToken = default);
+    Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
+    Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
 }
 
 public sealed class McpToolGateway : IMcpToolGateway
@@ -140,6 +142,20 @@ public sealed class McpToolGateway : IMcpToolGateway
         EnsureSystemToolAccess(StockMcpToolNames.WebReadUrl);
         return ExecuteWithLoggingAsync(StockMcpToolNames.WebReadUrl, url,
             () => _webSearchService.ReadUrlAsync(url, maxChars, cancellationToken));
+    }
+
+    public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+    {
+        EnsureSystemToolAccess(StockMcpToolNames.FinancialReport);
+        return ExecuteWithLoggingAsync(StockMcpToolNames.FinancialReport, symbol,
+            () => _stockCopilotMcpService.GetFinancialReportAsync(symbol, periods, taskId, cancellationToken));
+    }
+
+    public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
+    {
+        EnsureSystemToolAccess(StockMcpToolNames.FinancialTrend);
+        return ExecuteWithLoggingAsync(StockMcpToolNames.FinancialTrend, symbol,
+            () => _stockCopilotMcpService.GetFinancialTrendAsync(symbol, periods, taskId, cancellationToken));
     }
 
     private async Task<T> ExecuteWithLoggingAsync<T>(string toolName, string key, Func<Task<T>> action)
