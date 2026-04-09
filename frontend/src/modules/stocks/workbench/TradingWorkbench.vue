@@ -200,6 +200,7 @@ function handleNextAction(action) {
       :is-running="wb.isRunning.value"
       :symbol="symbol"
       @submit="wb.submitFollowUp($event.prompt, $event.options)"
+      @cancel="wb.cancelAnalysis()"
     />
 
     <!-- Empty state -->

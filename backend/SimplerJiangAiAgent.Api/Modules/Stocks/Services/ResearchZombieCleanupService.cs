@@ -17,8 +17,8 @@ public sealed record ResearchZombieCleanupResult(
 
 public sealed class ResearchZombieCleanupService
 {
-    public static readonly TimeSpan QueryStaleThreshold = TimeSpan.FromMinutes(30);
-    public static readonly TimeSpan BackgroundStaleThreshold = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan QueryStaleThreshold = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan BackgroundStaleThreshold = TimeSpan.FromMinutes(10);
 
     private const string TurnStopReason = "Recovered stale running turn after interrupted execution.";
     private const string StageStopReason = "Recovered stale running stage after interrupted execution.";

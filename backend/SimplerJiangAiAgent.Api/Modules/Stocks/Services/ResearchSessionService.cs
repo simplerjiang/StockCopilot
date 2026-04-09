@@ -174,10 +174,41 @@ public sealed class ResearchSessionService : IResearchSessionService
             cancellationToken: cancellationToken);
 
         var mode = ParseContinuationMode(request.ContinuationMode);
-        ResearchSession session;
+        ResearchSession session = null!;
         ResearchFollowUpRoutingDecision? routingDecision = null;
+        bool createNew = mode == ResearchContinuationMode.NewSession || string.IsNullOrWhiteSpace(request.SessionKey);
 
-        if (mode == ResearchContinuationMode.NewSession || string.IsNullOrWhiteSpace(request.SessionKey))
+        if (!createNew)
+        {
+            var existing = await _dbContext.ResearchSessions
+                .Include(s => s.Turns)
+                .FirstOrDefaultAsync(s => s.SessionKey == request.SessionKey, cancellationToken);
+
+            if (existing is not null && existing.Symbol == request.Symbol)
+            {
+                session = existing;
+                session.LastUserIntent = request.UserPrompt;
+                session.UpdatedAt = DateTime.UtcNow;
+
+                if (!request.FromStageIndex.HasValue && mode == ResearchContinuationMode.ContinueSession)
+                {
+                    // Use instant heuristic for HTTP response speed; full LLM routing runs in background pipeline
+                    routingDecision = _followUpRoutingService.DecideHeuristic(request.UserPrompt);
+                }
+            }
+            else
+            {
+                if (existing is not null)
+                {
+                    _logger.LogWarning(
+                        "Session symbol mismatch: session {SessionKey} is for {OldSymbol} but request targets {NewSymbol}. Creating new session.",
+                        request.SessionKey, existing.Symbol, request.Symbol);
+                }
+                createNew = true;
+            }
+        }
+
+        if (createNew)
         {
             var activeSessions = await _dbContext.ResearchSessions
                 .Where(s => s.Symbol == request.Symbol &&
@@ -202,22 +233,6 @@ public sealed class ResearchSessionService : IResearchSessionService
             };
             _dbContext.ResearchSessions.Add(session);
             await _dbContext.SaveChangesAsync(cancellationToken);
-        }
-        else
-        {
-            session = await _dbContext.ResearchSessions
-                .Include(s => s.Turns)
-                .FirstOrDefaultAsync(s => s.SessionKey == request.SessionKey, cancellationToken)
-                ?? throw new InvalidOperationException($"Session not found: {request.SessionKey}");
-
-            session.LastUserIntent = request.UserPrompt;
-            session.UpdatedAt = DateTime.UtcNow;
-
-            if (!request.FromStageIndex.HasValue && mode == ResearchContinuationMode.ContinueSession)
-            {
-                // Use instant heuristic for HTTP response speed; full LLM routing runs in background pipeline
-                routingDecision = _followUpRoutingService.DecideHeuristic(request.UserPrompt);
-            }
         }
 
         var turnIndex = session.Turns.Count;
@@ -252,6 +267,30 @@ public sealed class ResearchSessionService : IResearchSessionService
             turn.Id, session.SessionKey, session.Symbol);
 
         return new ResearchTurnSubmitResponseDto(session.Id, turn.Id, session.SessionKey, turn.Status.ToString());
+    }
+
+    public async Task<bool> CancelActiveTurnAsync(long sessionId, CancellationToken ct)
+    {
+        var session = await _dbContext.ResearchSessions
+            .Include(s => s.Turns)
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+
+        if (session is null) return false;
+
+        var runningTurn = session.Turns
+            .FirstOrDefault(t => t.Status == ResearchTurnStatus.Running || t.Status == ResearchTurnStatus.Queued);
+
+        if (runningTurn is null) return false;
+
+        runningTurn.Status = ResearchTurnStatus.Cancelled;
+        runningTurn.CompletedAt = DateTime.UtcNow;
+        runningTurn.StopReason = "用户手动取消";
+        session.Status = ResearchSessionStatus.Idle;
+        session.ActiveTurnId = null;
+        session.UpdatedAt = DateTime.UtcNow;
+
+        await _dbContext.SaveChangesAsync(ct);
+        return true;
     }
 
     internal static ResearchContinuationMode ParseContinuationMode(string? mode)

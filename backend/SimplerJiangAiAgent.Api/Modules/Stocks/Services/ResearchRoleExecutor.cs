@@ -112,6 +112,63 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
+    private static readonly JsonSerializerOptions CompactJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private static readonly HashSet<string> _slimExcludedFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Envelope metadata – not useful for analysis
+        "traceId", "taskId", "latencyMs",
+        "cache", "cacheHit",
+        "freshnessTag", "sourceTier", "rolePolicyClass",
+        "meta",
+        // Evidence internal fields
+        "crawledAt", "readMode", "readStatus", "ingestedAt",
+        "localFactId", "sourceRecordId"
+    };
+
+    private static string SlimToolResultJson(string rawJson)
+    {
+        using var doc = JsonDocument.Parse(rawJson);
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
+        {
+            WriteSlimElement(writer, doc.RootElement);
+        }
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteSlimElement(Utf8JsonWriter writer, JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                foreach (var prop in element.EnumerateObject())
+                {
+                    if (_slimExcludedFields.Contains(prop.Name))
+                        continue;
+                    if (prop.Value.ValueKind == JsonValueKind.Null)
+                        continue;
+                    writer.WritePropertyName(prop.Name);
+                    WriteSlimElement(writer, prop.Value);
+                }
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (var item in element.EnumerateArray())
+                    WriteSlimElement(writer, item);
+                writer.WriteEndArray();
+                break;
+            default:
+                element.WriteTo(writer);
+                break;
+        }
+    }
     private static readonly Dictionary<string, int> PropertyPriority = new(StringComparer.OrdinalIgnoreCase)
     {
         ["roleId"] = 0,
@@ -220,7 +277,22 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         "taskId",
         "task_id",
         "cache",
-        "meta"
+        "meta",
+        "latencyMs",
+        "latency_ms",
+        "freshnessTag",
+        "freshness_tag",
+        "sourceTier",
+        "source_tier",
+        "rolePolicyClass",
+        "role_policy_class",
+        "cacheHit",
+        "cache_hit",
+        "errorCode",
+        "error_code",
+        "toolName",
+        "tool_name",
+        "features"
     };
     private static readonly HashSet<string> NoisyArrayPropertyNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -334,7 +406,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
                             context.SessionId, context.TurnId, context.StageId,
                             context.RoleId, null,
                             $"{toolName} 完成",
-                            JsonSerializer.Serialize(new { toolName, status = "Completed", summary = toolSummary, resultPreview = outcome.ResultJson!.Length > 4000 ? outcome.ResultJson[..4000] + "…(truncated)" : outcome.ResultJson }),
+                            JsonSerializer.Serialize(new { toolName, status = "Completed", summary = toolSummary, resultPreview = outcome.ResultJson }),
                             DateTime.UtcNow));
                     }
                     else
@@ -531,19 +603,19 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
 
         return toolName switch
         {
-            StockMcpToolNames.CompanyOverview => JsonSerializer.Serialize(await _mcpGateway.GetCompanyOverviewAsync(symbol, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Product => JsonSerializer.Serialize(await _mcpGateway.GetProductAsync(symbol, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Fundamentals => JsonSerializer.Serialize(await _mcpGateway.GetFundamentalsAsync(symbol, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.FinancialReport => JsonSerializer.Serialize(await _mcpGateway.GetFinancialReportAsync(symbol, DefaultFinancialReportPeriods, taskId, ct), RelaxedJsonOptions),
-            StockMcpToolNames.FinancialTrend => JsonSerializer.Serialize(await _mcpGateway.GetFinancialTrendAsync(symbol, DefaultFinancialTrendPeriods, taskId, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Shareholder => JsonSerializer.Serialize(await _mcpGateway.GetShareholderAsync(symbol, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.MarketContext => JsonSerializer.Serialize(await _mcpGateway.GetMarketContextAsync(symbol, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.SocialSentiment => JsonSerializer.Serialize(await _mcpGateway.GetSocialSentimentAsync(symbol, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Kline => JsonSerializer.Serialize(await _mcpGateway.GetKlineAsync(symbol, "day", 60, null, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Minute => JsonSerializer.Serialize(await _mcpGateway.GetMinuteAsync(symbol, null, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Strategy => JsonSerializer.Serialize(await _mcpGateway.GetStrategyAsync(symbol, "day", 60, null, null, taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.News => JsonSerializer.Serialize(await _mcpGateway.GetNewsAsync(symbol, "stock", taskId, null, ct), RelaxedJsonOptions),
-            StockMcpToolNames.Search => JsonSerializer.Serialize(await _mcpGateway.SearchAsync(symbol, true, taskId, ct), RelaxedJsonOptions),
+            StockMcpToolNames.CompanyOverview => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetCompanyOverviewAsync(symbol, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.Product => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetProductAsync(symbol, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.Fundamentals => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetFundamentalsAsync(symbol, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.FinancialReport => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetFinancialReportAsync(symbol, DefaultFinancialReportPeriods, taskId, ct), CompactJsonOptions)),
+            StockMcpToolNames.FinancialTrend => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetFinancialTrendAsync(symbol, DefaultFinancialTrendPeriods, taskId, ct), CompactJsonOptions)),
+            StockMcpToolNames.Shareholder => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetShareholderAsync(symbol, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.MarketContext => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetMarketContextAsync(symbol, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.SocialSentiment => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetSocialSentimentAsync(symbol, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.Kline => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetKlineAsync(symbol, "day", 60, null, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.Minute => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetMinuteAsync(symbol, null, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.Strategy => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetStrategyAsync(symbol, "day", 60, null, null, taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.News => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetNewsAsync(symbol, "stock", taskId, null, ct), CompactJsonOptions)),
+            StockMcpToolNames.Search => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.SearchAsync(symbol, true, taskId, ct), CompactJsonOptions)),
             _ => throw new ArgumentException($"Unknown tool: {toolName}")
         };
     }
@@ -608,8 +680,8 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
 
     internal static PromptGovernancePlan CreateLocalPromptGovernance(int numCtx, string providerKey = "ollama", string? model = null)
     {
-        var totalPromptBudget = Math.Clamp(numCtx * 5, 6000, 24000);
-        var upstreamBudget = (int)Math.Round(totalPromptBudget * 0.58d, MidpointRounding.AwayFromZero);
+        var totalPromptBudget = Math.Clamp(numCtx * 6, 8000, 48000);
+        var upstreamBudget = (int)Math.Round(totalPromptBudget * 0.45d, MidpointRounding.AwayFromZero);
         var toolBudget = totalPromptBudget - upstreamBudget;
 
         return new PromptGovernancePlan(
@@ -617,13 +689,13 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             model ?? string.Empty,
             numCtx,
             upstreamBudget,
-            toolBudget,
-            Math.Clamp(upstreamBudget / 4, 900, 2200),
-            Math.Clamp(toolBudget / 3, 1000, 2400),
-            Math.Clamp(totalPromptBudget / 32, 180, 420),
-            4,
-            10,
-            4);
+            int.MaxValue,                                  // ToolBudgetChars – no cap
+            Math.Clamp(upstreamBudget / 4, 900, 2800),    // MaxArtifactChars
+            int.MaxValue,                                  // MaxToolChars – no cap
+            100_000,                                       // MaxStringChars – effectively unlimited
+            10_000,                                        // MaxArrayItems – effectively unlimited
+            10_000,                                        // MaxObjectProperties – effectively unlimited
+            20);                                           // MaxDepth – generous
     }
 
     internal static string BuildUserContent(
@@ -826,7 +898,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             };
         }
 
-        return $"[{resolvedRoleId}]\n{JsonSerializer.Serialize(payload, RelaxedJsonOptions)}";
+        return $"[{resolvedRoleId}]\n{JsonSerializer.Serialize(payload, CompactJsonOptions)}";
     }
 
     private static string CompactToolResult(string toolResult, PromptGovernancePlan governance)
@@ -891,7 +963,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             payload["data"] = CompactJsonElement(root, governance, 0, "data");
         }
 
-        return $"[{resolvedToolName}]\n{JsonSerializer.Serialize(payload, RelaxedJsonOptions)}";
+        return $"[{resolvedToolName}]\n{JsonSerializer.Serialize(payload, CompactJsonOptions)}";
     }
 
     private static IReadOnlyList<string> BuildEvidenceRefs(JsonElement evidenceArray, PromptGovernancePlan governance)
@@ -953,7 +1025,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         {
             JsonValueKind.Object => CompactObject(element, governance, depth),
             JsonValueKind.Array => CompactArray(element, governance, depth, propertyName),
-            JsonValueKind.String => TruncateAtBoundary(NormalizeWhitespace(element.GetString()), governance.MaxStringChars),
+            JsonValueKind.String => CompactStringValue(element.GetString(), governance),
             JsonValueKind.Number => CompactNumber(element),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
@@ -961,6 +1033,52 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             JsonValueKind.Undefined => null,
             _ => TruncateAtBoundary(element.GetRawText(), governance.MaxStringChars)
         };
+    }
+
+    private static object? CompactStringValue(string? value, PromptGovernancePlan governance)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (IsGarbledText(value))
+            return null;
+
+        return TruncateAtBoundary(NormalizeWhitespace(value), governance.MaxStringChars);
+    }
+
+    /// <summary>
+    /// Detects if a string contains excessive garbled/mojibake characters.
+    /// Returns true if the string is predominantly garbled and should be discarded.
+    /// </summary>
+    private static bool IsGarbledText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length < 20)
+            return false;
+
+        var garbledCount = 0;
+        var totalCount = 0;
+
+        foreach (var ch in text)
+        {
+            totalCount++;
+            // Count characters that are likely mojibake or garbled encoding:
+            // - Private Use Area (U+E000-U+F8FF)
+            // - Control chars except common whitespace
+            // - Hebrew block (U+0590-U+05FF) — garbled CJK indicator
+            // - Combining diacriticals (U+0300-U+036F)
+            // - NKo block (U+07F0-U+07FF) — rare, garbled indicator
+            if ((ch >= '\uE000' && ch <= '\uF8FF') ||
+                (ch < ' ' && ch != '\n' && ch != '\r' && ch != '\t') ||
+                (ch >= '\u0590' && ch <= '\u05FF') ||
+                (ch >= '\u0300' && ch <= '\u036F') ||
+                (ch >= '\u07F0' && ch <= '\u07FF'))
+            {
+                garbledCount++;
+            }
+        }
+
+        // If more than 15% of characters are garbled indicators, consider it garbled
+        return totalCount > 0 && (double)garbledCount / totalCount > 0.15;
     }
 
     private static Dictionary<string, object?> CompactObject(JsonElement element, PromptGovernancePlan governance, int depth)
@@ -981,7 +1099,17 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
                 break;
             }
 
-            result[property.Name] = CompactJsonElement(property.Value, governance, depth + 1, property.Name);
+            var compacted = CompactJsonElement(property.Value, governance, depth + 1, property.Name);
+
+            // Skip null values - they waste context without providing information
+            if (compacted is null)
+                continue;
+
+            // Skip empty collections - they add no value
+            if (compacted is System.Collections.ICollection { Count: 0 })
+                continue;
+
+            result[property.Name] = compacted;
             added++;
         }
 

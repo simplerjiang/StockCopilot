@@ -88,7 +88,7 @@ public sealed class OllamaProviderTests
         Assert.Equal("5m", root.GetProperty("keep_alive").GetString());
 
         var options = root.GetProperty("options");
-        Assert.Equal(2048, options.GetProperty("num_ctx").GetInt32());
+        Assert.Equal(4096, options.GetProperty("num_ctx").GetInt32());
         Assert.Equal(2048, options.GetProperty("num_predict").GetInt32());
         Assert.Equal(0.3, options.GetProperty("temperature").GetDouble());
         Assert.Equal(64, options.GetProperty("top_k").GetInt32());

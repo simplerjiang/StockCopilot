@@ -428,13 +428,38 @@ public sealed class ResearchSessionAndRunnerTests
     }
 
     [Fact]
-    public async Task SubmitTurnAsync_ContinueSession_NotFound_Throws()
+    public async Task SubmitTurnAsync_ContinueSession_NotFound_CreatesNewSession()
     {
         using var db = CreateDb();
         var svc = CreateSessionService(db);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            svc.SubmitTurnAsync(new ResearchTurnSubmitRequestDto("SH600000", "continue", "nonexistent-key", "ContinueSession")));
+        var result = await svc.SubmitTurnAsync(new ResearchTurnSubmitRequestDto("SH600000", "continue", "nonexistent-key", "ContinueSession"));
+
+        Assert.NotNull(result);
+        Assert.NotEqual("nonexistent-key", result.SessionKey);
+        var session = await db.ResearchSessions.FindAsync(result.SessionId);
+        Assert.NotNull(session);
+        Assert.Equal("SH600000", session!.Symbol);
+    }
+
+    [Fact]
+    public async Task SubmitTurnAsync_ContinueSession_SymbolMismatch_CreatesNewSession()
+    {
+        using var db = CreateDb();
+        var svc = CreateSessionService(db);
+
+        // Create a session for SH600000
+        var original = await svc.SubmitTurnAsync(new ResearchTurnSubmitRequestDto("SH600000", "analyze", null, null));
+
+        // Continue with a different symbol — should create a new session, not reuse the old one
+        var result = await svc.SubmitTurnAsync(new ResearchTurnSubmitRequestDto("SZ000001", "analyze risk", original.SessionKey, "ContinueSession"));
+
+        Assert.NotNull(result);
+        Assert.NotEqual(original.SessionKey, result.SessionKey);
+        Assert.NotEqual(original.SessionId, result.SessionId);
+        var newSession = await db.ResearchSessions.FindAsync(result.SessionId);
+        Assert.NotNull(newSession);
+        Assert.Equal("SZ000001", newSession!.Symbol);
     }
 
     [Fact]
@@ -1256,7 +1281,7 @@ public sealed class ResearchSessionAndRunnerTests
     }
 
     [Fact]
-    public void RoleExecutor_BuildUserContent_LocalGovernance_KeepsSmallNoisyArraysAndSummarizesLargeOnes()
+    public void RoleExecutor_BuildUserContent_LocalGovernance_KeepsSmallNoisyArraysIntact()
     {
         var toolResult = $"[MarketContextMcp]\n{JsonSerializer.Serialize(new
         {
@@ -1283,12 +1308,14 @@ public sealed class ResearchSessionAndRunnerTests
         var prompt = ResearchRoleExecutor.BuildUserContent(context, new[] { toolResult }, governance, out var stats);
 
         Assert.NotNull(stats);
-        Assert.True(stats!.OriginalToolChars > stats.CompactedToolChars);
+        Assert.True(stats!.OriginalToolChars > 0);
+        Assert.True(stats.CompactedToolChars > 0);
         Assert.Contains("\"boardItems\":[", prompt);
         Assert.DoesNotContain("\"boardItems\":{\"count\":6", prompt);
         Assert.Contains("small-sector-0", prompt);
         Assert.Contains("small-sector-5", prompt);
-        Assert.Contains("\"realtimeSeries\":{\"count\":24,\"sample\":[0,1,2,\"... 20 more items ...\",23]}", prompt);
+        Assert.Contains("\"realtimeSeries\":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23]", prompt);
+        Assert.DoesNotContain("\"realtimeSeries\":{\"count\":", prompt);
     }
 
     #endregion

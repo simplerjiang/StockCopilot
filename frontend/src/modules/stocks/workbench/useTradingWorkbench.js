@@ -474,6 +474,21 @@ export function useTradingWorkbench(symbolRef) {
     }
   }
 
+  async function cancelAnalysis() {
+    const sessionId = liveSession.value?.id
+    if (!sessionId) return false
+    error.value = null
+    try {
+      await apiPost(`/sessions/${sessionId}/cancel`, {})
+      stopPolling()
+      await loadActiveSession()
+      return true
+    } catch (e) {
+      error.value = e.message
+      return false
+    }
+  }
+
   // ── Polling ────────────────────────────────────────
 
   let pollInFlight = false
@@ -561,6 +576,7 @@ export function useTradingWorkbench(symbolRef) {
     enterReplay,
     exitReplay,
     rerunFromStage,
+    cancelAnalysis,
     startPolling,
     stopPolling
   }

@@ -6,7 +6,7 @@ const props = defineProps({
   isRunning: { type: Boolean, default: false },
   symbol: { type: String, default: '' }
 })
-const emit = defineEmits(['submit'])
+const emit = defineEmits(['submit', 'cancel'])
 
 const prompt = ref('')
 const continuationMode = ref('ContinueSession')
@@ -30,7 +30,7 @@ function handleSubmit() {
 function handleKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
-    handleSubmit()
+    if (!props.isRunning) handleSubmit()
   }
 }
 </script>
@@ -50,18 +50,26 @@ function handleKeydown(e) {
       <textarea
         v-model="prompt"
         class="wb-input"
-        :placeholder="session ? '追问或调整分析方向…' : `输入 ${symbol || '股票'} 研究指令…`"
+        :placeholder="isRunning ? '分析进行中…点击右侧按钮可取消' : (session ? '追问或调整分析方向…' : `输入 ${symbol || '股票'} 研究指令…`)"
         rows="1"
-        :disabled="isRunning"
         @keydown="handleKeydown"
       />
       <button
+        v-if="isRunning"
+        class="wb-cancel-btn"
+        title="取消分析"
+        @click="$emit('cancel')"
+      >
+        ■
+      </button>
+      <button
+        v-else
         class="wb-send-btn"
-        :disabled="!prompt.trim() || isRunning"
-        :title="isRunning ? '研究执行中' : '发送'"
+        :disabled="!prompt.trim()"
+        title="发送"
         @click="handleSubmit"
       >
-        {{ isRunning ? '⏳' : '▶' }}
+        ▶
       </button>
     </div>
   </div>
@@ -145,6 +153,25 @@ function handleKeydown(e) {
   cursor: not-allowed;
 }
 .wb-send-btn:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+.wb-cancel-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.wb-cancel-btn:hover {
   opacity: 0.85;
 }
 </style>

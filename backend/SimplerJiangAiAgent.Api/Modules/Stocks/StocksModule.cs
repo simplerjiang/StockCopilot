@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
@@ -22,6 +23,7 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks;
 public sealed class StocksModule : IModule
 {
     private static readonly SemaphoreSlim _concurrentTurns = new(5, 5);
+    private static readonly ConcurrentDictionary<long, CancellationTokenSource> _turnCancellationSources = new();
     private static readonly TimeSpan FinancialWorkerProxyTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FinancialWorkerCollectProxyTimeout = TimeSpan.FromSeconds(60);
 
@@ -1350,6 +1352,9 @@ public sealed class StocksModule : IModule
             if (!_concurrentTurns.Wait(0))
                 return Results.StatusCode(429);
 
+            var cts = new CancellationTokenSource();
+            _turnCancellationSources.TryAdd(turnId, cts);
+
             _ = Task.Run(async () =>
             {
                 try
@@ -1358,7 +1363,7 @@ public sealed class StocksModule : IModule
                     var scopedRunner = scope.ServiceProvider.GetRequiredService<IResearchRunner>();
                     try
                     {
-                        await scopedRunner.RunTurnAsync(turnId, CancellationToken.None);
+                        await scopedRunner.RunTurnAsync(turnId, cts.Token);
                     }
                     catch (Exception ex)
                     {
@@ -1378,6 +1383,8 @@ public sealed class StocksModule : IModule
                 }
                 finally
                 {
+                    _turnCancellationSources.TryRemove(turnId, out var removed);
+                    removed?.Dispose();
                     _concurrentTurns.Release();
                 }
             });
@@ -1385,6 +1392,30 @@ public sealed class StocksModule : IModule
             return Results.Ok(response);
         })
         .WithName("SubmitResearchTurn")
+        .WithOpenApi();
+
+        group.MapPost("/research/sessions/{sessionId:long}/cancel", async (long sessionId, IResearchSessionService researchService, CancellationToken ct) =>
+        {
+            // Try to cancel the in-process runner via CTS
+            var session = await researchService.GetSessionDetailAsync(sessionId, ct);
+            if (session is not null)
+            {
+                var activeTurn = session.Turns.FirstOrDefault(t => t.Status == "Running" || t.Status == "Queued");
+                if (activeTurn is not null)
+                {
+                    if (_turnCancellationSources.TryRemove(activeTurn.Id, out var cts))
+                    {
+                        cts.Cancel();
+                        cts.Dispose();
+                    }
+                }
+            }
+
+            // Also mark as cancelled in DB (handles orphaned turns from previous process)
+            var cancelled = await researchService.CancelActiveTurnAsync(sessionId, ct);
+            return Results.Ok(new { cancelled });
+        })
+        .WithName("CancelResearchSession")
         .WithOpenApi();
 
         // ── R5: Structured artifact endpoints ──────────────────────────────
