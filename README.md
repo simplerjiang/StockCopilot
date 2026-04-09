@@ -110,8 +110,9 @@ docs/      截图与补充文档
 - 治理开发者模式的 trace 查询与 LLM 审计日志查看
 - 财务数据中心与独立 Financial Worker
 - Ollama 本地模型启停、模型拉取、keepAlive 管理，以及 `num_ctx / keep_alive / num_predict / temperature / top_k / top_p / min_p / stop / think` 等请求级高级参数
+- **v0.3.0**：修复本地模型完整 AI 分析卡住问题（NumPredict 256→2048、Research 场景 MaxOutputTokens=4096 + ResponseFormat=Json + 180s 超时保护）；修复前端轮询取消风暴；Research 实体 Unicode 支持 CJK；JSON 渲染容错
 
-这里不再强绑一个未重新核实的发布号；以当前主分支已经落地的能力面为准。
+当前最新发布版本为 **v0.3.0**（2026-04-09），详见 [GitHub Releases](https://github.com/simplerjiang/StockCopilot/releases)。
 
 ## 安装
 
@@ -148,7 +149,7 @@ docs/      截图与补充文档
 
 如果你想使用本地模型，也可以在 `LLM 设置` 页里直接管理 Ollama：查看状态、启动/停止、拉取模型、开启 keepAlive，并保存请求级高级参数（如 `num_ctx`、`keep_alive`、`num_predict`、`temperature`、`top_k`、`top_p`、`min_p`、`stop`、`think`）。
 
-当前仓库已为 Ollama 请求级参数提供显式默认值：`num_ctx=2048`、`keep_alive=-1`、`num_predict=256`、`temperature=0.3`、`top_k=64`、`top_p=0.95`、`min_p=0.0`、`stop=[]`、`think=false`。
+当前仓库已为 Ollama 请求级参数提供显式默认值：`num_ctx=2048`、`keep_alive=-1`、`num_predict=2048`、`temperature=0.3`、`top_k=64`、`top_p=0.95`、`min_p=0.0`、`stop=[]`、`think=false`。研究分析（Research）场景自动覆盖为 `num_predict=4096` 以确保结构化输出完整。
 
 基于这台 RTX 5060 8GB 机器的本地压测，推荐优先使用：`gemma4:e2b`（5.1B / `Q4_K_M`）配合 `num_ctx=2048` 作为质量和响应速度的平衡点；如果你更看重纯速度而能接受更小模型，可选 `llama3.2:3b`（`Q4_K_M`）配合 `num_ctx=2048`。`gemma4:latest`（8B / `Q4_K_M`）在这台机器上明显更吃显存，除非你明确接受更高延迟，否则不建议作为默认本地模型。
 
