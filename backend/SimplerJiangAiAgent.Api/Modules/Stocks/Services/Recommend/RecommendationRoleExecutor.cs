@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
+using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 using Microsoft.Extensions.Logging;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
@@ -38,6 +40,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
     private readonly IRecommendRoleContractRegistry _contractRegistry;
     private readonly IRecommendToolDispatcher _toolDispatcher;
     private readonly ILogger<RecommendationRoleExecutor> _logger;
+    private readonly ISessionFileLogger? _sessionLogger;
 
     public RecommendationRoleExecutor(
         ILlmService llmService,
@@ -45,12 +48,24 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         IRecommendRoleContractRegistry contractRegistry,
         IRecommendToolDispatcher toolDispatcher,
         ILogger<RecommendationRoleExecutor> logger)
+        : this(llmService, eventBus, contractRegistry, toolDispatcher, logger, null)
+    {
+    }
+
+    public RecommendationRoleExecutor(
+        ILlmService llmService,
+        IRecommendEventBus eventBus,
+        IRecommendRoleContractRegistry contractRegistry,
+        IRecommendToolDispatcher toolDispatcher,
+        ILogger<RecommendationRoleExecutor> logger,
+        ISessionFileLogger? sessionLogger)
     {
         _llmService = llmService;
         _eventBus = eventBus;
         _contractRegistry = contractRegistry;
         _toolDispatcher = toolDispatcher;
         _logger = logger;
+        _sessionLogger = sessionLogger;
     }
 
     public async Task<RecommendRoleExecutionResult> ExecuteAsync(RecommendRoleExecutionContext context, CancellationToken ct = default)
@@ -65,6 +80,9 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
             var contract = _contractRegistry.GetContract(context.RoleId);
             var prompt = BuildPrompt(contract, context);
 
+            _sessionLogger?.LogRoleLlmRequest(context.SessionId, context.TurnId, context.RoleId,
+                context.SystemPrompt ?? "", prompt);
+
             string? lastTraceId = null;
             int toolCallCount = 0;
             int maxCalls = contract.MaxToolCalls;
@@ -75,9 +93,15 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
                 ct.ThrowIfCancellationRequested();
 
                 var request = new LlmChatRequest(prompt, null, 0.3, false, ResponseFormat: LlmResponseFormats.Json);
+                var llmSw = Stopwatch.StartNew();
                 var llmResult = await CallLlmWithRetryAsync(context, request, ct);
+                llmSw.Stop();
                 lastTraceId = llmResult.TraceId;
                 var content = llmResult.Content?.Trim() ?? "";
+
+                _sessionLogger?.LogRoleLlmResponse(context.SessionId, context.TurnId, context.RoleId,
+                    content, lastTraceId, llmSw.ElapsedMilliseconds);
+
                 var hasToolCall = TryParseToolCall(content, out var toolName, out var toolArgs);
 
                 if (toolCallCount < maxCalls && hasToolCall)
@@ -93,6 +117,9 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
 
                     var toolResult = await _toolDispatcher.DispatchAsync(toolName, toolArgs, ct);
                     toolCallCount++;
+
+                    _sessionLogger?.LogRoleToolCall(context.SessionId, context.TurnId, context.RoleId,
+                        toolName, JsonSerializer.Serialize(toolArgs), toolResult);
 
                     _eventBus.Publish(new RecommendEvent(
                         RecommendEventType.ToolCompleted, context.SessionId, context.TurnId,
@@ -163,6 +190,9 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Recommend role {RoleId} execution failed", context.RoleId);
+
+            _sessionLogger?.LogRoleLlmError(context.SessionId, context.TurnId, context.RoleId,
+                ex.GetType().Name, ex.Message);
 
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.RoleFailed, context.SessionId, context.TurnId,

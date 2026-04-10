@@ -13,10 +13,12 @@ public static class TradingWorkbenchPromptTemplates
         3. 你的输出必须基于工具返回的真实数据和证据，严禁编造数据、虚构来源或臆测未经验证的结论。
         4. 调用工具时，参数名必须保留英文原文（如 level=stock, interval=day 等）。
         5. 所有分析输出必须使用结构化格式，避免散文式叙述。
+        6. 本次分析的目标个股信息在用户消息最上方以“## 目标个股”标明（含股票代码和名称）。你的所有分析必须围绕该目标个股展开，严禁猜测、混淆或分析其他股票。
         """;
 
     public const string BackOfficePrefix = """
         你没有直接查询数据的权限。你必须仅基于前序角色已提供的研究报告、分析数据和讨论记录来完成你的任务。
+        目标个股信息在用户消息最上方以“## 目标个股”标明。你的全部讨论、论点和结论必须围绕该目标个股。
         """;
 
     public const string ChineseOutputEnforcement = """

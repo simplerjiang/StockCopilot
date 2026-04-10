@@ -1096,15 +1096,14 @@ public sealed class ResearchSessionAndRunnerTests
         var prompt = ResearchRoleExecutor.BuildUserContent(context, new[] { toolResult }, governance, out var stats);
 
         Assert.NotNull(stats);
-        Assert.True(stats!.OriginalUpstreamChars > stats.CompactedUpstreamChars);
-        Assert.True(stats.OriginalToolChars > stats.CompactedToolChars);
-        Assert.Contains("本地模型上下文压缩说明", prompt);
+        Assert.True(stats!.OriginalUpstreamChars > 0);
+        Assert.True(stats.OriginalToolChars > 0);
+        Assert.DoesNotContain("本地模型上下文压缩说明", prompt);
         Assert.Contains("\"claim\":\"看多结论\"", prompt);
         Assert.Contains("\"risk_limits\"", prompt);
         Assert.Contains("\"invalidations\"", prompt);
-        Assert.Contains("\"evidenceRefs\"", prompt);
-        Assert.DoesNotContain("evidence_details", prompt);
-        Assert.DoesNotContain($"detail-19-{longNarrative}", prompt);
+        Assert.Contains("\"evidence\"", prompt);
+        Assert.Contains("evidence_details", prompt);
     }
 
     [Fact]
@@ -1155,8 +1154,8 @@ public sealed class ResearchSessionAndRunnerTests
         Assert.Equal(ResearchRoleStatus.Completed, result.Status);
         Assert.NotNull(llm.LastRequest);
         Assert.Contains("继续看多", llm.LastRequest!.Prompt);
-        Assert.Contains("本地模型上下文压缩说明", llm.LastRequest.Prompt);
-        Assert.DoesNotContain("local-marker-319", llm.LastRequest.Prompt);
+        Assert.DoesNotContain("本地模型上下文压缩说明", llm.LastRequest.Prompt);
+        Assert.Contains("local-marker-319", llm.LastRequest.Prompt);
     }
 
     [Fact]
@@ -1198,8 +1197,8 @@ public sealed class ResearchSessionAndRunnerTests
         Assert.Equal(ResearchRoleStatus.Completed, result.Status);
         Assert.NotNull(llm.LastRequest);
         Assert.Contains("继续看多", llm.LastRequest!.Prompt);
-        Assert.Contains("本地模型上下文压缩说明", llm.LastRequest.Prompt);
-        Assert.DoesNotContain("failsafe-marker-319", llm.LastRequest.Prompt);
+        Assert.DoesNotContain("本地模型上下文压缩说明", llm.LastRequest.Prompt);
+        Assert.Contains("failsafe-marker-319", llm.LastRequest.Prompt);
     }
 
     [Fact]
@@ -1270,14 +1269,11 @@ public sealed class ResearchSessionAndRunnerTests
         var prompt = ResearchRoleExecutor.BuildUserContent(context, new[] { malformedToolResult }, governance, out var stats);
 
         Assert.NotNull(stats);
-        Assert.True(stats!.OriginalUpstreamChars > stats.CompactedUpstreamChars);
-        Assert.True(stats.OriginalToolChars > stats.CompactedToolChars);
-        Assert.Contains("\"fallbackType\":\"malformed_json\"", prompt);
-        Assert.Contains("\"charCount\":", prompt);
-        Assert.Contains("\"preview\":\"", prompt);
-        Assert.DoesNotContain("raw_excerpt", prompt);
-        Assert.DoesNotContain("malformed-marker-259", prompt);
-        Assert.True(prompt.Length < 2500);
+        Assert.True(stats!.OriginalUpstreamChars > 0);
+        Assert.True(stats.OriginalToolChars > 0);
+        // Malformed JSON cannot be parsed — passes through unchanged
+        Assert.Contains("malformed-marker-000", prompt);
+        Assert.Contains("malformed-marker-259", prompt);
     }
 
     [Fact]

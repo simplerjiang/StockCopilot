@@ -2,7 +2,7 @@ namespace SimplerJiangAiAgent.Api.Infrastructure.Llm;
 
 public static class OllamaRuntimeDefaults
 {
-    public const int NumCtx = 4096;
+    public const int NumCtx = 131072;
     public const int NumGpu = 99;
     public const string KeepAlive = "5m";
     public const int NumPredict = 2048;

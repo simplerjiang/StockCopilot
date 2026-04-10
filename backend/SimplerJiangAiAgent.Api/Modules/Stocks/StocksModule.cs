@@ -88,6 +88,7 @@ public sealed class StocksModule : IModule
         services.AddSingleton<IResearchEventBus, ResearchEventBus>();
         services.AddScoped<IResearchArtifactService, ResearchArtifactService>();
         services.AddScoped<IResearchReportService, ResearchReportService>();
+        services.AddSingleton<Infrastructure.Logging.ISessionFileLogger, Infrastructure.Logging.SessionFileLogger>();
         services.AddSingleton<IRecommendEventBus, RecommendEventBus>();
         services.AddSingleton<IRecommendRoleContractRegistry, RecommendRoleContractRegistry>();
         services.AddScoped<IRecommendToolDispatcher, RecommendToolDispatcher>();

@@ -548,6 +548,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var support = bundle.KLines.TakeLast(20).DefaultIfEmpty().Min(item => item?.Low ?? latestClose);
         var resistance = bundle.KLines.TakeLast(20).DefaultIfEmpty().Max(item => item?.High ?? latestClose);
         var trend = prepared.Features.Trend;
+        var klineNarrative = BuildKlineNarrativeSummary(bundle.KLines, normalizedSymbol, safeInterval);
         var data = new StockCopilotKlineDataDto(
             normalizedSymbol,
             safeInterval,
@@ -564,7 +565,8 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             trend.Return5dPercent,
             trend.Return20dPercent,
             trend.AtrPercent,
-            trend.BreakoutDistancePercent);
+            trend.BreakoutDistancePercent,
+            klineNarrative);
 
         stopwatch.Stop();
         return BuildEnvelope(
@@ -617,6 +619,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             ? decimal.Round((high.Value - low.Value) / low.Value * 100m, 2)
             : (decimal?)null;
 
+        var minuteNarrative = BuildMinuteNarrativeSummary(bundle.MinuteLines, normalizedSymbol);
         var data = new StockCopilotMinuteDataDto(
             normalizedSymbol,
             prepared.Features.Trend.SessionPhase,
@@ -625,7 +628,8 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             prepared.Features.Trend.Vwap > 0m ? prepared.Features.Trend.Vwap : (decimal?)null,
             openingDrive,
             afternoonDrift,
-            rangePercent);
+            rangePercent,
+            minuteNarrative);
 
         stopwatch.Stop();
         return BuildEnvelope(
@@ -905,6 +909,96 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             marketContext: null,
             degradedFlags: degradedFlags,
             warnings: Array.Empty<string>()));
+    }
+
+    private static string BuildKlineNarrativeSummary(IReadOnlyList<KLinePointDto> bars, string symbol, string interval)
+    {
+        if (bars.Count == 0) return "无K线数据";
+        var sb = new StringBuilder();
+        sb.AppendLine($"【{symbol} 近{bars.Count}个{(interval == "day" ? "交易日" : interval)}K线数据】");
+
+        // Show last 30 bars max for narrative (most relevant recent data)
+        var recentBars = bars.Count > 30 ? bars.Skip(bars.Count - 30).ToList() : bars;
+
+        foreach (var bar in recentBars)
+        {
+            var changePercent = bar.Open > 0 ? Math.Round((double)((bar.Close - bar.Open) / bar.Open * 100m), 2) : 0;
+            var sign = changePercent >= 0 ? "+" : "";
+            sb.AppendLine($"{bar.Date:MM-dd}: 开{bar.Open:F2} 高{bar.High:F2} 低{bar.Low:F2} 收{bar.Close:F2} {sign}{changePercent}% 量{FormatVolume(bar.Volume)}");
+        }
+
+        if (bars.Count > 30)
+        {
+            sb.AppendLine($"（仅展示最近30个交易日，完整数据共{bars.Count}条）");
+        }
+
+        // Add summary statistics
+        var latest = bars[^1];
+        var earliest = bars[0];
+        var periodChange = earliest.Close > 0 ? Math.Round((double)((latest.Close - earliest.Close) / earliest.Close * 100m), 2) : 0;
+        var highestPrice = bars.Max(b => b.High);
+        var lowestPrice = bars.Min(b => b.Low);
+        sb.AppendLine($"期间统计: 起始{earliest.Close:F2}→当前{latest.Close:F2} 区间涨跌幅{(periodChange >= 0 ? "+" : "")}{periodChange}% 最高{highestPrice:F2} 最低{lowestPrice:F2}");
+
+        return sb.ToString();
+    }
+
+    private static string FormatVolume(decimal volume)
+    {
+        if (volume >= 100_000_000m) return $"{volume / 100_000_000m:F2}亿";
+        if (volume >= 10_000m) return $"{volume / 10_000m:F1}万";
+        return $"{volume:F0}";
+    }
+
+    private static string BuildMinuteNarrativeSummary(IReadOnlyList<MinuteLinePointDto> points, string symbol)
+    {
+        if (points.Count == 0) return "无分时数据";
+        var sb = new StringBuilder();
+        sb.AppendLine($"【{symbol} 今日分时走势（30分钟区间）】");
+
+        // Group by 30-minute buckets
+        var bucketStarts = new[] {
+            new TimeSpan(9, 30, 0), new TimeSpan(10, 0, 0), new TimeSpan(10, 30, 0),
+            new TimeSpan(11, 0, 0),
+            new TimeSpan(13, 0, 0), new TimeSpan(13, 30, 0), new TimeSpan(14, 0, 0),
+            new TimeSpan(14, 30, 0)
+        };
+        var bucketEnds = new[] {
+            new TimeSpan(10, 0, 0), new TimeSpan(10, 30, 0), new TimeSpan(11, 0, 0),
+            new TimeSpan(11, 30, 0),
+            new TimeSpan(13, 30, 0), new TimeSpan(14, 0, 0), new TimeSpan(14, 30, 0),
+            new TimeSpan(15, 0, 0)
+        };
+
+        for (int i = 0; i < bucketStarts.Length; i++)
+        {
+            var start = bucketStarts[i];
+            var end = bucketEnds[i];
+            var inBucket = points.Where(p => p.Time >= start && p.Time < end).ToList();
+            if (inBucket.Count == 0) continue;
+
+            var high = inBucket.Max(p => p.Price);
+            var low = inBucket.Min(p => p.Price);
+            var openP = inBucket[0].Price;
+            var closeP = inBucket[^1].Price;
+            var totalVol = inBucket.Sum(p => p.Volume);
+            var changePercent = openP > 0 ? Math.Round((double)((closeP - openP) / openP * 100m), 2) : 0;
+            var sign = changePercent >= 0 ? "+" : "";
+            sb.AppendLine($"{start:hh\\:mm}-{end:hh\\:mm}: 高{high:F2} 低{low:F2} {sign}{changePercent}% 量{FormatVolume(totalVol)}");
+        }
+
+        // Overall summary
+        if (points.Count > 0)
+        {
+            var dayOpen = points[0].Price;
+            var dayClose = points[^1].Price;
+            var dayHigh = points.Max(p => p.Price);
+            var dayLow = points.Min(p => p.Price);
+            var dayChange = dayOpen > 0 ? Math.Round((double)((dayClose - dayOpen) / dayOpen * 100m), 2) : 0;
+            sb.AppendLine($"全天: 开{dayOpen:F2} 高{dayHigh:F2} 低{dayLow:F2} 收{dayClose:F2} 涨跌幅{(dayChange >= 0 ? "+" : "")}{dayChange}%");
+        }
+
+        return sb.ToString();
     }
 
     private static IReadOnlyList<StockCopilotStrategySignalDto> BuildStrategySignals(IReadOnlyList<KLinePointDto> kLines, IReadOnlyList<MinuteLinePointDto> minuteLines, IReadOnlyList<string> strategies, string interval)

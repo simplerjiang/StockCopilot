@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
+using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -50,7 +51,9 @@ public sealed class ResearchRunner : IResearchRunner
     private readonly IResearchFollowUpRoutingService _followUpRoutingService;
     private readonly ILogger<ResearchRunner> _logger;
     private readonly ILlmSettingsStore? _llmSettingsStore;
+    private readonly ISessionFileLogger? _sessionLogger;
     private string? _positionContext;
+    private string? _resolvedStockName;
 
     public ResearchRunner(
         AppDbContext dbContext,
@@ -59,7 +62,7 @@ public sealed class ResearchRunner : IResearchRunner
         IResearchReportService reportService,
         IResearchFollowUpRoutingService followUpRoutingService,
         ILogger<ResearchRunner> logger)
-        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, null)
+        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, null, null)
     {
     }
 
@@ -71,6 +74,19 @@ public sealed class ResearchRunner : IResearchRunner
         IResearchFollowUpRoutingService followUpRoutingService,
         ILogger<ResearchRunner> logger,
         ILlmSettingsStore? llmSettingsStore)
+        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, llmSettingsStore, null)
+    {
+    }
+
+    public ResearchRunner(
+        AppDbContext dbContext,
+        IResearchRoleExecutor roleExecutor,
+        IResearchEventBus eventBus,
+        IResearchReportService reportService,
+        IResearchFollowUpRoutingService followUpRoutingService,
+        ILogger<ResearchRunner> logger,
+        ILlmSettingsStore? llmSettingsStore,
+        ISessionFileLogger? sessionLogger)
     {
         _dbContext = dbContext;
         _roleExecutor = roleExecutor;
@@ -79,6 +95,7 @@ public sealed class ResearchRunner : IResearchRunner
         _followUpRoutingService = followUpRoutingService;
         _logger = logger;
         _llmSettingsStore = llmSettingsStore;
+        _sessionLogger = sessionLogger;
     }
 
     public async Task RunTurnAsync(long turnId, CancellationToken cancellationToken = default)
@@ -144,6 +161,20 @@ public sealed class ResearchRunner : IResearchRunner
         _positionContext = position is not null && position.QuantityLots > 0
             ? $"用户当前持仓：{position.QuantityLots} 手，均价 {position.AverageCostPrice:F2} 元"
             : null;
+
+        // Resolve stock name from DB (company profile or quote snapshot) before pipeline starts
+        _resolvedStockName = (await _dbContext.StockCompanyProfiles
+            .Where(p => p.Symbol == session.Symbol)
+            .Select(p => p.Name)
+            .FirstOrDefaultAsync(CancellationToken.None))
+            ?? (await _dbContext.StockQuoteSnapshots
+                .Where(q => q.Symbol == session.Symbol)
+                .OrderByDescending(q => q.Timestamp)
+                .Select(q => q.Name)
+                .FirstOrDefaultAsync(CancellationToken.None));
+
+        _sessionLogger?.LogTurnStart("research", session.Id, turn.Id, turn.TurnIndex,
+            session.Symbol, _resolvedStockName, turn.UserPrompt ?? session.Name ?? "");
 
         // ── Determine effective start stage ──
         var effectiveRerunFrom = 0;
@@ -282,6 +313,12 @@ public sealed class ResearchRunner : IResearchRunner
 
                 upstreamArtifacts.AddRange(stageResult.Outputs);
 
+                // Fallback: extract stock name from LLM output if MCP tool extraction missed it
+                if (stageDef.StageType == ResearchStageType.CompanyOverviewPreflight && _resolvedStockName is null)
+                {
+                    _resolvedStockName = TryExtractStockName(stageResult.Outputs);
+                }
+
                 // R5: persist structured debate/risk/proposal artifacts from role outputs
                 await PersistStructuredArtifactsAsync(session, turn, stageDef, stageResult, cancellationToken);
 
@@ -330,6 +367,7 @@ public sealed class ResearchRunner : IResearchRunner
         }
         finally
         {
+            _sessionLogger?.LogTurnEnd(session.Id, turn.Id, turn.Status.ToString());
             await PersistFeedItemsAsync(turn.Id, CancellationToken.None);
         }
     }
@@ -385,6 +423,12 @@ public sealed class ResearchRunner : IResearchRunner
                 if (r.Status == ResearchRoleStatus.Failed) { failed = true; break; }
                 if (r.Status == ResearchRoleStatus.Degraded) degradedFlags.AddRange(r.DegradedFlags);
                 if (r.OutputContentJson is not null) outputs.Add($"[{roleId}]\n{r.OutputContentJson}");
+
+                // Extract stock name from MCP tool data when CompanyOverview completes
+                if (stageDef.StageType == ResearchStageType.CompanyOverviewPreflight && _resolvedStockName is null)
+                {
+                    _resolvedStockName = TryExtractStockNameFromToolRefs(r.OutputRefsJson);
+                }
             }
         }
 
@@ -543,7 +587,7 @@ public sealed class ResearchRunner : IResearchRunner
 
             execContexts.Add(new RoleExecutionContext(
                 session.Id, turn.Id, stage.Id, session.Symbol, roleId,
-                turn.UserPrompt, upstreamArtifacts, _positionContext));
+                turn.UserPrompt, upstreamArtifacts, _positionContext, _resolvedStockName));
         }
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -598,7 +642,7 @@ public sealed class ResearchRunner : IResearchRunner
 
         var context = new RoleExecutionContext(
             session.Id, turn.Id, stage.Id, session.Symbol, roleId,
-            turn.UserPrompt, upstreamArtifacts, _positionContext);
+            turn.UserPrompt, upstreamArtifacts, _positionContext, _resolvedStockName);
 
         var result = await _roleExecutor.ExecuteRoleAsync(context, cancellationToken);
 
@@ -1350,6 +1394,86 @@ public sealed class ResearchRunner : IResearchRunner
         ResearchEventType.TurnFailed => ResearchFeedItemType.ErrorNotice,
         _ => ResearchFeedItemType.SystemNotice
     };
+
+    private static string? TryExtractStockName(IReadOnlyList<string> outputs)
+    {
+        foreach (var output in outputs)
+        {
+            // Output format: "[company_overview_analyst]\n{json}"
+            var jsonStart = output.IndexOf('\n');
+            if (jsonStart < 0) continue;
+            var json = output[(jsonStart + 1)..];
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("companyName", out var nameEl) && nameEl.ValueKind == JsonValueKind.String)
+                {
+                    var name = nameEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+                if (doc.RootElement.TryGetProperty("shortName", out var shortEl) && shortEl.ValueKind == JsonValueKind.String)
+                {
+                    var name = shortEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+            catch (JsonException) { /* not valid JSON, skip */ }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Extract stock name from MCP tool results stored in OutputRefsJson.
+    /// The CompanyOverviewMcp tool returns an envelope with data.name containing the stock name.
+    /// </summary>
+    private static string? TryExtractStockNameFromToolRefs(string? outputRefsJson)
+    {
+        if (string.IsNullOrWhiteSpace(outputRefsJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(outputRefsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+
+            foreach (var refElement in doc.RootElement.EnumerateArray())
+            {
+                // Match the CompanyOverviewMcp tool
+                if (!refElement.TryGetProperty("toolName", out var toolNameEl) ||
+                    toolNameEl.GetString() != StockMcpToolNames.CompanyOverview)
+                    continue;
+
+                if (!refElement.TryGetProperty("status", out var statusEl) ||
+                    !string.Equals(statusEl.GetString(), "Completed", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!refElement.TryGetProperty("resultJson", out var resultJsonEl) ||
+                    resultJsonEl.ValueKind != JsonValueKind.String)
+                    continue;
+
+                var resultJson = resultJsonEl.GetString();
+                if (string.IsNullOrWhiteSpace(resultJson)) continue;
+
+                using var resultDoc = JsonDocument.Parse(resultJson);
+                // Navigate: envelope.data.name
+                if (resultDoc.RootElement.TryGetProperty("data", out var dataEl) &&
+                    dataEl.TryGetProperty("name", out var nameEl) &&
+                    nameEl.ValueKind == JsonValueKind.String)
+                {
+                    var name = nameEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+
+                // Fallback: top-level "name" in case envelope structure varies
+                if (resultDoc.RootElement.TryGetProperty("name", out var topNameEl) &&
+                    topNameEl.ValueKind == JsonValueKind.String)
+                {
+                    var name = topNameEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+        }
+        catch (JsonException) { /* malformed JSON, skip */ }
+        return null;
+    }
 
     private sealed record StageDefinition(ResearchStageType StageType, ResearchStageExecutionMode ExecutionMode, IReadOnlyList<string> RoleIds);
     private sealed record StageResult(ResearchStageStatus Status, List<string> Outputs, List<string> DegradedFlags);

@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Diagnostics;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
+using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -10,7 +12,8 @@ public sealed record RoleExecutionContext(
     long SessionId, long TurnId, long StageId,
     string Symbol, string RoleId, string UserPrompt,
     IReadOnlyList<string> UpstreamArtifacts,
-    string? PositionContext = null);
+    string? PositionContext = null,
+    string? StockName = null);
 
 public sealed record RoleExecutionResult(
     string RoleId,
@@ -44,19 +47,12 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
     private readonly IResearchEventBus _eventBus;
     private readonly ILogger<ResearchRoleExecutor> _logger;
     private readonly ILlmSettingsStore? _llmSettingsStore;
+    private readonly ISessionFileLogger? _sessionLogger;
 
     internal sealed record PromptGovernancePlan(
         string ProviderKey,
         string Model,
-        int NumCtx,
-        int UpstreamBudgetChars,
-        int ToolBudgetChars,
-        int MaxArtifactChars,
-        int MaxToolChars,
-        int MaxStringChars,
-        int MaxArrayItems,
-        int MaxObjectProperties,
-        int MaxDepth);
+        int NumCtx);
 
     internal sealed record PromptGovernanceStats(
         int OriginalUpstreamChars,
@@ -74,7 +70,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         ILlmService llmService,
         IResearchEventBus eventBus,
         ILogger<ResearchRoleExecutor> logger)
-        : this(mcpGateway, policyService, contractRegistry, llmService, eventBus, logger, null)
+        : this(mcpGateway, policyService, contractRegistry, llmService, eventBus, logger, null, null)
     {
     }
 
@@ -86,6 +82,19 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         IResearchEventBus eventBus,
         ILogger<ResearchRoleExecutor> logger,
         ILlmSettingsStore? llmSettingsStore)
+        : this(mcpGateway, policyService, contractRegistry, llmService, eventBus, logger, llmSettingsStore, null)
+    {
+    }
+
+    public ResearchRoleExecutor(
+        IMcpToolGateway mcpGateway,
+        IRoleToolPolicyService policyService,
+        IStockAgentRoleContractRegistry contractRegistry,
+        ILlmService llmService,
+        IResearchEventBus eventBus,
+        ILogger<ResearchRoleExecutor> logger,
+        ILlmSettingsStore? llmSettingsStore,
+        ISessionFileLogger? sessionLogger)
     {
         _mcpGateway = mcpGateway;
         _policyService = policyService;
@@ -94,6 +103,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         _eventBus = eventBus;
         _logger = logger;
         _llmSettingsStore = llmSettingsStore;
+        _sessionLogger = sessionLogger;
     }
 
     private const int MaxLlmRetries = 2;
@@ -103,8 +113,8 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
     private const int DefaultFinancialTrendPeriods = 8;
     private static readonly TimeSpan DefaultToolTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan MarketContextToolTimeout = TimeSpan.FromSeconds(90);
-    private static readonly TimeSpan LlmCallTimeout = TimeSpan.FromSeconds(180);
-    private static readonly int[] LlmRetryDelaysMs = [2000, 5000];
+    private static readonly TimeSpan LlmCallTimeout = TimeSpan.FromSeconds(600);
+    private static readonly int[] LlmRetryDelaysMs = [3000, 8000];
     private static readonly int[] ToolRetryDelaysMs = [2000, 5000, 15000];
     // Limit concurrent MCP tool calls across all parallel roles to avoid external API throttling
     private static readonly SemaphoreSlim McpConcurrencyGate = new(4);
@@ -248,6 +258,22 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         ["tool"] = 51,
         ["evidenceCount"] = 52
     };
+    private static readonly HashSet<string> ProtectedJsonPropertyNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "symbol", "name", "companyName", "shortName", "stockName",
+        "price", "changePercent", "quoteTimestamp",
+        "peRatio", "roe", "revenue", "netProfit", "eps",
+        "trendState", "return5dPercent", "return20dPercent",
+        "support", "resistance", "ma5", "ma20",
+        "narrativeSummary", "sessionPhase", "vwap",
+        "rating", "decision", "stance", "action",
+        "headline", "summary", "coreThesis",
+        "industry", "mainBusiness", "sectorName",
+        "sentimentScore", "sentimentTrend",
+        "qualityView", "valuationView",
+        "shareholderTrend", "institutionActivity"
+    };
+
     private static readonly HashSet<string> SkippedPropertyNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "evidence_details",
@@ -400,6 +426,10 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
                             null,
                             Array.Empty<string>()));
 
+                        _sessionLogger?.LogRoleToolCall(context.SessionId, context.TurnId, context.RoleId,
+                            toolName, JsonSerializer.Serialize(new { symbol = context.Symbol }, RelaxedJsonOptions),
+                            outcome.ResultJson!);
+
                         var toolSummary = BuildToolSummary(toolName, outcome.ResultJson!);
                         _eventBus.Publish(new ResearchEvent(
                             ResearchEventType.ToolCompleted,
@@ -438,24 +468,24 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         var systemPrompt = TradingWorkbenchPromptTemplates.GetSystemPrompt(context.RoleId);
         var promptGovernance = await ResolvePromptGovernanceAsync(cancellationToken);
         var userContent = BuildUserContent(context, toolResults, promptGovernance, out var promptStats);
-        if (promptGovernance is not null && promptStats is not null)
+        if (promptStats is not null)
         {
             _logger.LogInformation(
-                "Role {RoleId}: local prompt governance applied provider={Provider} model={Model} numCtx={NumCtx} upstreamChars={OriginalUpstreamChars}->{CompactedUpstreamChars} toolChars={OriginalToolChars}->{CompactedToolChars} userContentChars={TotalUserContentChars} upstreamBudget={UpstreamBudgetChars} toolBudget={ToolBudgetChars}",
+                "Role {RoleId}: prompt null-cleanup applied provider={Provider} model={Model} numCtx={NumCtx} upstreamChars={OriginalUpstreamChars}->{CompactedUpstreamChars} toolChars={OriginalToolChars}->{CompactedToolChars} userContentChars={TotalUserContentChars}",
                 context.RoleId,
-                promptGovernance.ProviderKey,
-                promptGovernance.Model,
-                promptGovernance.NumCtx,
+                promptGovernance?.ProviderKey ?? "n/a",
+                promptGovernance?.Model ?? "n/a",
+                promptGovernance?.NumCtx ?? 0,
                 promptStats.OriginalUpstreamChars,
                 promptStats.CompactedUpstreamChars,
                 promptStats.OriginalToolChars,
                 promptStats.CompactedToolChars,
-                promptStats.TotalUserContentChars,
-                promptGovernance.UpstreamBudgetChars,
-                promptGovernance.ToolBudgetChars);
+                promptStats.TotalUserContentChars);
         }
         var traceId = $"research-{context.SessionId}-{context.TurnId}-{context.RoleId}";
         Exception? lastLlmException = null;
+
+        _sessionLogger?.LogRoleLlmRequest(context.SessionId, context.TurnId, context.RoleId, systemPrompt, userContent);
 
         for (var attempt = 0; attempt <= MaxLlmRetries; attempt++)
         {
@@ -475,11 +505,16 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
 
                 using var llmCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 llmCts.CancelAfter(LlmCallTimeout);
+                var llmSw = Stopwatch.StartNew();
                 var llmResult = await _llmService.ChatAsync("active",
                     new LlmChatRequest($"{systemPrompt}\n\n{userContent}", null, 0.3, false, traceId,
                         ResponseFormat: LlmResponseFormats.Json,
                         MaxOutputTokens: 4096),
                     llmCts.Token);
+                llmSw.Stop();
+
+                _sessionLogger?.LogRoleLlmResponse(context.SessionId, context.TurnId, context.RoleId,
+                    llmResult.Content ?? "", llmResult.TraceId, llmSw.ElapsedMilliseconds);
 
                 var feedSummary = ExtractFeedSummary(llmResult.Content);
 
@@ -522,6 +557,9 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         // All LLM retries exhausted
         _logger.LogError(lastLlmException, "Role {RoleId}: LLM failed after {MaxAttempts} attempts",
             context.RoleId, MaxLlmRetries + 1);
+
+        _sessionLogger?.LogRoleLlmError(context.SessionId, context.TurnId, context.RoleId,
+            lastLlmException?.GetType().Name ?? "Unknown", lastLlmException?.Message ?? "Unknown error");
 
         _eventBus.Publish(new ResearchEvent(
             ResearchEventType.RoleFailed,
@@ -673,29 +711,14 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
     private static PromptGovernancePlan CreateFailSafePromptGovernance()
     {
         return CreateLocalPromptGovernance(
-            Math.Max(1024, OllamaRuntimeDefaults.NumCtx / 2),
+            OllamaRuntimeDefaults.NumCtx,
             "failsafe_compact",
             "resolution_failed");
     }
 
     internal static PromptGovernancePlan CreateLocalPromptGovernance(int numCtx, string providerKey = "ollama", string? model = null)
     {
-        var totalPromptBudget = Math.Clamp(numCtx * 6, 8000, 48000);
-        var upstreamBudget = (int)Math.Round(totalPromptBudget * 0.45d, MidpointRounding.AwayFromZero);
-        var toolBudget = totalPromptBudget - upstreamBudget;
-
-        return new PromptGovernancePlan(
-            providerKey,
-            model ?? string.Empty,
-            numCtx,
-            upstreamBudget,
-            int.MaxValue,                                  // ToolBudgetChars – no cap
-            Math.Clamp(upstreamBudget / 4, 900, 2800),    // MaxArtifactChars
-            int.MaxValue,                                  // MaxToolChars – no cap
-            100_000,                                       // MaxStringChars – effectively unlimited
-            10_000,                                        // MaxArrayItems – effectively unlimited
-            10_000,                                        // MaxObjectProperties – effectively unlimited
-            20);                                           // MaxDepth – generous
+        return new PromptGovernancePlan(providerKey, model ?? string.Empty, numCtx);
     }
 
     internal static string BuildUserContent(
@@ -704,32 +727,27 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         PromptGovernancePlan? governance,
         out PromptGovernanceStats? stats)
     {
-        IReadOnlyList<string> upstreamArtifacts = context.UpstreamArtifacts;
-        IReadOnlyList<string> localToolResults = toolResults;
         var originalUpstreamChars = context.UpstreamArtifacts.Sum(static item => item.Length);
         var originalToolChars = toolResults.Sum(static item => item.Length);
-        var compactedUpstreamChars = originalUpstreamChars;
-        var compactedToolChars = originalToolChars;
 
-        if (governance is not null)
-        {
-            upstreamArtifacts = CompactUpstreamArtifacts(context.UpstreamArtifacts, governance, out compactedUpstreamChars);
-            localToolResults = CompactToolResults(toolResults, governance, out compactedToolChars);
-        }
+        // Always apply null/empty cleanup to JSON data (regardless of provider)
+        var upstreamArtifacts = CleanJsonContents(context.UpstreamArtifacts);
+        var localToolResults = CleanJsonContents(toolResults);
+
+        var compactedUpstreamChars = upstreamArtifacts.Sum(static item => item.Length);
+        var compactedToolChars = localToolResults.Sum(static item => item.Length);
 
         var sb = new StringBuilder();
-        sb.AppendLine($"## 目标个股: {context.Symbol}");
+        var stockLabel = string.IsNullOrEmpty(context.StockName)
+            ? context.Symbol
+            : $"{context.Symbol} ({context.StockName})";
+        sb.AppendLine($"## 目标个股: {stockLabel}");
+        sb.AppendLine($"## 当前时间: {DateTime.Now:yyyy-MM-dd HH:mm} (北京时间)");
         sb.AppendLine($"## 用户意图: {context.UserPrompt}");
 
         if (!string.IsNullOrEmpty(context.PositionContext))
         {
             sb.AppendLine($"\n## 用户持仓信息:\n{context.PositionContext}");
-        }
-
-        if (governance is not null && (upstreamArtifacts.Count > 0 || localToolResults.Count > 0))
-        {
-            sb.AppendLine("\n## 本地模型上下文压缩说明:");
-            sb.AppendLine("以下上游产出与工具结果已压缩，只保留关键信息、评级、风险限制和证据引用，长数组与噪声细节已省略。");
         }
 
         if (upstreamArtifacts.Count > 0)
@@ -752,436 +770,75 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             }
         }
 
-        stats = governance is null
-            ? null
-            : new PromptGovernanceStats(
-                originalUpstreamChars,
-                compactedUpstreamChars,
-                originalToolChars,
-                compactedToolChars,
-                sb.Length,
-                context.UpstreamArtifacts.Count,
-                toolResults.Count);
+        stats = new PromptGovernanceStats(
+            originalUpstreamChars,
+            compactedUpstreamChars,
+            originalToolChars,
+            compactedToolChars,
+            sb.Length,
+            context.UpstreamArtifacts.Count,
+            toolResults.Count);
 
         return sb.ToString();
     }
 
-    private static IReadOnlyList<string> CompactUpstreamArtifacts(
-        IReadOnlyList<string> upstreamArtifacts,
-        PromptGovernancePlan governance,
-        out int compactedChars)
+    private static IReadOnlyList<string> CleanJsonContents(IReadOnlyList<string> items)
     {
-        var compacted = upstreamArtifacts
-            .Select(item => CompactUpstreamArtifact(item, governance))
-            .ToArray();
-
-        return ApplySectionBudget(compacted, governance.UpstreamBudgetChars, governance.MaxArtifactChars, "上游产出", out compactedChars);
+        return items.Select(CleanJsonContent).ToArray();
     }
 
-    private static IReadOnlyList<string> CompactToolResults(
-        IReadOnlyList<string> toolResults,
-        PromptGovernancePlan governance,
-        out int compactedChars)
+    private static string CleanJsonContent(string content)
     {
-        var compacted = toolResults
-            .Select(item => CompactToolResult(item, governance))
-            .ToArray();
-
-        return ApplySectionBudget(compacted, governance.ToolBudgetChars, governance.MaxToolChars, "工具结果", out compactedChars);
-    }
-
-    private static IReadOnlyList<string> ApplySectionBudget(
-        IReadOnlyList<string> items,
-        int totalBudget,
-        int perItemBudget,
-        string itemLabel,
-        out int compactedChars)
-    {
-        if (items.Count == 0)
-        {
-            compactedChars = 0;
-            return Array.Empty<string>();
-        }
-
-        var output = new List<string>(items.Count);
-        var used = 0;
-        var processed = 0;
-
-        foreach (var item in items)
-        {
-            processed++;
-            var boundedItem = TruncateAtBoundary(item, perItemBudget);
-            if (string.IsNullOrWhiteSpace(boundedItem))
-            {
-                continue;
-            }
-
-            if (used + boundedItem.Length > totalBudget)
-            {
-                var remaining = totalBudget - used;
-                if (remaining > 180)
-                {
-                    var truncated = TruncateAtBoundary(boundedItem, remaining);
-                    if (!string.IsNullOrWhiteSpace(truncated))
-                    {
-                        output.Add(truncated);
-                        used += truncated.Length;
-                    }
-                }
-                break;
-            }
-
-            output.Add(boundedItem);
-            used += boundedItem.Length;
-        }
-
-        var omitted = Math.Max(0, items.Count - processed);
-        if (omitted > 0)
-        {
-            var note = $"[context_governance]\n为适配本地模型上下文，已省略 {omitted} 条{itemLabel}。";
-            if (used + note.Length <= totalBudget + 120)
-            {
-                output.Add(note);
-                used += note.Length;
-            }
-        }
-
-        compactedChars = output.Sum(static item => item.Length);
-        return output;
-    }
-
-    private static string CompactUpstreamArtifact(string artifact, PromptGovernancePlan governance)
-    {
-        var (roleId, content) = ResearchRunner.SplitRoleOutput(artifact);
-        var resolvedRoleId = string.IsNullOrWhiteSpace(roleId) ? "upstream" : roleId;
-        var jsonText = TryExtractJsonText(content);
+        var (label, body) = ResearchRunner.SplitRoleOutput(content);
+        var resolvedLabel = string.IsNullOrWhiteSpace(label) ? "item" : label;
+        var jsonText = TryExtractJsonText(body);
 
         if (jsonText is null)
         {
-            var normalized = NormalizeWhitespace(content);
-            return $"[{resolvedRoleId}]\n" + JsonSerializer.Serialize(new
-            {
-                roleId = resolvedRoleId,
-                fallbackType = ResolveFallbackType(content),
-                charCount = normalized.Length,
-                preview = TruncateAtBoundary(normalized, ResolveFallbackPreviewChars(governance))
-            }, RelaxedJsonOptions);
+            return content;
         }
 
         using var doc = JsonDocument.Parse(jsonText);
-        var compact = CompactJsonElement(doc.RootElement, governance, 0, null);
-        Dictionary<string, object?> payload;
-
-        if (compact is Dictionary<string, object?> compactObject)
-        {
-            payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["roleId"] = resolvedRoleId
-            };
-
-            foreach (var key in OrderPropertyNames(compactObject.Keys))
-            {
-                if (string.Equals(key, "roleId", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                payload[key] = compactObject[key];
-            }
-        }
-        else
-        {
-            payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["roleId"] = resolvedRoleId,
-                ["content"] = compact
-            };
-        }
-
-        return $"[{resolvedRoleId}]\n{JsonSerializer.Serialize(payload, CompactJsonOptions)}";
+        var cleaned = CompactJsonElement(doc.RootElement);
+        return $"[{resolvedLabel}]\n{JsonSerializer.Serialize(cleaned, CompactJsonOptions)}";
     }
 
-    private static string CompactToolResult(string toolResult, PromptGovernancePlan governance)
+    private static object? CompactJsonElement(JsonElement element)
     {
-        var (toolName, content) = ResearchRunner.SplitRoleOutput(toolResult);
-        var resolvedToolName = string.IsNullOrWhiteSpace(toolName) ? "tool" : toolName;
-        var jsonText = TryExtractJsonText(content);
-
-        if (jsonText is null)
-        {
-            var normalized = NormalizeWhitespace(content);
-            return $"[{resolvedToolName}]\n" + JsonSerializer.Serialize(new
-            {
-                tool = resolvedToolName,
-                summary = $"{resolvedToolName}: 已使用结构化回退摘要",
-                fallbackType = ResolveFallbackType(content),
-                charCount = normalized.Length,
-                preview = TruncateAtBoundary(normalized, ResolveFallbackPreviewChars(governance))
-            }, RelaxedJsonOptions);
-        }
-
-        using var doc = JsonDocument.Parse(jsonText);
-        var root = doc.RootElement;
-        var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["tool"] = resolvedToolName,
-            ["summary"] = BuildToolSummary(resolvedToolName, jsonText)
-        };
-
-        if (TryGetPropertyIgnoreCase(root, "degradedFlags", out var degradedFlags) && degradedFlags.ValueKind == JsonValueKind.Array)
-        {
-            payload["degradedFlags"] = CompactJsonElement(degradedFlags, governance, 0, "degradedFlags");
-        }
-
-        if (TryGetPropertyIgnoreCase(root, "warnings", out var warnings) && warnings.ValueKind == JsonValueKind.Array)
-        {
-            payload["warnings"] = CompactJsonElement(warnings, governance, 0, "warnings");
-        }
-
-        if (TryGetPropertyIgnoreCase(root, "errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
-        {
-            payload["errors"] = CompactJsonElement(errors, governance, 0, "errors");
-        }
-
-        if (TryGetPropertyIgnoreCase(root, "evidence", out var evidence) && evidence.ValueKind == JsonValueKind.Array)
-        {
-            payload["evidenceCount"] = evidence.GetArrayLength();
-
-            var evidenceRefs = BuildEvidenceRefs(evidence, governance);
-            if (evidenceRefs.Count > 0)
-            {
-                payload["evidenceRefs"] = evidenceRefs;
-            }
-        }
-
-        if (TryGetPropertyIgnoreCase(root, "data", out var data))
-        {
-            payload["data"] = CompactJsonElement(data, governance, 0, "data");
-        }
-        else
-        {
-            payload["data"] = CompactJsonElement(root, governance, 0, "data");
-        }
-
-        return $"[{resolvedToolName}]\n{JsonSerializer.Serialize(payload, CompactJsonOptions)}";
-    }
-
-    private static IReadOnlyList<string> BuildEvidenceRefs(JsonElement evidenceArray, PromptGovernancePlan governance)
-    {
-        var refs = new List<string>();
-        var index = 0;
-
-        foreach (var item in evidenceArray.EnumerateArray())
-        {
-            if (index >= governance.MaxArrayItems)
-            {
-                break;
-            }
-
-            index++;
-            if (item.ValueKind == JsonValueKind.String)
-            {
-                refs.Add(TruncateAtBoundary(NormalizeWhitespace(item.GetString()), governance.MaxStringChars));
-                continue;
-            }
-
-            if (item.ValueKind == JsonValueKind.Object)
-            {
-                var parts = new List<string>();
-                var source = ReadStringProperty(item, "source") ?? ReadStringProperty(item, "provider");
-                var title = ReadStringProperty(item, "title") ?? ReadStringProperty(item, "headline") ?? ReadStringProperty(item, "id");
-                var publishedAt = ReadStringProperty(item, "publishedAt") ?? ReadStringProperty(item, "published_at");
-
-                if (!string.IsNullOrWhiteSpace(source)) parts.Add(source);
-                if (!string.IsNullOrWhiteSpace(title)) parts.Add(title);
-                if (!string.IsNullOrWhiteSpace(publishedAt)) parts.Add(publishedAt);
-
-                refs.Add(parts.Count > 0
-                    ? TruncateAtBoundary(string.Join(" | ", parts), governance.MaxStringChars)
-                    : TruncateAtBoundary(item.GetRawText(), governance.MaxStringChars));
-                continue;
-            }
-
-            refs.Add(TruncateAtBoundary(item.GetRawText(), governance.MaxStringChars));
-        }
-
-        var total = evidenceArray.GetArrayLength();
-        if (total > refs.Count)
-        {
-            refs.Add($"... {total - refs.Count} more evidence refs ...");
-        }
-
-        return refs;
-    }
-
-    private static object? CompactJsonElement(JsonElement element, PromptGovernancePlan governance, int depth, string? propertyName)
-    {
-        if (depth >= governance.MaxDepth)
-        {
-            return SummarizeElement(element, governance);
-        }
-
         return element.ValueKind switch
         {
-            JsonValueKind.Object => CompactObject(element, governance, depth),
-            JsonValueKind.Array => CompactArray(element, governance, depth, propertyName),
-            JsonValueKind.String => CompactStringValue(element.GetString(), governance),
+            JsonValueKind.Object => CompactObject(element),
+            JsonValueKind.Array => element.EnumerateArray().Select(CompactJsonElement).ToArray(),
+            JsonValueKind.String => element.GetString(),
             JsonValueKind.Number => CompactNumber(element),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Null => null,
             JsonValueKind.Undefined => null,
-            _ => TruncateAtBoundary(element.GetRawText(), governance.MaxStringChars)
+            _ => element.GetRawText()
         };
     }
 
-    private static object? CompactStringValue(string? value, PromptGovernancePlan governance)
+    private static Dictionary<string, object?> CompactObject(JsonElement element)
     {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        if (IsGarbledText(value))
-            return null;
-
-        return TruncateAtBoundary(NormalizeWhitespace(value), governance.MaxStringChars);
-    }
-
-    /// <summary>
-    /// Detects if a string contains excessive garbled/mojibake characters.
-    /// Returns true if the string is predominantly garbled and should be discarded.
-    /// </summary>
-    private static bool IsGarbledText(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text) || text.Length < 20)
-            return false;
-
-        var garbledCount = 0;
-        var totalCount = 0;
-
-        foreach (var ch in text)
-        {
-            totalCount++;
-            // Count characters that are likely mojibake or garbled encoding:
-            // - Private Use Area (U+E000-U+F8FF)
-            // - Control chars except common whitespace
-            // - Hebrew block (U+0590-U+05FF) — garbled CJK indicator
-            // - Combining diacriticals (U+0300-U+036F)
-            // - NKo block (U+07F0-U+07FF) — rare, garbled indicator
-            if ((ch >= '\uE000' && ch <= '\uF8FF') ||
-                (ch < ' ' && ch != '\n' && ch != '\r' && ch != '\t') ||
-                (ch >= '\u0590' && ch <= '\u05FF') ||
-                (ch >= '\u0300' && ch <= '\u036F') ||
-                (ch >= '\u07F0' && ch <= '\u07FF'))
-            {
-                garbledCount++;
-            }
-        }
-
-        // If more than 15% of characters are garbled indicators, consider it garbled
-        return totalCount > 0 && (double)garbledCount / totalCount > 0.15;
-    }
-
-    private static Dictionary<string, object?> CompactObject(JsonElement element, PromptGovernancePlan governance, int depth)
-    {
-        var properties = element.EnumerateObject()
-            .Where(property => !SkippedPropertyNames.Contains(property.Name))
-            .OrderBy(property => GetPropertyPriority(property.Name))
-            .ThenBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
         var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var added = 0;
 
-        foreach (var property in properties)
+        foreach (var property in element.EnumerateObject())
         {
-            if (added >= governance.MaxObjectProperties && GetPropertyPriority(property.Name) >= 1000)
-            {
-                break;
-            }
+            if (property.Value.ValueKind == JsonValueKind.Null || property.Value.ValueKind == JsonValueKind.Undefined)
+                continue;
 
-            var compacted = CompactJsonElement(property.Value, governance, depth + 1, property.Name);
-
-            // Skip null values - they waste context without providing information
+            var compacted = CompactJsonElement(property.Value);
             if (compacted is null)
                 continue;
 
-            // Skip empty collections - they add no value
             if (compacted is System.Collections.ICollection { Count: 0 })
                 continue;
 
             result[property.Name] = compacted;
-            added++;
-        }
-
-        if (properties.Length > result.Count)
-        {
-            result["_omittedPropertyCount"] = properties.Length - result.Count;
         }
 
         return result;
-    }
-
-    private static object CompactArray(JsonElement element, PromptGovernancePlan governance, int depth, string? propertyName)
-    {
-        var items = element.EnumerateArray().ToArray();
-        if (items.Length == 0)
-        {
-            return Array.Empty<object?>();
-        }
-
-        if (ShouldSummarizeNoisyArray(items, governance, propertyName))
-        {
-            return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["count"] = items.Length,
-                ["sample"] = BuildArraySample(items, governance, depth + 1)
-            };
-        }
-
-        return BuildArraySample(items, governance, depth + 1);
-    }
-
-    private static bool ShouldSummarizeNoisyArray(JsonElement[] items, PromptGovernancePlan governance, string? propertyName)
-    {
-        return !string.IsNullOrWhiteSpace(propertyName)
-            && NoisyArrayPropertyNames.Contains(propertyName)
-            && items.Length > governance.MaxArrayItems * 2;
-    }
-
-    private static IReadOnlyList<object?> BuildArraySample(JsonElement[] items, PromptGovernancePlan governance, int depth)
-    {
-        if (items.Length <= governance.MaxArrayItems)
-        {
-            return items.Select(item => CompactJsonElement(item, governance, depth, null)).ToArray();
-        }
-
-        var headCount = Math.Max(1, governance.MaxArrayItems - 1);
-        var sample = new List<object?>(governance.MaxArrayItems + 1);
-
-        for (var index = 0; index < headCount; index++)
-        {
-            sample.Add(CompactJsonElement(items[index], governance, depth, null));
-        }
-
-        sample.Add($"... {items.Length - governance.MaxArrayItems} more items ...");
-        sample.Add(CompactJsonElement(items[^1], governance, depth, null));
-        return sample;
-    }
-
-    private static object SummarizeElement(JsonElement element, PromptGovernancePlan governance)
-    {
-        return element.ValueKind switch
-        {
-            JsonValueKind.Object => $"object({element.EnumerateObject().Count()} props)",
-            JsonValueKind.Array => $"array({element.GetArrayLength()} items)",
-            JsonValueKind.String => TruncateAtBoundary(NormalizeWhitespace(element.GetString()), governance.MaxStringChars),
-            JsonValueKind.Number => CompactNumber(element),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Null => string.Empty,
-            JsonValueKind.Undefined => string.Empty,
-            _ => TruncateAtBoundary(element.GetRawText(), governance.MaxStringChars)
-        };
     }
 
     private static object CompactNumber(JsonElement element)
@@ -1269,11 +926,6 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         return start >= 0 && start <= 32
             ? "malformed_json"
             : "plain_text";
-    }
-
-    private static int ResolveFallbackPreviewChars(PromptGovernancePlan governance)
-    {
-        return Math.Clamp(governance.MaxStringChars, 120, 220);
     }
 
     private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)

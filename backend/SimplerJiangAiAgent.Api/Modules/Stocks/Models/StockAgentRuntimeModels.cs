@@ -130,7 +130,8 @@ public sealed record StockCopilotKlineDataDto(
     decimal Return5dPercent,
     decimal Return20dPercent,
     decimal AtrPercent,
-    decimal BreakoutDistancePercent);
+    decimal BreakoutDistancePercent,
+    string? NarrativeSummary = null);
 
 public sealed record StockCopilotMinuteDataDto(
     string Symbol,
@@ -140,7 +141,8 @@ public sealed record StockCopilotMinuteDataDto(
     decimal? Vwap,
     decimal? OpeningDrivePercent,
     decimal? AfternoonDriftPercent,
-    decimal? IntradayRangePercent);
+    decimal? IntradayRangePercent,
+    string? NarrativeSummary = null);
 
 public sealed record StockCopilotStrategySignalDto(
     string Strategy,

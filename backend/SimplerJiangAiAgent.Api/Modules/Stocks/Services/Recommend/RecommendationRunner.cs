@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
+using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
 
@@ -24,6 +25,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
     private readonly ILlmService _llmService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RecommendationRunner> _logger;
+    private readonly ISessionFileLogger? _sessionLogger;
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
     {
@@ -37,6 +39,18 @@ public sealed class RecommendationRunner : IRecommendationRunner
         ILlmService llmService,
         IServiceScopeFactory scopeFactory,
         ILogger<RecommendationRunner> logger)
+        : this(db, roleExecutor, eventBus, llmService, scopeFactory, logger, null)
+    {
+    }
+
+    public RecommendationRunner(
+        AppDbContext db,
+        IRecommendationRoleExecutor roleExecutor,
+        IRecommendEventBus eventBus,
+        ILlmService llmService,
+        IServiceScopeFactory scopeFactory,
+        ILogger<RecommendationRunner> logger,
+        ISessionFileLogger? sessionLogger)
     {
         _db = db;
         _roleExecutor = roleExecutor;
@@ -44,11 +58,12 @@ public sealed class RecommendationRunner : IRecommendationRunner
         _llmService = llmService;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _sessionLogger = sessionLogger;
     }
 
     public async Task RunTurnAsync(long turnId, CancellationToken ct = default)
     {
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(8));
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(15));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
         var effectiveCt = linkedCts.Token;
 
@@ -72,6 +87,9 @@ public sealed class RecommendationRunner : IRecommendationRunner
         _eventBus.Publish(new RecommendEvent(
             RecommendEventType.TurnStarted, session.Id, turnId, null, null, null, null,
             $"Turn {turn.TurnIndex} 开始执行", null, DateTime.UtcNow));
+
+        _sessionLogger?.LogTurnStart("recommend", session.Id, turn.Id, turn.TurnIndex,
+            session.SessionKey, null, turn.UserPrompt ?? "");
 
         var pipeline = RecommendStageDefinitions.GetPipeline();
         var upstreamArtifacts = new List<StageArtifact>();
@@ -153,6 +171,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         }
         finally
         {
+            _sessionLogger?.LogTurnEnd(session.Id, turn.Id, turn.Status.ToString());
             if (turn.Status is RecommendTurnStatus.Failed or RecommendTurnStatus.Cancelled)
             {
                 await FailRunningSnapshotsAsync(turn.Id);

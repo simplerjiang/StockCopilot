@@ -243,7 +243,7 @@ public sealed class JsonFileLlmSettingsStoreTests
         var settings = await store.GetProviderAsync("ollama");
 
         Assert.NotNull(settings);
-        Assert.Equal(4096, settings!.OllamaNumCtx);
+        Assert.Equal(131072, settings!.OllamaNumCtx);
         Assert.Equal("5m", settings.OllamaKeepAlive);
         Assert.Equal(2048, settings.OllamaNumPredict);
         Assert.Equal(0.3, settings.OllamaTemperature);

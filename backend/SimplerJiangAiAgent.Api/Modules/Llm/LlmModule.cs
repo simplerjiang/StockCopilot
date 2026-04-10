@@ -47,7 +47,7 @@ public sealed class LlmModule : IModule
 
         services.AddHttpClient<OllamaProvider>(client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(300);
+            client.Timeout = TimeSpan.FromSeconds(660);
         });
         services.AddSingleton<ILlmProvider, OllamaProvider>();
     }
