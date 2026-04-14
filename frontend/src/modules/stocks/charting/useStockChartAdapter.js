@@ -422,14 +422,20 @@ export const buildMinuteRecords = (rawLines, fallbackBasePrice) => {
   }
 }
 
-const toChartData = records => records.map(item => ({
-  timestamp: item.timestamp,
-  open: item.open,
-  high: item.high,
-  low: item.low,
-  close: item.close,
-  volume: item.volume
-}))
+const toChartData = records => records.map(item => {
+  const entry = {
+    timestamp: item.timestamp,
+    open: item.open,
+    high: item.high,
+    low: item.low,
+    close: item.close,
+    volume: item.volume
+  }
+  if (item._retailHeat) {
+    entry._retailHeat = item._retailHeat
+  }
+  return entry
+})
 
 const buildSymbol = records => ({
   ...DEFAULT_SYMBOL,
@@ -438,6 +444,22 @@ const buildSymbol = records => ({
 })
 
 const buildRecordLookup = records => new Map(records.map(item => [item.timestamp, item]))
+
+const mergeRetailHeat = (records, heatData) => {
+  if (!heatData?.data?.length) return
+  const heatMap = new Map()
+  for (const point of heatData.data) {
+    heatMap.set(point.date, point)
+  }
+  for (const record of records) {
+    const d = new Date(record.timestamp)
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const heat = heatMap.get(dateStr)
+    if (heat) {
+      record._retailHeat = heat
+    }
+  }
+}
 
 const emptyHoverState = { visible: false, x: 0, y: 0, lines: [] }
 
@@ -645,6 +667,7 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
 
   const renderKLine = () => {
     const records = buildKlineRecords(props.kLines)
+    mergeRetailHeat(records, props.retailHeatData)
     klineController.render({
       records,
       periodKey: normalizeKlineInterval(props.interval),

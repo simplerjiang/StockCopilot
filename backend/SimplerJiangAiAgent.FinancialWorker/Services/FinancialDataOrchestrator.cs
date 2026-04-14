@@ -17,6 +17,10 @@ public class FinancialDataOrchestrator
     private readonly ILogger<FinancialDataOrchestrator> _logger;
     private readonly PdfProcessingPipeline? _pdfPipeline;
 
+    public string? CurrentActivity { get; private set; }
+    public DateTime? LastCollectionTime { get; private set; }
+    public string? LastCollectionResult { get; private set; }
+
     // 数据源优先级：emweb(3) > datacenter(2) > ths(1)
     private static readonly Dictionary<string, int> ChannelPriority = new()
     {
@@ -45,6 +49,7 @@ public class FinancialDataOrchestrator
 
     public async Task<CollectionResult> CollectAsync(string symbol, CancellationToken ct = default)
     {
+        CurrentActivity = $"采集中:{symbol}";
         var sw = Stopwatch.StartNew();
         var result = new CollectionResult { Symbol = symbol };
 
@@ -212,6 +217,8 @@ public class FinancialDataOrchestrator
     public async Task<List<CollectionResult>> CollectBatchAsync(
         IEnumerable<string> symbols, CancellationToken ct = default)
     {
+        var symbolList = symbols.ToList();
+        CurrentActivity = $"批量采集中:{symbolList.Count} 个股票";
         var results = new List<CollectionResult>();
         var isFirst = true;
 
@@ -247,6 +254,11 @@ public class FinancialDataOrchestrator
                 });
             }
         }
+
+        var ok = results.Count(r => r.Success);
+        LastCollectionTime = DateTime.UtcNow;
+        LastCollectionResult = $"batch:{ok}/{results.Count}";
+        CurrentActivity = "空闲";
 
         return results;
     }
@@ -372,6 +384,10 @@ public class FinancialDataOrchestrator
 
     private void WriteLog(CollectionResult result)
     {
+        LastCollectionTime = DateTime.UtcNow;
+        LastCollectionResult = result.Success ? $"success:{result.ReportCount}" : $"failed:{result.ErrorMessage}";
+        CurrentActivity = "空闲";
+
         _db.Logs.Insert(new CollectionLog
         {
             Symbol = result.Symbol,

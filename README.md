@@ -99,7 +99,7 @@ docs/      截图与补充文档
 
 ## 当前主分支状态
 
-当前主分支的工作台已经包含 8 个顶层页签：**股票信息、情绪轮动、全量资讯库、交易日志、股票推荐、LLM 设置、治理开发者模式、财务数据测试**。
+当前主分支的工作台已经包含 8 个顶层页签：**股票信息、情绪轮动、全量资讯库、交易日志、股票推荐、LLM 设置、治理开发者模式、财务数据测试**，以及管理面板中的**财务工作者监控**。
 
 最近已落地主线包括：
 
@@ -112,8 +112,11 @@ docs/      截图与补充文档
 - Ollama 本地模型启停、模型拉取、keepAlive 管理，以及 `num_ctx / keep_alive / num_predict / temperature / top_k / top_p / min_p / stop / think` 等请求级高级参数
 - **v0.3.0**：修复本地模型完整 AI 分析卡住问题（NumPredict 256→2048、Research 场景 MaxOutputTokens=4096 + ResponseFormat=Json + 180s 超时保护）；修复前端轮询取消风暴；Research 实体 Unicode 支持 CJK；JSON 渲染容错
 - **v0.3.1**：修复图表 hover tooltip 不显示的问题（适配 klinecharts v10 API），K 线蜡烛悬浮显示完整 OHLC + 涨跌幅 + 最高最低价；分时图悬浮显示价格 + 涨跌幅 + 量比
+- **v0.3.2**：散户热度反向指标——基于东方财富/新浪/淘股吧三平台论坛帖量计算散户关注热度，K 线图子窗格展示热度曲线与信号标注；支持 60 个交易日历史回填与零填充；实时进度条显示回填状态
+- **v0.3.3**：SocialSentimentMcp 增强——ForumPostCount/HeatRatio/HeatSignal/PlatformCount 四维特征输出至 LLM，交易提示模板添加散户情绪反向参考步骤
+- **v0.3.4**：FinancialWorker 进程监控——主程序自动检测并管理 Worker 进程生命周期（心跳 10s、崩溃自动重启）；管理面板增加「工作者」标签，支持启动/停止/重启控制与运行时长显示；新增运行时日志控制台（内存环形缓冲区 + 增量轮询 + 级别筛选 + 自动滚动）
 
-当前最新发布版本为 **v0.3.1**（2026-04-11），详见 [GitHub Releases](https://github.com/simplerjiang/StockCopilot/releases)。
+当前最新发布版本为 **v0.3.4**（2026-04-14），详见 [GitHub Releases](https://github.com/simplerjiang/StockCopilot/releases)。
 
 ## 安装
 

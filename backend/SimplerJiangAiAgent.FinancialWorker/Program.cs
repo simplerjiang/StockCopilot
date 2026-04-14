@@ -57,15 +57,20 @@ builder.Services.AddSingleton<PdfVotingEngine>();
 builder.Services.AddSingleton<FinancialTableParser>();
 builder.Services.AddSingleton<PdfProcessingPipeline>();
 
+builder.Services.AddSingleton<InMemoryLogStore>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddCors();
 
 var app = builder.Build();
 
+// 注册内存日志 Provider，捕获运行时 ILogger 输出
+var logStore = app.Services.GetRequiredService<InMemoryLogStore>();
+app.Services.GetRequiredService<ILoggerFactory>().AddProvider(new InMemoryLoggerProvider(logStore));
+
 app.UseCors(c => c.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 
 // === 健康检查 ===
-app.MapGet("/health", () => Results.Ok(new
+app.MapGet("/health", (FinancialDataOrchestrator orchestrator) => Results.Ok(new
 {
     service = "financial-worker",
     status = "healthy",
@@ -73,7 +78,10 @@ app.MapGet("/health", () => Results.Ok(new
     baseUrl = "http://localhost:5120",
     dataRoot,
     dbPath,
-    timestamp = DateTime.UtcNow
+    timestamp = DateTime.UtcNow,
+    currentActivity = orchestrator.CurrentActivity ?? "空闲",
+    lastCollectionTime = orchestrator.LastCollectionTime,
+    lastCollectionResult = orchestrator.LastCollectionResult
 }));
 
 // === 配置 API ===
@@ -152,6 +160,16 @@ app.MapGet("/api/logs", (string? symbol, int? limit, FinancialDbContext db) =>
         ? db.Logs.Find(l => l.Symbol == symbol)
         : db.Logs.FindAll();
     return Results.Ok(query.OrderByDescending(l => l.Timestamp).Take(take).ToList());
+});
+
+// === 运行时日志 API ===
+app.MapGet("/api/runtime-logs", (long? afterId, int? count, InMemoryLogStore store) =>
+{
+    var take = count is > 0 and <= 500 ? count.Value : 200;
+    var entries = afterId.HasValue
+        ? store.GetEntries(afterId.Value, take)
+        : store.GetLatest(take);
+    return Results.Ok(entries);
 });
 
 app.Run();

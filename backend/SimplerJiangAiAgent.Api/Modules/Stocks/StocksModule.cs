@@ -17,6 +17,8 @@ using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
+using SimplerJiangAiAgent.Api.Infrastructure;
+using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks;
 
@@ -104,6 +106,47 @@ public sealed class StocksModule : IModule
         services.AddSingleton<IWebSearchService, WebSearchService>();
         services.AddHostedService<TradingPlanTriggerWorker>();
         services.AddHostedService<TradingPlanReviewWorker>();
+
+        // Forum scraping
+        services.AddHttpClient("EastmoneyGuba", client =>
+        {
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            UseProxy = false
+        });
+        services.AddHttpClient("SinaGuba", client =>
+        {
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            UseProxy = false,
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        });
+        services.AddHttpClient("TaogubaGuba", client =>
+        {
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            UseProxy = false,
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        });
+        services.AddTransient<IForumPostCountScraper, EastmoneyGubaScraper>();
+        services.AddTransient<IForumPostCountScraper, SinaGubaScraper>();
+        services.AddTransient<IForumPostCountScraper, TaogubaScraper>();
+        services.AddScoped<IForumScrapingService, ForumScrapingService>();
+        services.AddScoped<IRetailHeatIndexService, RetailHeatIndexService>();
+        services.AddScoped<IHistoricalBackfillService, HistoricalBackfillService>();
+        services.AddSingleton<IBackfillStatusTracker, BackfillStatusTracker>();
+        services.AddHostedService<ForumScrapingWorker>();
+
+        // FinancialWorker process supervisor
+        services.AddSingleton<FinancialWorkerSupervisorService>();
+        services.AddSingleton<IFinancialWorkerSupervisor>(sp => sp.GetRequiredService<FinancialWorkerSupervisorService>());
+        services.AddHostedService(sp => sp.GetRequiredService<FinancialWorkerSupervisorService>());
     }
 
     private static void ConfigureStockHttpClient(HttpClient client, TimeSpan timeout)
@@ -188,6 +231,55 @@ public sealed class StocksModule : IModule
                 httpContext.RequestAborted);
         })
         .WithName("GetStockFinancialWorkerStatus")
+        .WithOpenApi();
+
+        // FinancialWorker 进程管理 (supervisor)
+        financialGroup.MapGet("/worker/supervisor-status", (IFinancialWorkerSupervisor supervisor) =>
+        {
+            var status = supervisor.GetStatus();
+            return Results.Ok(status);
+        })
+        .WithName("GetFinancialWorkerSupervisorStatus")
+        .WithOpenApi();
+
+        financialGroup.MapPost("/worker/start", async (IFinancialWorkerSupervisor supervisor, CancellationToken ct) =>
+        {
+            await supervisor.StartWorkerAsync(ct);
+            return Results.Ok(new { message = "启动指令已发送", status = supervisor.GetStatus() });
+        })
+        .WithName("StartFinancialWorker")
+        .WithOpenApi();
+
+        financialGroup.MapPost("/worker/stop", async (IFinancialWorkerSupervisor supervisor, CancellationToken ct) =>
+        {
+            await supervisor.StopWorkerAsync(ct);
+            return Results.Ok(new { message = "停止指令已发送", status = supervisor.GetStatus() });
+        })
+        .WithName("StopFinancialWorker")
+        .WithOpenApi();
+
+        financialGroup.MapPost("/worker/restart", async (IFinancialWorkerSupervisor supervisor, CancellationToken ct) =>
+        {
+            await supervisor.RestartWorkerAsync(ct);
+            return Results.Ok(new { message = "重启指令已发送", status = supervisor.GetStatus() });
+        })
+        .WithName("RestartFinancialWorker")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/worker/runtime-logs", async (long? afterId, int? count, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            var qs = new List<string>();
+            if (afterId.HasValue) qs.Add($"afterId={afterId.Value}");
+            if (count.HasValue) qs.Add($"count={count.Value}");
+            var queryString = qs.Count > 0 ? "?" + string.Join("&", qs) : "";
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Get,
+                $"api/runtime-logs{queryString}",
+                configuration,
+                httpClientFactory,
+                httpContext.RequestAborted);
+        })
+        .WithName("GetFinancialWorkerRuntimeLogs")
         .WithOpenApi();
 
         financialGroup.MapGet("/config", async (IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
@@ -337,6 +429,95 @@ public sealed class StocksModule : IModule
             return Results.Ok(result);
         })
         .WithName("SearchStocks")
+        .WithOpenApi();
+
+        // 散户热度指标
+        group.MapGet("/{symbol}/retail-heat", async (
+            string symbol,
+            string? from,
+            string? to,
+            IRetailHeatIndexService retailHeatService,
+            IBackfillStatusTracker backfillStatusTracker,
+            IServiceProvider serviceProvider,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+            }
+
+            DateOnly? fromDate = null, toDate = null;
+            if (from is not null)
+            {
+                if (!DateOnly.TryParse(from, out var f)) return Results.BadRequest("Invalid 'from' date format.");
+                fromDate = f;
+            }
+            if (to is not null)
+            {
+                if (!DateOnly.TryParse(to, out var t)) return Results.BadRequest("Invalid 'to' date format.");
+                toDate = t;
+            }
+            var result = await retailHeatService.GetTimeSeriesAsync(symbol, fromDate, toDate, ct);
+
+            // 数据不足30天时自动触发后台历史回填
+            if (result.Data.Count < 30 && !backfillStatusTracker.IsBackfilling(result.Symbol))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var scope = serviceProvider.CreateScope();
+                        var backfillService = scope.ServiceProvider.GetRequiredService<IHistoricalBackfillService>();
+                        await backfillService.BackfillAsync(symbol, 90, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        var logger = serviceProvider.GetService<ILoggerFactory>()?.CreateLogger("RetailHeatAutoBackfill");
+                        logger?.LogWarning(ex, "自动回填失败: {Symbol}", symbol);
+                    }
+                });
+            }
+
+            var isBackfilling = backfillStatusTracker.IsBackfilling(result.Symbol);
+            return Results.Ok(new { result.Symbol, result.Data, result.Latest, result.Description, Backfilling = isBackfilling });
+        })
+        .WithName("GetRetailHeatIndex")
+        .WithOpenApi();
+
+        group.MapPost("/retail-heat/initial-collect", async (
+            IForumScrapingService forumScrapingService,
+            CancellationToken ct) =>
+        {
+            await forumScrapingService.InitialCollectAsync(ct);
+            return Results.Ok(new { message = "Initial collect completed" });
+        })
+        .WithName("InitialCollectRetailHeat")
+        .WithOpenApi();
+
+        group.MapPost("/{symbol}/retail-heat/backfill", async (
+            string symbol,
+            int? days,
+            IHistoricalBackfillService backfillService,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            await backfillService.BackfillAsync(symbol, days ?? 90, ct);
+            return Results.Ok(new { message = $"Backfill completed for {symbol}" });
+        })
+        .WithName("BackfillRetailHeat")
+        .WithOpenApi();
+
+        group.MapPost("/retail-heat/backfill-all", async (
+            int? days,
+            IHistoricalBackfillService backfillService,
+            CancellationToken ct) =>
+        {
+            await backfillService.BackfillAllWatchlistAsync(days ?? 60, ct);
+            return Results.Ok(new { message = "Backfill all completed" });
+        })
+        .WithName("BackfillAllRetailHeat")
         .WithOpenApi();
 
         group.MapGet("/mcp/kline", async (string symbol, string? interval, int? count, string? source, string? taskId, int? evidenceSkip, int? evidenceTake, IMcpToolGateway gateway, HttpContext httpContext) =>

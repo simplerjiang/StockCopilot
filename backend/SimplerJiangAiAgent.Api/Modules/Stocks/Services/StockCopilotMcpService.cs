@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
+using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Serialization;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
@@ -84,6 +85,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     private readonly ILocalFactIngestionService? _localFactIngestionService;
     private readonly ILlmSettingsStore? _llmSettingsStore;
     private readonly IPortfolioSnapshotService? _portfolioSnapshotService;
+    private readonly IRetailHeatIndexService? _retailHeatIndexService;
     private readonly IFinancialDataReadService? _financialDataReadService;
     private readonly ILogger<StockCopilotMcpService> _logger;
     private readonly ConcurrentDictionary<string, Lazy<Task<SymbolRefreshExecutionResult>>> _scopedSymbolRefreshes = new(StringComparer.OrdinalIgnoreCase);
@@ -104,6 +106,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         ILocalFactIngestionService? localFactIngestionService = null,
         ILlmSettingsStore? llmSettingsStore = null,
         IPortfolioSnapshotService? portfolioSnapshotService = null,
+        IRetailHeatIndexService? retailHeatIndexService = null,
         IFinancialDataReadService? financialDataReadService = null,
         ILogger<StockCopilotMcpService>? logger = null)
     {
@@ -121,6 +124,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         _localFactIngestionService = localFactIngestionService;
         _llmSettingsStore = llmSettingsStore;
         _portfolioSnapshotService = portfolioSnapshotService;
+        _retailHeatIndexService = retailHeatIndexService;
         _financialDataReadService = financialDataReadService;
         _logger = logger ?? NullLogger<StockCopilotMcpService>.Instance;
     }
@@ -434,6 +438,25 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var marketReports = BuildSentimentCount(localFacts.MarketReports);
         var localEvidenceCount = stockNews.TotalCount + sectorReports.TotalCount + marketReports.TotalCount;
         var marketProxy = marketSummary is null ? null : BuildMarketProxy(marketSummary);
+
+        // --- Forum retail heat integration ---
+        RetailHeatDataPointDto? latestHeat = null;
+        try
+        {
+            if (_retailHeatIndexService is not null)
+            {
+                var heatData = await _retailHeatIndexService.GetTimeSeriesAsync(
+                    normalizedSymbol,
+                    DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-5)),
+                    null,
+                    cancellationToken);
+                latestHeat = heatData.Latest;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Forum retail heat query failed for {Symbol}", normalizedSymbol);
+        }
         var evidence = localFacts.StockNews
             .Concat(localFacts.SectorReports)
             .Concat(localFacts.MarketReports)
@@ -485,6 +508,13 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             warnings.Add("SocialSentimentMcp v1 是本地情绪相关证据聚合工具，仅汇总本地新闻与市场代理快照，不会自行给出社交情绪结论。");
         }
 
+        // 如果有论坛热度数据，提升状态
+        if (latestHeat is not null && status == "degraded")
+        {
+            status = "ok";
+            approximationMode = "forum_heat_enhanced";
+        }
+
         if (blocked)
         {
             approximationMode = "none";
@@ -521,7 +551,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
                         marketProxy.StageConfidence,
                         marketProxy.SnapshotTime)),
             evidence: evidence,
-            features: BuildSocialSentimentFeatures(stockNews, sectorReports, marketReports, marketProxy, blocked, approximationMode),
+            features: BuildSocialSentimentFeatures(stockNews, sectorReports, marketReports, marketProxy, blocked, approximationMode, latestHeat),
             symbol: normalizedSymbol,
             interval: null,
             query: null,
@@ -1419,17 +1449,59 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         StockCopilotSentimentCountDto marketReports,
         StockCopilotSocialSentimentMarketProxyDto? marketProxy,
         bool blocked,
-        string approximationMode)
+        string approximationMode,
+        RetailHeatDataPointDto? forumHeat = null)
     {
-        return new[]
+        var list = new List<StockCopilotMcpFeatureDto>
         {
-            new StockCopilotMcpFeatureDto("status", "Contract Status", "text", null, blocked ? "blocked" : "degraded", null, "SocialSentimentMcp v1 is a local sentiment-evidence aggregation tool, not an autonomous sentiment judge."),
-            new StockCopilotMcpFeatureDto("approximationMode", "Approximation Mode", "text", null, approximationMode, null, "Explains whether the contract is driven by local news, market proxy, or both."),
-            new StockCopilotMcpFeatureDto("stockNewsCount", "Stock News Count", "number", stockNews.TotalCount, null, null, "Count of local stock-news items included in the approximation."),
-            new StockCopilotMcpFeatureDto("sectorReportCount", "Sector Report Count", "number", sectorReports.TotalCount, null, null, "Count of local sector-report items included in the approximation."),
-            new StockCopilotMcpFeatureDto("marketReportCount", "Market Report Count", "number", marketReports.TotalCount, null, null, "Count of local market-report items included in the approximation."),
-            new StockCopilotMcpFeatureDto("marketProxyAvailable", "Market Proxy Available", "text", null, marketProxy is null ? "false" : "true", null, "Whether a market sentiment snapshot was available as a proxy signal.")
+            new("status", "Contract Status", "text", null, blocked ? "blocked" : "degraded", null, "SocialSentimentMcp v1 is a local sentiment-evidence aggregation tool, not an autonomous sentiment judge."),
+            new("approximationMode", "Approximation Mode", "text", null, approximationMode, null, "Explains whether the contract is driven by local news, market proxy, or both."),
+            new("stockNewsCount", "Stock News Count", "number", stockNews.TotalCount, null, null, "Count of local stock-news items included in the approximation."),
+            new("sectorReportCount", "Sector Report Count", "number", sectorReports.TotalCount, null, null, "Count of local sector-report items included in the approximation."),
+            new("marketReportCount", "Market Report Count", "number", marketReports.TotalCount, null, null, "Count of local market-report items included in the approximation."),
+            new("marketProxyAvailable", "Market Proxy Available", "text", null, marketProxy is null ? "false" : "true", null, "Whether a market sentiment snapshot was available as a proxy signal.")
         };
+
+        if (forumHeat is not null)
+        {
+            list.Add(new StockCopilotMcpFeatureDto(
+                "forumPostCount",
+                "Forum Post Count (Daily)",
+                "number",
+                forumHeat.DailyCount,
+                null,
+                "posts",
+                "Total forum post count across all platforms for today."));
+
+            list.Add(new StockCopilotMcpFeatureDto(
+                "forumHeatRatio",
+                "Forum Heat Ratio (vs MA20)",
+                "number",
+                (decimal)forumHeat.HeatRatio,
+                null,
+                "ratio",
+                "Current post count / 20-day moving average. >2.0 = retail overheated (sell signal), <0.5 = retail disinterested (buy signal)."));
+
+            list.Add(new StockCopilotMcpFeatureDto(
+                "forumHeatSignal",
+                "Forum Retail Heat Signal",
+                "text",
+                null,
+                forumHeat.Signal,
+                null,
+                "hot=极度过热(强卖出) | warm=偏热(注意风险) | normal=正常 | cool=偏冷(可能买入机会) | cold=极度冷清(强买入,排除垃圾股)"));
+
+            list.Add(new StockCopilotMcpFeatureDto(
+                "forumPlatformCount",
+                "Forum Platform Count",
+                "number",
+                forumHeat.PlatformCount,
+                null,
+                "platforms",
+                "Number of forum platforms with data."));
+        }
+
+        return list;
     }
 
     private static StockCopilotSentimentCountDto BuildSentimentCount(IEnumerable<LocalNewsItemDto> items)

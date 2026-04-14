@@ -81,6 +81,7 @@ import FinancialReportTab from './FinancialReportTab.vue'
 import ResizeSplitter from './ResizeSplitter.vue'
 import { useResizable } from './useResizable'
 import { useCollapsible } from './useCollapsible'
+import { useRetailHeat } from './charting/useRetailHeat'
 
 const { confirm: showConfirm } = useConfirm()
 
@@ -207,6 +208,9 @@ const newsImpactError = bindWorkspaceField('newsImpactError', '')
 const localNewsBuckets = bindWorkspaceField('localNewsBuckets', { stock: null, sector: null, market: null })
 const localNewsLoading = bindWorkspaceField('localNewsLoading', false)
 const localNewsError = bindWorkspaceField('localNewsError', '')
+
+const retailHeatSymbol = computed(() => detail.value?.quote?.symbol ?? '')
+const { heatData: retailHeatData, backfilling: retailHeatBackfilling } = useRetailHeat(retailHeatSymbol)
 const planDraftLoading = bindWorkspaceField('planDraftLoading', false)
 const planSaving = bindWorkspaceField('planSaving', false)
 const planError = bindWorkspaceField('planError', '')
@@ -272,12 +276,21 @@ const stockRealtimeBreadthBias = computed(() => {
 
 const isBlockingQuoteLoad = computed(() => loading.value && !detail.value)
 const isBackgroundQuoteRefresh = computed(() => loading.value && !!detail.value)
-const visibleSourceLoadStages = computed(() =>
-  STOCK_LOAD_STAGE_DEFINITIONS
+const visibleSourceLoadStages = computed(() => {
+  const stages = STOCK_LOAD_STAGE_DEFINITIONS
     .map(stage => sourceLoadStages.value?.[stage.key])
     .filter(stage => stage && stage.status !== 'idle')
-)
-const showSourceLoadProgress = computed(() => loading.value && visibleSourceLoadStages.value.length > 0)
+  if (retailHeatBackfilling.value) {
+    stages.push({
+      key: 'retail-heat-backfill',
+      label: '散户热度数据回填',
+      status: 'pending',
+      message: '正在从论坛采集历史数据...'
+    })
+  }
+  return stages
+})
+const showSourceLoadProgress = computed(() => (loading.value && visibleSourceLoadStages.value.length > 0) || retailHeatBackfilling.value)
 const sourceLoadProgressPercent = computed(() => {
   const stages = visibleSourceLoadStages.value
   if (!stages.length) {
@@ -1395,6 +1408,7 @@ watch(currentStockKey, (newKey) => {
                   :volume-ratio="detail.quote.volumeRatio"
                   :interval="interval"
                   :focused-view="chartActiveView"
+                  :retail-heat-data="retailHeatData"
                   @update:interval="interval = $event"
                   @view-change="handleChartViewChange"
                   @strategy-visibility-change="handleChartStrategyVisibilityChange"

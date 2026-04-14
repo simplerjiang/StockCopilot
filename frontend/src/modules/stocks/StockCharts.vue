@@ -32,6 +32,10 @@ const props = defineProps({
   volumeRatio: {
     type: Number,
     default: null
+  },
+  retailHeatData: {
+    type: Object,
+    default: null
   }
 })
 
@@ -235,7 +239,7 @@ onUnmounted(() => {
   destroyCharts()
 })
 
-watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels], async () => {
+watch(() => [props.kLines, props.minuteLines, props.basePrice, props.aiLevels, props.retailHeatData], async () => {
   renderAll()
   await nextTick()
   queueResize()

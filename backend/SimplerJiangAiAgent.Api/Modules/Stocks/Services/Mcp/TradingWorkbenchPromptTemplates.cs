@@ -103,6 +103,10 @@ public static class TradingWorkbenchPromptTemplates
         2. 调用 StockNewsMcp 获取相关新闻情绪辅助判断。
         3. 调用 MarketContextMcp 获取市场整体情绪参考。
         4. 观察社交讨论的变化趋势，而非仅看当前快照。
+        5. 特别关注 forumHeatRatio 和 forumHeatSignal 特征：
+           - 如果 forumHeatSignal 为 "hot" 或 "warm"：散户论坛活跃度过高，历史规律显示这通常是短期见顶的信号，建议提醒风险。
+           - 如果 forumHeatSignal 为 "cool" 或 "cold"：散户关注度低，如果基本面无大问题，可能是被市场忽视的潜在机会。
+           - 如果没有论坛热度数据（forumHeatRatio 缺失），跳过此项分析。
 
         ### 输出格式
         以 JSON 结构输出：

@@ -1,6 +1,6 @@
 import { registerIndicator } from 'klinecharts'
 import { CHART_VIEW_OPTIONS, KLINE_VIEW_IDS } from './chartViews'
-import { ATR_PANE_ID, CANDLE_PANE_ID, KDJ_PANE_ID, MACD_PANE_ID, RSI_PANE_ID, VOLUME_PANE_ID } from './chartPanes'
+import { ATR_PANE_ID, CANDLE_PANE_ID, KDJ_PANE_ID, MACD_PANE_ID, RETAIL_HEAT_PANE_ID, RSI_PANE_ID, VOLUME_PANE_ID } from './chartPanes'
 
 const CATEGORY_LABELS = Object.freeze({
   core: '基础图层',
@@ -1292,6 +1292,43 @@ const CHART_STRATEGIES = Object.freeze([
       const markers = buildVwapStrengthMarkers(records)
       return markers.length ? { markers } : null
     }
+  }),
+  createStrategyDefinition({
+    id: 'retailHeat',
+    label: '散户热度',
+    category: 'signal',
+    kind: 'indicator',
+    accentColor: '#f59e0b',
+    help: createHelp(
+      '⚠️ 这是一个反向指标！散户热度指数衡量 A 股论坛帖子增量相对于 20 日均值的偏离程度。',
+      '当帖子量暴增（hot/warm）：散户过度活跃是短期见顶信号，应考虑卖出。当帖子量骤降（cool/cold）：散户冷清可能是被忽视的买入机会（需排除 ST/垃圾股）。',
+      '数据来源：东方财富股吧、新浪股吧、淘股吧。'
+    ),
+    lineLegends: [
+      createLineLegend('#dc2626', '过热', '热度比 ≥ 3.0，散户情绪极度亢奋。'),
+      createLineLegend('#f59e0b', '偏热', '热度比 2.0–3.0，关注追高风险。'),
+      createLineLegend('#6b7280', '正常', '热度比 0.7–2.0，情绪平稳。'),
+      createLineLegend('#3b82f6', '偏冷', '热度比 0.5–0.7，关注低吸机会。'),
+      createLineLegend('#1d4ed8', '冷清', '热度比 < 0.5，散户兴趣极低。')
+    ],
+    supportedViews: ['day'],
+    defaultVisible: false,
+    requires: [],
+    compute: ({ records }) => {
+      return {
+        indicators: [
+          createIndicatorSpec({
+            aggregateKey: 'RETAIL_HEAT',
+            name: 'RETAIL_HEAT',
+            shortName: '热度',
+            paneId: RETAIL_HEAT_PANE_ID,
+            paneOptions: { id: RETAIL_HEAT_PANE_ID, height: 80, minHeight: 56 },
+            isStack: true,
+            order: 70
+          })
+        ]
+      }
+    }
   })
 ])
 
@@ -1312,7 +1349,8 @@ const INDICATOR_FILTERS_BY_VIEW = Object.freeze({
     { paneId: KDJ_PANE_ID, name: 'KDJ_VISUAL' },
     { paneId: KDJ_PANE_ID, name: 'KDJ_K_VISUAL' },
     { paneId: KDJ_PANE_ID, name: 'KDJ_D_VISUAL' },
-    { paneId: KDJ_PANE_ID, name: 'KDJ_J_VISUAL' }
+    { paneId: KDJ_PANE_ID, name: 'KDJ_J_VISUAL' },
+    { paneId: RETAIL_HEAT_PANE_ID, name: 'RETAIL_HEAT' }
   ],
   month: [
     { paneId: CANDLE_PANE_ID, name: 'MA' },
@@ -1443,6 +1481,44 @@ function registerKdjVisualIndicator() {
   })
 }
 
+function registerRetailHeatIndicator() {
+  registerIndicator({
+    name: 'RETAIL_HEAT',
+    shortName: '热度',
+    precision: 2,
+    calcParams: [],
+    figures: [
+      {
+        key: 'heatRatio',
+        title: '热度: ',
+        type: 'bar',
+        baseValue: 1.0,
+        styles: (data) => {
+          const ratio = data.current?.indicatorData?.heatRatio
+          if (!Number.isFinite(ratio)) return {}
+          let color
+          if (ratio >= 3.0) color = '#dc2626'
+          else if (ratio >= 2.0) color = '#f59e0b'
+          else if (ratio >= 0.7) color = '#6b7280'
+          else if (ratio >= 0.5) color = '#3b82f6'
+          else color = '#1d4ed8'
+          return { color }
+        }
+      },
+      {
+        key: 'platformCount',
+        title: '平台: ',
+        type: 'line',
+        styles: () => ({ color: 'rgba(0,0,0,0)' })
+      }
+    ],
+    calc: dataList => dataList.map(item => {
+      const heat = item._retailHeat
+      return heat ? { heatRatio: heat.heatRatio, platformCount: heat.platformCount } : {}
+    })
+  })
+}
+
 export function ensureChartStrategiesRegistered() {
   if (customIndicatorsRegistered || typeof registerIndicator !== 'function') {
     return
@@ -1450,6 +1526,7 @@ export function ensureChartStrategiesRegistered() {
   registerVwapIndicator()
   registerDonchianIndicator()
   registerKdjVisualIndicator()
+  registerRetailHeatIndicator()
   customIndicatorsRegistered = true
 }
 
