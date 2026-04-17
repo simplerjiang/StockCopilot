@@ -127,7 +127,7 @@ public sealed class EastmoneySectorRotationClientTests
         }
 
         [Fact]
-        public async Task GetMarketBreadthAsync_UsesUlistTurnoverAggregation()
+        public async Task GetMarketBreadthAsync_AggregatesTurnoverFromBreadthRowsOnly()
         {
                 var handler = new RouteHttpMessageHandler(request =>
                 {
@@ -170,12 +170,12 @@ public sealed class EastmoneySectorRotationClientTests
 
                 var snapshot = await client.GetMarketBreadthAsync(200);
 
-                Assert.Equal(300m, snapshot.TotalTurnover);
-                Assert.Equal(1, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
+                Assert.Equal(10m, snapshot.TotalTurnover);
+                Assert.Equal(0, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
         }
 
         [Fact]
-        public async Task GetMarketBreadthAsync_FallsBackWhenUlistTurnoverFails()
+        public async Task GetTotalMarketTurnoverAsync_SumsShAndSzF6()
         {
                 ResetDataSourceTrackerSources();
                 try
@@ -183,26 +183,19 @@ public sealed class EastmoneySectorRotationClientTests
                 var handler = new RouteHttpMessageHandler(request =>
                 {
                         var url = request.RequestUri?.ToString() ?? string.Empty;
-                        if (url.Contains("api/qt/clist/get", StringComparison.OrdinalIgnoreCase)
-                                && url.Contains("fields=f12,f3,f6", StringComparison.OrdinalIgnoreCase))
+                        if (url.Contains("api/qt/ulist.np/get", StringComparison.OrdinalIgnoreCase)
+                                && url.Contains("secids=1.000001,0.399001", StringComparison.OrdinalIgnoreCase))
                         {
                                 return Json("""
                                 {
                                     "data": {
-                                        "total": 2,
                                         "diff": [
-                                            { "f12": "000001", "f3": 1.5, "f6": 10 },
-                                            { "f12": "000002", "f3": -0.2, "f6": 20 }
+                                            { "f12": "000001", "f6": 100 },
+                                            { "f12": "399001", "f6": 200 }
                                         ]
                                     }
                                 }
                                 """);
-                        }
-
-                        if (url.Contains("api/qt/ulist.np/get", StringComparison.OrdinalIgnoreCase)
-                                && url.Contains("secids=1.000001,0.399001", StringComparison.OrdinalIgnoreCase))
-                        {
-                                throw new HttpRequestException("ulist unavailable");
                         }
 
                         throw new InvalidOperationException($"Unexpected request: {url}");
@@ -211,14 +204,49 @@ public sealed class EastmoneySectorRotationClientTests
                 using var httpClient = new HttpClient(handler);
                 var client = new EastmoneySectorRotationClient(httpClient);
 
-                var snapshot = await client.GetMarketBreadthAsync(200);
+                var totalTurnover = await client.GetTotalMarketTurnoverAsync();
                 var turnoverSource = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_fs_sh_sz");
 
-                Assert.Equal(30m, snapshot.TotalTurnover);
+                Assert.Equal(300m, totalTurnover);
                 Assert.Equal(1, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
                 Assert.NotNull(turnoverSource);
-                Assert.Equal("error", turnoverSource!.Status);
-                Assert.Contains("ulist unavailable", turnoverSource.LastError, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("ok", turnoverSource!.Status);
+                }
+                finally
+                {
+                        ResetDataSourceTrackerSources();
+                }
+        }
+
+        [Fact]
+        public async Task GetTotalMarketTurnoverAsync_WhenRequestFails_Throws()
+        {
+                ResetDataSourceTrackerSources();
+                try
+                {
+                        var handler = new RouteHttpMessageHandler(request =>
+                        {
+                                var url = request.RequestUri?.ToString() ?? string.Empty;
+                                if (url.Contains("api/qt/ulist.np/get", StringComparison.OrdinalIgnoreCase)
+                                        && url.Contains("secids=1.000001,0.399001", StringComparison.OrdinalIgnoreCase))
+                                {
+                                        throw new HttpRequestException("ulist unavailable");
+                                }
+
+                                throw new InvalidOperationException($"Unexpected request: {url}");
+                        });
+
+                        using var httpClient = new HttpClient(handler);
+                        var client = new EastmoneySectorRotationClient(httpClient);
+
+                        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => client.GetTotalMarketTurnoverAsync());
+                        var turnoverSource = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_fs_sh_sz");
+
+                        Assert.Equal("ulist unavailable", exception.Message);
+                        Assert.Equal(1, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
+                        Assert.NotNull(turnoverSource);
+                        Assert.Equal("error", turnoverSource!.Status);
+                        Assert.Contains("ulist unavailable", turnoverSource.LastError, StringComparison.OrdinalIgnoreCase);
                 }
                 finally
                 {

@@ -131,15 +131,30 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
             }
 
             DataSourceTracker.RecordSourceSuccess(breadthSourceKey, breadthSourceStopwatch.Elapsed.TotalMilliseconds);
-
-            totalTurnover = await ResolveMarketTurnoverFromShSzAsync(totalTurnover, cancellationToken);
-
             return new EastmoneyMarketBreadthSnapshot(advancers, decliners, flatCount, totalTurnover);
         }
         catch (Exception ex)
         {
             DataSourceTracker.RecordSourceFailure(breadthSourceKey, ex, breadthSourceStopwatch.Elapsed.TotalMilliseconds);
 
+            throw;
+        }
+    }
+
+    public async Task<decimal> GetTotalMarketTurnoverAsync(CancellationToken cancellationToken = default)
+    {
+        const string sourceKey = "eastmoney_market_fs_sh_sz";
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            using var document = await GetDocumentAsync(BuildMarketTurnoverUlistUrl(), cancellationToken);
+            var total = SumTurnoverFromDocument(document);
+            DataSourceTracker.RecordSourceSuccess(sourceKey, stopwatch.Elapsed.TotalMilliseconds);
+            return total;
+        }
+        catch (Exception ex)
+        {
+            DataSourceTracker.RecordSourceFailure(sourceKey, ex, stopwatch.Elapsed.TotalMilliseconds);
             throw;
         }
     }
@@ -305,24 +320,6 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
         return data.TryGetProperty("total", out var totalElement) && totalElement.TryGetInt32(out var total)
             ? total
             : 0;
-    }
-
-    private async Task<decimal> ResolveMarketTurnoverFromShSzAsync(decimal fallbackTotalTurnover, CancellationToken cancellationToken)
-    {
-        const string sourceKey = "eastmoney_market_fs_sh_sz";
-        var stopwatch = Stopwatch.StartNew();
-        try
-        {
-            using var document = await GetDocumentAsync(BuildMarketTurnoverUlistUrl(), cancellationToken);
-            var total = SumTurnoverFromDocument(document);
-            DataSourceTracker.RecordSourceSuccess(sourceKey, stopwatch.Elapsed.TotalMilliseconds);
-            return total > 0 ? total : fallbackTotalTurnover;
-        }
-        catch (Exception ex)
-        {
-            DataSourceTracker.RecordSourceFailure(sourceKey, ex, stopwatch.Elapsed.TotalMilliseconds);
-            return fallbackTotalTurnover;
-        }
     }
 
     private static decimal SumTurnoverFromDocument(JsonDocument document)

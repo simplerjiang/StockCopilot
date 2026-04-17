@@ -3,9 +3,11 @@ using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
+using SimplerJiangAiAgent.Api.Modules.Market;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using System.Text.Json;
 using System.Globalization;
+using System.Diagnostics;
 
 namespace SimplerJiangAiAgent.Api.Modules.Market.Services;
 
@@ -47,6 +49,8 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             return;
         }
 
+        var syncStopwatch = Stopwatch.StartNew();
+
         await SyncLock.WaitAsync(cancellationToken);
         try
         {
@@ -69,6 +73,10 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 () => _client.GetMarketBreadthAsync(_options.BreadthSampleSize, cancellationToken),
                 new EastmoneyMarketBreadthSnapshot(0, 0, 0, 0m),
                 "市场广度");
+            var totalTurnoverTask = FetchWithFallbackAsync(
+                () => _client.GetTotalMarketTurnoverAsync(cancellationToken),
+                0m,
+                "市场成交额");
             var limitUpTask = FetchWithFallbackAsync(() => _client.GetLimitUpCountAsync(tradingDate, cancellationToken), 0, "涨停池");
             var limitDownTask = FetchWithFallbackAsync(() => _client.GetLimitDownCountAsync(tradingDate, cancellationToken), 0, "跌停池");
             var brokenBoardTask = FetchWithFallbackAsync(() => _client.GetBrokenBoardCountAsync(tradingDate, cancellationToken), 0, "炸板池");
@@ -76,6 +84,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
 
             await Task.WhenAll(boardTasks.Values.Cast<Task>()
                 .Append(breadthTask)
+                .Append(totalTurnoverTask)
                 .Append(limitUpTask)
                 .Append(limitDownTask)
                 .Append(brokenBoardTask)
@@ -85,6 +94,14 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 pair => pair.Key,
                 pair => pair.Value.Result,
                 StringComparer.OrdinalIgnoreCase);
+
+            foreach (var boardResult in boardFetchResults)
+            {
+                var hasRows = boardResult.Value.Value.Count > 0;
+                var isSuccess = boardResult.Value.Succeeded && hasRows;
+                DataSourceTracker.RecordBoardFetch(boardResult.Key, isSuccess, !hasRows);
+            }
+
             var allRows = boardFetchResults.SelectMany(pair => pair.Value.Value).ToList();
             var breadthSnapshot = breadthTask.Result.Value;
             var limitUpCount = limitUpTask.Result.Value;
@@ -95,6 +112,9 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             var totalTurnoverBase = breadthSnapshot.TotalTurnover > 0
                 ? breadthSnapshot.TotalTurnover
                 : sectorTurnoverBase;
+            var resolvedTotalTurnover = totalTurnoverTask.Result.Succeeded && totalTurnoverTask.Result.Value > 0
+                ? totalTurnoverTask.Result.Value
+                : totalTurnoverBase;
             var degradedFlags = BuildDegradedFlags(
                 boardFetchResults,
                 breadthTask.Result.Succeeded,
@@ -102,9 +122,9 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 limitDownTask.Result.Succeeded,
                 brokenBoardTask.Result.Succeeded,
                 maxStreakTask.Result.Succeeded,
-                totalTurnoverBase);
-            var isCriticalSummaryIncomplete = !breadthTask.Result.Succeeded || totalTurnoverBase <= 0;
-            var (top3Share, top10Share) = ComputeTurnoverConcentration(allRows, totalTurnoverBase);
+                resolvedTotalTurnover);
+            var isCriticalSummaryIncomplete = !breadthTask.Result.Succeeded || resolvedTotalTurnover <= 0;
+            var (top3Share, top10Share) = ComputeTurnoverConcentration(allRows, resolvedTotalTurnover);
             var brokenBoardRate = limitUpCount > 0
                 ? brokenBoardCount / (decimal)Math.Max(1, limitUpCount) * 100m
                 : 0m;
@@ -134,7 +154,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 Advancers = breadthSnapshot.Advancers,
                 Decliners = breadthSnapshot.Decliners,
                 FlatCount = breadthSnapshot.FlatCount,
-                TotalTurnover = decimal.Round(totalTurnoverBase, 2),
+                TotalTurnover = decimal.Round(resolvedTotalTurnover, 2),
                 Top3SectorTurnoverShare = top3Share,
                 Top10SectorTurnoverShare = top10Share,
                 StageLabelV2 = isCriticalSummaryIncomplete ? PartialStageLabel : string.Empty,
@@ -214,8 +234,8 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                         ? decimal.Round((advancerCount + limitUpMemberCount * 0.5m) / members.Count * 100m, 2)
                     : 50m;
                 var continuityScore = decimal.Round(Clamp(50m + row.ChangePercent * 5m + (leaders.FirstOrDefault()?.ChangePercent ?? 0m) * 2m, 0m, 100m), 2);
-                var flowScore = totalTurnoverBase > 0
-                    ? Clamp(row.MainNetInflow / totalTurnoverBase * 1000m + 50m, 0m, 100m)
+                var flowScore = resolvedTotalTurnover > 0
+                    ? Clamp(row.MainNetInflow / resolvedTotalTurnover * 1000m + 50m, 0m, 100m)
                     : 50m;
                 var strengthScore = decimal.Round(Clamp(breadthScore * 0.35m + continuityScore * 0.35m + flowScore * 0.30m, 0m, 100m), 2);
 
@@ -283,6 +303,25 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             await _dbContext.SaveChangesAsync(cancellationToken);
             await ApplyRollingMetricsAsync(shouldApplyMarketRollingMetrics ? marketSnapshot : null, currentSectorSnapshots, cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
+
+            var tradingDateOffset = new DateTimeOffset(persistedTradingDate, TimeSpan.Zero);
+            var durationMs = syncStopwatch.ElapsedMilliseconds;
+            var degradedSnapshot = degradedFlags.ToArray();
+            var wasComplete = degradedSnapshot.Length == 0;
+            DataSourceTracker.RecordSync(
+                DateTimeOffset.UtcNow,
+                durationMs,
+                tradingDateOffset,
+                wasComplete,
+                degradedSnapshot,
+                allRows.Count,
+                marketSnapshot.TotalTurnover);
+            DataSourceTracker.RecordComputation(
+                DateTimeOffset.UtcNow,
+                durationMs,
+                tradingDateOffset,
+                wasComplete,
+                degradedSnapshot);
         }
         catch (Exception ex)
         {
@@ -443,6 +482,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
         if (totalTurnoverBase <= 0)
         {
             degradedFlags.Add("market_turnover_unavailable");
+            degradedFlags.Add("eastmoney_market_fs_sh_sz");
         }
 
         if (!limitUpSucceeded)
@@ -463,6 +503,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
         if (!maxStreakSucceeded)
         {
             degradedFlags.Add("max_streak_unavailable");
+            degradedFlags.Add("ths_continuous_limit_up");
         }
 
         foreach (var boardResult in boardFetchResults)
@@ -470,12 +511,14 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             if (!boardResult.Value.Succeeded || boardResult.Value.Value.Count == 0)
             {
                 degradedFlags.Add($"sector_rankings_{boardResult.Key}_unavailable");
+                degradedFlags.Add($"bkzj_board_rankings_{boardResult.Key}");
             }
         }
 
         if (boardFetchResults.Values.All(result => result.Value.Count == 0))
         {
             degradedFlags.Add("sector_rankings_unavailable");
+            degradedFlags.Add("bkzj_board_rankings");
         }
 
         return degradedFlags;

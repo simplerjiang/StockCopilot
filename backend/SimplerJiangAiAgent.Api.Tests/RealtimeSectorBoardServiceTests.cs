@@ -77,6 +77,11 @@ public sealed class RealtimeSectorBoardServiceTests
             return Task.FromResult(new EastmoneyMarketBreadthSnapshot(0, 0, 0, 0m));
         }
 
+        public Task<decimal> GetTotalMarketTurnoverAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0m);
+        }
+
         public Task<int> GetLimitUpCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> GetLimitDownCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> GetBrokenBoardCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default) => Task.FromResult(0);

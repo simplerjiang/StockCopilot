@@ -149,6 +149,48 @@ public sealed class SectorRotationIngestionServiceTests
 	}
 
 	[Fact]
+	public async Task SyncAsync_WhenBreadthFallbackStillTriesIndependentTurnoverFetch()
+	{
+		await using var dbContext = CreateDbContext();
+		var client = new FakeSectorRotationClient
+		{
+			BoardRankings = new Dictionary<string, IReadOnlyList<EastmoneySectorBoardRow>>(StringComparer.OrdinalIgnoreCase)
+			{
+				[SectorBoardTypes.Industry] =
+				[
+					new EastmoneySectorBoardRow(SectorBoardTypes.Industry, "BK1001", "半导体", 2.8m, 120m, 40m, 30m, 20m, 30m, 300m, 12m, 1, "{}")
+				]
+			},
+			Leaders = new Dictionary<string, IReadOnlyList<EastmoneySectorLeaderRow>>(StringComparer.OrdinalIgnoreCase)
+			{
+				["BK1001"] =
+				[
+					new EastmoneySectorLeaderRow(1, "688001", "华芯", 7.8m, 90m, false, false)
+				]
+			},
+			ThrowMarketBreadth = true,
+			TotalMarketTurnover = 8888m,
+			LimitUpCount = 42,
+			LimitDownCount = 6,
+			BrokenBoardCount = 8,
+			MaxLimitUpStreak = 4
+		};
+
+		var service = new SectorRotationIngestionService(
+			dbContext,
+			client,
+			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
+			NullLogger<SectorRotationIngestionService>.Instance);
+
+		await service.SyncAsync();
+
+		var sentiment = await dbContext.MarketSentimentSnapshots.SingleAsync();
+		Assert.Equal(1, client.GetTotalMarketTurnoverCallCount);
+		Assert.Equal(8888m, sentiment.TotalTurnover);
+		Assert.Equal("eastmoney_partial", sentiment.SourceTag);
+	}
+
+	[Fact]
 	public async Task SyncAsync_UsesResolvedTradingDateForPersistedSnapshots()
 	{
 		await using var dbContext = CreateDbContext();
@@ -256,11 +298,14 @@ public sealed class SectorRotationIngestionServiceTests
 		public Dictionary<string, IReadOnlyList<EastmoneySectorBoardRow>> BoardRankings { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 		public Dictionary<string, IReadOnlyList<EastmoneySectorLeaderRow>> Leaders { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 		public bool ThrowMarketBreadth { get; init; }
+		public bool ThrowTotalMarketTurnover { get; init; }
 		public bool ThrowLimitUpCount { get; init; }
 		public bool ThrowLimitDownCount { get; init; }
 		public bool ThrowBrokenBoardCount { get; init; }
 		public bool ThrowMaxLimitUpStreak { get; init; }
 		public EastmoneyMarketBreadthSnapshot MarketBreadth { get; init; } = new(0, 0, 0, 0m);
+		public decimal TotalMarketTurnover { get; init; }
+		public int GetTotalMarketTurnoverCallCount { get; private set; }
 		public int LimitUpCount { get; init; }
 		public int LimitDownCount { get; init; }
 		public int BrokenBoardCount { get; init; }
@@ -289,6 +334,17 @@ public sealed class SectorRotationIngestionServiceTests
 			}
 
 			return Task.FromResult(MarketBreadth);
+		}
+
+		public Task<decimal> GetTotalMarketTurnoverAsync(CancellationToken cancellationToken = default)
+		{
+			GetTotalMarketTurnoverCallCount += 1;
+			if (ThrowTotalMarketTurnover)
+			{
+				throw new HttpRequestException("boom-total-turnover");
+			}
+
+			return Task.FromResult(TotalMarketTurnover);
 		}
 
 		public Task<int> GetLimitUpCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default)
