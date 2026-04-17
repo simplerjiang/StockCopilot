@@ -70,66 +70,82 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
 
     public async Task<EastmoneyMarketBreadthSnapshot> GetMarketBreadthAsync(int take, CancellationToken cancellationToken = default)
     {
+        const string turnoverSourceKey = "eastmoney_market_fs_sh_sz";
+        var turnoverSourceStopwatch = Stopwatch.StartNew();
+        var turnoverSourceTracked = false;
         var targetCount = Math.Clamp(take, 200, 6000);
         var rows = new Dictionary<string, (decimal ChangePercent, decimal TurnoverAmount)>(StringComparer.OrdinalIgnoreCase);
-
-        using var firstDescendingPage = await GetDocumentAsync(BuildMarketBreadthUrl(1, descending: true), cancellationToken);
-        var total = GetTotalCount(firstDescendingPage);
-        AppendMarketBreadthRows(firstDescendingPage, rows);
-
-        if (total > 0 && total <= targetCount)
+        try
         {
-            var pageCount = (int)Math.Ceiling(total / 100m);
-            for (var page = 2; page <= pageCount; page += 1)
-            {
-                using var document = await GetDocumentAsync(BuildMarketBreadthUrl(page, descending: true), cancellationToken);
-                AppendMarketBreadthRows(document, rows);
-            }
-        }
-        else
-        {
-            var perSideCount = (int)Math.Ceiling(targetCount / 2m);
-            var pageCount = (int)Math.Ceiling(perSideCount / 100m);
+            using var firstDescendingPage = await GetDocumentAsync(BuildMarketBreadthUrl(1, descending: true), cancellationToken);
+            var total = GetTotalCount(firstDescendingPage);
+            AppendMarketBreadthRows(firstDescendingPage, rows);
 
-            for (var page = 2; page <= pageCount; page += 1)
+            if (total > 0 && total <= targetCount)
             {
-                using var document = await GetDocumentAsync(BuildMarketBreadthUrl(page, descending: true), cancellationToken);
-                AppendMarketBreadthRows(document, rows);
-            }
-
-            for (var page = 1; page <= pageCount; page += 1)
-            {
-                using var document = await GetDocumentAsync(BuildMarketBreadthUrl(page, descending: false), cancellationToken);
-                AppendMarketBreadthRows(document, rows);
-            }
-        }
-
-        var advancers = 0;
-        var decliners = 0;
-        var flatCount = 0;
-        var totalTurnover = 0m;
-        foreach (var row in rows.Values)
-        {
-            var changePercent = row.ChangePercent;
-            if (changePercent > 0)
-            {
-                advancers += 1;
-            }
-            else if (changePercent < 0)
-            {
-                decliners += 1;
+                var pageCount = (int)Math.Ceiling(total / 100m);
+                for (var page = 2; page <= pageCount; page += 1)
+                {
+                    using var document = await GetDocumentAsync(BuildMarketBreadthUrl(page, descending: true), cancellationToken);
+                    AppendMarketBreadthRows(document, rows);
+                }
             }
             else
             {
-                flatCount += 1;
+                var perSideCount = (int)Math.Ceiling(targetCount / 2m);
+                var pageCount = (int)Math.Ceiling(perSideCount / 100m);
+
+                for (var page = 2; page <= pageCount; page += 1)
+                {
+                    using var document = await GetDocumentAsync(BuildMarketBreadthUrl(page, descending: true), cancellationToken);
+                    AppendMarketBreadthRows(document, rows);
+                }
+
+                for (var page = 1; page <= pageCount; page += 1)
+                {
+                    using var document = await GetDocumentAsync(BuildMarketBreadthUrl(page, descending: false), cancellationToken);
+                    AppendMarketBreadthRows(document, rows);
+                }
             }
 
-            totalTurnover += Math.Max(0, row.TurnoverAmount);
+            var advancers = 0;
+            var decliners = 0;
+            var flatCount = 0;
+            var totalTurnover = 0m;
+            foreach (var row in rows.Values)
+            {
+                var changePercent = row.ChangePercent;
+                if (changePercent > 0)
+                {
+                    advancers += 1;
+                }
+                else if (changePercent < 0)
+                {
+                    decliners += 1;
+                }
+                else
+                {
+                    flatCount += 1;
+                }
+
+                totalTurnover += Math.Max(0, row.TurnoverAmount);
+            }
+
+            totalTurnover = await ResolveMarketTurnoverFromShSzAsync(totalTurnover, cancellationToken);
+            turnoverSourceTracked = true;
+
+            return new EastmoneyMarketBreadthSnapshot(advancers, decliners, flatCount, totalTurnover);
         }
+        catch (Exception ex)
+        {
+            if (!turnoverSourceTracked)
+            {
+                DataSourceTracker.RecordSourceFailure(turnoverSourceKey, ex, turnoverSourceStopwatch.Elapsed.TotalMilliseconds);
+                turnoverSourceTracked = true;
+            }
 
-        totalTurnover = await ResolveMarketTurnoverFromShSzAsync(totalTurnover, cancellationToken);
-
-        return new EastmoneyMarketBreadthSnapshot(advancers, decliners, flatCount, totalTurnover);
+            throw;
+        }
     }
 
     public async Task<int> GetLimitUpCountAsync(DateOnly tradingDate, CancellationToken cancellationToken = default)

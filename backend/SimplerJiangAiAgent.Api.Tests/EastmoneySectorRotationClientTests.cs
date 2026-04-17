@@ -1,6 +1,8 @@
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
+using SimplerJiangAiAgent.Api.Modules.Market;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
 using System.Net;
+using System.Reflection;
 using System.Text;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -212,6 +214,43 @@ public sealed class EastmoneySectorRotationClientTests
                 Assert.Equal(1, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
         }
 
+        [Fact]
+        public async Task GetMarketBreadthAsync_RecordsTurnoverSourceFailureWhenEarlyPathThrows()
+        {
+                ResetDataSourceTrackerSources();
+                try
+                {
+                        var handler = new RouteHttpMessageHandler(request =>
+                        {
+                                var url = request.RequestUri?.ToString() ?? string.Empty;
+                                if (url.Contains("api/qt/clist/get", StringComparison.OrdinalIgnoreCase)
+                                        && url.Contains("fields=f12,f3,f6", StringComparison.OrdinalIgnoreCase))
+                                {
+                                        throw new HttpRequestException("market breadth unavailable");
+                                }
+
+                                throw new InvalidOperationException($"Unexpected request: {url}");
+                        });
+
+                        using var httpClient = new HttpClient(handler);
+                        var client = new EastmoneySectorRotationClient(httpClient);
+
+                        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => client.GetMarketBreadthAsync(200));
+                        var source = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_fs_sh_sz");
+
+                        Assert.Equal("market breadth unavailable", exception.Message);
+                        Assert.NotNull(source);
+                        Assert.Equal("error", source!.Status);
+                        Assert.Contains("market breadth unavailable", source.LastError, StringComparison.OrdinalIgnoreCase);
+                        Assert.Equal(1, source.ConsecutiveFailures);
+                        Assert.Equal(0, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
+                }
+                finally
+                {
+                        ResetDataSourceTrackerSources();
+                }
+        }
+
         [Theory]
         [InlineData(SectorBoardTypes.Industry, "m:90+s:4")]
         [InlineData(SectorBoardTypes.Concept, "m:90+t:3")]
@@ -229,6 +268,17 @@ public sealed class EastmoneySectorRotationClientTests
                 {
                         Content = new StringContent(payload, Encoding.UTF8, "application/json")
                 };
+        }
+
+        private static void ResetDataSourceTrackerSources()
+        {
+                var field = typeof(EastmoneySectorRotationClient)
+                        .Assembly
+                        .GetType("SimplerJiangAiAgent.Api.Modules.Market.DataSourceTracker")?
+                        .GetField("Sources", BindingFlags.Static | BindingFlags.NonPublic);
+                var sources = field?.GetValue(null);
+                var clearMethod = sources?.GetType().GetMethod("Clear", BindingFlags.Instance | BindingFlags.Public);
+                clearMethod?.Invoke(sources, null);
         }
 
         private sealed class RouteHttpMessageHandler : HttpMessageHandler
