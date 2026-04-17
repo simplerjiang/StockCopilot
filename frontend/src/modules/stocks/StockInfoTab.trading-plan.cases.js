@@ -20,6 +20,16 @@ export const stockInfoTabTradingPlanCases = ({
 
     const { fetchMock } = createChatFetchMock({
       handle: async (url, options = {}) => {
+        if (url === '/api/market/sentiment/latest') {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              snapshotTime: '2026-04-17T06:43:08Z'
+            })
+          })
+        }
+
         if (url.startsWith('/api/stocks/market-context?symbol=sz000021')) {
           return createAbortableResponse(
             marketContextDeferred,
@@ -74,6 +84,7 @@ export const stockInfoTabTradingPlanCases = ({
 
     const marketBox = wrapper.find('.plan-market-box')
     expect(marketBox.text()).toContain('阶段 主升')
+    expect(marketBox.text()).toContain('快照时间 2026-04-17')
     expect(marketBox.text()).toContain('主线 AI 算力')
     expect(marketBox.text()).toContain('建议仓位')
     expect(marketBox.text()).not.toContain('正在获取当前市场上下文，不影响保存计划。')

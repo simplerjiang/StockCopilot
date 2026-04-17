@@ -17,6 +17,21 @@ const hasNumericValue = value => typeof value === 'number' && Number.isFinite(va
 const isPositiveNumber = value => hasNumericValue(value) && value >= 0
 const isNegativeNumber = value => hasNumericValue(value) && value < 0
 const isGuardedRealtimeState = computed(() => props.loading || props.pageLoading || props.degraded)
+
+const isLikelyTradingHours = computed(() => {
+  const now = new Date()
+  const dayOfWeek = now.getDay()
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false
+  const utcH = now.getUTCHours(), utcM = now.getUTCMinutes()
+  const chinaMinutes = (utcH * 60 + utcM + 480) % 1440
+  return chinaMinutes >= 555 && chinaMinutes <= 905
+})
+
+const isNorthboundClosed = computed(() => {
+  const flow = props.overview?.northboundFlow
+  if (!flow) return false
+  return flow.totalNetInflow === 0 && flow.shanghaiNetInflow === 0 && flow.shenzhenNetInflow === 0 && !isLikelyTradingHours.value
+})
 const needsGuardedPlaceholder = value => isGuardedRealtimeState.value && !hasNumericValue(value)
 const needsGuardedTurnoverPlaceholder = value => isGuardedRealtimeState.value && (!hasNumericValue(value) || value <= 0)
 const formatValue = (value, formatter, fallback = '--') => (hasNumericValue(value) ? formatter(value) : fallback)
@@ -31,7 +46,7 @@ const formatTurnoverText = value => (
     ? '成交额 实时补充中'
     : `成交额 ${formatValue(value, current => props.formatMoney(current))}`
 )
-const formatSignedAmountText = (value, placeholder = '待补齐') => (
+const formatSignedAmountText = (value, placeholder = '数据不可用') => (
   needsGuardedPlaceholder(value)
     ? placeholder
     : formatValue(value, current => props.formatSignedAmount(current))
@@ -39,7 +54,7 @@ const formatSignedAmountText = (value, placeholder = '待补齐') => (
 const formatLabeledSignedAmount = (label, value, placeholder = '实时补充中') => (
   `${label} ${needsGuardedPlaceholder(value) ? placeholder : formatValue(value, current => props.formatSignedAmount(current))}`
 )
-const formatLabeledCount = (label, value, placeholder = '暂不展示') => (
+const formatLabeledCount = (label, value, placeholder = '暂无数据') => (
   `${label} ${needsGuardedPlaceholder(value) ? placeholder : formatValue(value, current => String(current))}`
 )
 
@@ -49,16 +64,19 @@ const realtimeBreadthBuckets = computed(() => {
   return buckets.filter(item => hasNumericValue(item?.count) && item.count > 0)
 })
 const mainFlowSecondaryText = computed(() => formatLabeledSignedAmount('超大单', props.overview?.mainCapitalFlow?.superLargeOrderNetInflow))
-const northboundBreakdownText = computed(() => ([
-  formatLabeledSignedAmount('沪股通', props.overview?.northboundFlow?.shanghaiNetInflow, '待补齐'),
-  formatLabeledSignedAmount('深股通', props.overview?.northboundFlow?.shenzhenNetInflow, '待补齐')
-].join(' / ')))
+const northboundBreakdownText = computed(() => {
+  if (isNorthboundClosed.value) return '沪股通 休市 / 深股通 休市'
+  return [
+    formatLabeledSignedAmount('沪股通', props.overview?.northboundFlow?.shanghaiNetInflow, '数据不可用'),
+    formatLabeledSignedAmount('深股通', props.overview?.northboundFlow?.shenzhenNetInflow, '数据不可用')
+  ].join(' / ')
+})
 const breadthSummaryText = computed(() => {
   const advancers = props.overview?.breadth?.advancers
   const decliners = props.overview?.breadth?.decliners
 
   if (needsGuardedPlaceholder(advancers) || needsGuardedPlaceholder(decliners)) {
-    return '待补齐'
+    return '数据不可用'
   }
 
   return `${formatValue(advancers, current => String(current))} / ${formatValue(decliners, current => String(current))}`
@@ -125,8 +143,8 @@ const formatBucketWidth = count => {
         </div>
         <div class="flow-metric">
           <span>北向总净流入</span>
-          <strong :class="{ positive: isPositiveNumber(props.overview?.northboundFlow?.totalNetInflow), negative: isNegativeNumber(props.overview?.northboundFlow?.totalNetInflow) }">
-            {{ formatSignedAmountText(props.overview?.northboundFlow?.totalNetInflow) }}
+          <strong :class="{ positive: !isNorthboundClosed && isPositiveNumber(props.overview?.northboundFlow?.totalNetInflow), negative: !isNorthboundClosed && isNegativeNumber(props.overview?.northboundFlow?.totalNetInflow) }">
+            {{ isNorthboundClosed ? '休市' : formatSignedAmountText(props.overview?.northboundFlow?.totalNetInflow) }}
           </strong>
           <small>{{ northboundBreakdownText }}</small>
         </div>

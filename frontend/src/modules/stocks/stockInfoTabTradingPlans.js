@@ -6,6 +6,7 @@ import {
 } from './tradingPlanReview'
 
 export const normalizeMarketContext = item => item ? ({
+  snapshotTime: item?.snapshotTime ?? item?.SnapshotTime ?? '',
   stageLabel: item?.stageLabel ?? item?.StageLabel ?? '混沌',
   stageConfidence: normalizePlanNumber(item?.stageConfidence ?? item?.StageConfidence) ?? 0,
   stockSectorName: item?.stockSectorName ?? item?.StockSectorName ?? '',

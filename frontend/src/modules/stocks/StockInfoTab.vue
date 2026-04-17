@@ -533,7 +533,17 @@ const fetchManualTradingPlanMarketContext = async (workspace, form = workspace?.
       return
     }
 
-    const payload = normalizeMarketContext(await response.json())
+    const marketContextRaw = await response.json()
+    const latestSentimentResponse = await fetchBackendGet('/api/market/sentiment/latest', {
+      signal: controller.signal
+    }).catch(() => null)
+    const latestSentimentRaw = latestSentimentResponse?.ok
+      ? await latestSentimentResponse.json().catch(() => null)
+      : null
+    const payload = normalizeMarketContext({
+      ...marketContextRaw,
+      snapshotTime: latestSentimentRaw?.snapshotTime ?? latestSentimentRaw?.SnapshotTime ?? marketContextRaw?.snapshotTime ?? marketContextRaw?.SnapshotTime ?? ''
+    })
     updatePlanMarketContextForm(workspace, requestToken, form, targetForm => {
       targetForm.marketContext = payload
       targetForm.marketContextLoading = false

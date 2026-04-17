@@ -1,7 +1,16 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import MarketRealtimeOverview from './MarketRealtimeOverview.vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import MarketTemperatureBar from './MarketTemperatureBar.vue'
+import IndexMetricStrip from './IndexMetricStrip.vue'
+import BreadthBucketChart from './BreadthBucketChart.vue'
+import CapitalBreadthPanel from './CapitalBreadthPanel.vue'
+import SectorToolbar from './SectorToolbar.vue'
+import SectorRankingList from './SectorRankingList.vue'
+import SectorDetailPanel from './SectorDetailPanel.vue'
+import SentimentHistoryStrip from './SentimentHistoryStrip.vue'
+import DataAuditPanel from './DataAuditPanel.vue'
 
+// ── UI state ──
 const boardType = ref('concept')
 const sort = ref('strength')
 const compareWindow = ref('10d')
@@ -16,8 +25,11 @@ const error = ref('')
 const detailError = ref('')
 const realtimeError = ref('')
 const realtimeSectorBoardError = ref('')
+
+// ── Data refs ──
 const summary = ref(null)
 const history = ref([])
+const auditData = ref(null)
 const sectorBaseItems = ref([])
 const sectors = ref([])
 const total = ref(0)
@@ -32,18 +44,20 @@ const sectorPageStatus = ref({ isDegraded: false, degradeReason: '' })
 const syncFeedback = ref(null)
 const initialDashboardResolved = ref(false)
 
+// ── Constants ──
+const REFRESH_INTERVAL = 30_000
+let refreshTimer = null
+
 const boardOptions = [
   { value: 'concept', label: '概念轮动' },
   { value: 'industry', label: '行业轮动' },
   { value: 'style', label: '风格轮动' }
 ]
-
 const compareWindowOptions = [
   { value: '5d', label: '5日持续' },
   { value: '10d', label: '10日主线' },
   { value: '20d', label: '20日趋势' }
 ]
-
 const sortOptions = [
   { value: 'strength', label: '综合强度' },
   { value: 'change', label: '涨幅优先' },
@@ -51,44 +65,31 @@ const sortOptions = [
   { value: 'breadth', label: '领涨扩散' },
   { value: 'continuity', label: '连续性' }
 ]
+const boardLabelMap = { concept: '概念', industry: '行业', style: '风格' }
+const DEGRADE_FALLBACK_TEXT = '部分指标暂不可用，请以下方审计面板为准'
 
-const boardLabelMap = {
-  concept: '概念',
-  industry: '行业',
-  style: '风格'
-}
-
+// ── Helpers ──
 const hasPositiveMetricValues = values => values.some(value => Number(value ?? 0) > 0)
 const normalizeOptionalNumber = value => {
   if (value === null || value === undefined || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
-
 const toBoolean = value => {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
   if (typeof value === 'string') return value.trim().toLowerCase() === 'true'
   return false
 }
-
 const toDateKey = value => {
   if (!value) return ''
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10)
 }
-
-const splitDegradeReasons = value => String(value ?? '')
-  .split(',')
-  .map(item => item.trim())
-  .filter(Boolean)
-
+const splitDegradeReasons = value => String(value ?? '').split(',').map(item => item.trim()).filter(Boolean)
 const localizeDegradeCode = code => {
   const sectorMatch = code.match(/^sector_rankings_(concept|industry|style)_unavailable$/)
-  if (sectorMatch) {
-    return `${boardLabelMap[sectorMatch[1]] ?? '板块'}板块排行暂未同步完成`
-  }
-
+  if (sectorMatch) return `${boardLabelMap[sectorMatch[1]] ?? '板块'}板块排行暂未同步完成`
   if (code === 'market_breadth_unavailable') return '市场涨跌与涨跌停数据暂未同步完成'
   if (code === 'market_turnover_unavailable') return '市场成交额暂未同步完成'
   if (code === 'limit_up_unavailable') return '涨停统计暂未同步完成'
@@ -97,116 +98,72 @@ const localizeDegradeCode = code => {
   if (code === 'max_streak_unavailable') return '连板高度暂未同步完成'
   if (code === 'sector_rankings_unavailable') return '板块排行暂未同步完成'
   if (code === 'sync_incomplete') return '本次同步只完成了部分市场数据'
-
-  return '部分数据暂未同步完成'
+  return ''
 }
-
 const localizeDegradeReason = value => {
-  const items = splitDegradeReasons(value).map(localizeDegradeCode)
+  const items = splitDegradeReasons(value).map(localizeDegradeCode).filter(Boolean)
   return [...new Set(items)].join('、')
 }
-
+const localizeDegradeReasonOrFallback = value => localizeDegradeReason(value) || DEGRADE_FALLBACK_TEXT
 const hasSectorRankingGap = value => splitDegradeReasons(value)
   .some(code => code === 'sector_rankings_unavailable' || /^sector_rankings_(concept|industry|style)_unavailable$/.test(code))
+const hasDegradeCode = (value, code) => splitDegradeReasons(value).includes(code)
 
-const cnDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false
-})
-
+// ── Computed ──
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize.value)))
-const selectedSnapshot = computed(() => sectors.value.find(item => item.sectorCode === selectedSectorCode.value) ?? sectors.value[0] ?? null)
-const compareWindowLabel = computed(() => compareWindowOptions.find(option => option.value === compareWindow.value)?.label ?? '10日主线')
-const activeSortLabel = computed(() => sortOptions.find(option => option.value === sort.value)?.label ?? '综合强度')
-const isHeroLoading = computed(() => !initialDashboardResolved.value && !summary.value && !error.value)
+const compareWindowLabel = computed(() => compareWindowOptions.find(o => o.value === compareWindow.value)?.label ?? '10日主线')
 const isSummaryDegraded = computed(() => Boolean(summary.value?.isDegraded) || (summary.value?.stageLabelV2 || '') === '同步不完整')
-const stageToneClass = computed(() => {
-  if (isHeroLoading.value) return 'tone-loading'
-  if (isSummaryDegraded.value) return 'tone-degraded'
-
-  const label = summary.value?.stageLabelV2 || summary.value?.stageLabel || ''
-  if (label === '主升') return 'tone-positive'
-  if (label === '退潮') return 'tone-negative'
-  if (label === '分歧') return 'tone-warning'
-  return 'tone-neutral'
-})
 const isMarketDegraded = computed(() => isSummaryDegraded.value || sectorPageStatus.value.isDegraded)
 const activeDegradeReasonText = computed(() => localizeDegradeReason(summary.value?.degradeReason || sectorPageStatus.value.degradeReason))
-const heroSubtitle = computed(() => (
-  isMarketDegraded.value
-    ? '当前仅同步到部分市场快照，下方实时数据仅供参考。'
-    : '把涨停高度、涨跌家数、炸板率与板块扩散度压成同一屏，快速判断今天是主升、分歧、混沌还是退潮。'
-))
-const heroStagePhase = computed(() => {
-  if (isHeroLoading.value) return '加载中'
-  if (!summary.value) return error.value ? '快照异常' : '等待更新'
-  return isSummaryDegraded.value ? '部分同步结果' : (summary.value.sessionPhase || '待同步')
+const isBrokenBoardUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'broken_board_unavailable'))
+const isLimitUpUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'limit_up_unavailable'))
+const isMaxStreakUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'max_streak_unavailable'))
+const isTopSectorUnavailable = computed(() => hasSectorRankingGap(summary.value?.degradeReason) || hasSectorRankingGap(sectorPageStatus.value.degradeReason))
+const isTurnoverUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'market_turnover_unavailable'))
+const isBreadthUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'market_breadth_unavailable'))
+
+// ── Centralized unavailability (passed to children as explicit props) ──
+const isDegradedContext = computed(() => isSummaryDegraded.value || sectorPageStatus.value.isDegraded)
+const _hasUsableTs = value => Boolean(String(value ?? '').trim())
+const _showAsUnavailable = (value, code, hasTimestamp) => {
+  if (!isDegradedContext.value) return false
+  if (code) {
+    const reasons = summary.value?.degradeReason || sectorPageStatus.value.degradeReason
+    if (hasDegradeCode(reasons, code)) return true
+  }
+  return Number(value ?? 0) === 0 && !hasTimestamp
+}
+const mainFlowUnavailable = computed(() => {
+  const flow = realtimeOverview.value?.mainCapitalFlow
+  if (!flow) return true
+  return _showAsUnavailable(flow.mainNetInflow, null, _hasUsableTs(flow.snapshotTime))
 })
-const heroStageTitle = computed(() => {
-  if (isHeroLoading.value) return '正在获取最新快照'
-  if (!summary.value) return error.value ? '快照暂不可用' : '等待最新快照'
-  return isSummaryDegraded.value ? '同步不完整' : (summary.value.stageLabelV2 || summary.value.stageLabel || '等待最新快照')
+const northboundUnavailable = computed(() => {
+  const flow = realtimeOverview.value?.northboundFlow
+  if (!flow) return true
+  return _showAsUnavailable(flow.totalNetInflow, null, _hasUsableTs(flow.snapshotTime))
 })
-const heroStageDetail = computed(() => {
-  if (isHeroLoading.value) return '市场阶段、置信度与板块快照正在加载，请稍候。'
-  if (!summary.value) return error.value ? '本次请求未拿到市场摘要，可稍后重试。' : '等待最新市场快照。'
-  if (isSummaryDegraded.value) return '关键广度或榜单未同步完成，暂不输出阶段判断。'
-  return `情绪分 ${(summary.value.stageScore ?? 0).toFixed(2)} / 置信 ${(summary.value.stageConfidence ?? 0).toFixed(0)}`
-})
-const heroStageReason = computed(() => {
-  if (isHeroLoading.value) return ''
-  if (!isSummaryDegraded.value) return ''
-  return localizeDegradeReason(summary.value?.degradeReason)
-})
-const heroStageTimestamp = computed(() => {
-  if (isHeroLoading.value) return '最新时间加载中'
-  if (!summary.value) return error.value ? '请稍后重试' : '--'
-  return formatDate(summary.value.snapshotTime)
-})
-const showDegradedSectorEmptyState = computed(() => !sectors.value.length && sectorPageStatus.value.isDegraded && hasSectorRankingGap(sectorPageStatus.value.degradeReason))
-const sectorEmptyTitle = computed(() => showDegradedSectorEmptyState.value ? '这次同步只拿到市场摘要，板块排行未同步完成。' : '当前暂无板块榜单。')
-const sectorEmptyBody = computed(() => showDegradedSectorEmptyState.value ? '为了避免把旧榜单误当最新结果，这里暂不展示历史榜单。' : '请稍后重试或切换轮动维度。')
-const sectorEmptyReason = computed(() => showDegradedSectorEmptyState.value ? localizeDegradeReason(sectorPageStatus.value.degradeReason) : '')
-const toolbarBoardCountText = computed(() => {
-  if (!initialDashboardResolved.value) return '榜单加载中'
-  if (isMarketDegraded.value && !sectors.value.length) return '榜单待补齐'
-  return `共 ${total.value} 个板块`
-})
-const realtimeSectorItems = computed(() => realtimeSectorBoard.value?.items ?? [])
+const diffusionUnavailable = computed(() => _showAsUnavailable(displaySummary.value?.diffusionScore, null, false))
+const continuationUnavailable = computed(() => _showAsUnavailable(displaySummary.value?.continuationScore, null, false))
+const turnoverShareUnavailable = computed(() =>
+  isTurnoverUnavailable.value || _showAsUnavailable(displaySummary.value?.top3SectorTurnoverShare, null, false)
+)
+
+// Display summary with realtime breadth fallback
 const summaryNeedsBreadthFallback = computed(() => {
   const breadth = realtimeOverview.value?.breadth
   if (!summary.value || !breadth) return false
-
-  const summaryBreadthMissing = [summary.value.advancers, summary.value.decliners, summary.value.flatCount]
-    .every(value => Number(value ?? 0) === 0)
+  const summaryBreadthMissing = [summary.value.advancers, summary.value.decliners, summary.value.flatCount].every(v => Number(v ?? 0) === 0)
   const summaryLimitCountsMissing = Number(summary.value.limitUpCount ?? 0) === 0
-  const realtimeHasBreadth = [breadth.limitUpCount, breadth.limitDownCount, breadth.advancers, breadth.decliners, breadth.flatCount]
-    .some(value => Number(value ?? 0) > 0)
-
+  const realtimeHasBreadth = [breadth.limitUpCount, breadth.limitDownCount, breadth.advancers, breadth.decliners, breadth.flatCount].some(v => Number(v ?? 0) > 0)
   return realtimeHasBreadth && (summaryBreadthMissing || summaryLimitCountsMissing)
 })
-const summaryTurnoverPending = computed(() => {
-  if (!summary.value) return false
-  return Number(summary.value.top3SectorTurnoverShare ?? 0) <= 0 && sectorBaseItems.value.length > 0
-})
+
 const displaySummary = computed(() => {
   if (!summary.value) return null
-
-  if (!summaryNeedsBreadthFallback.value) {
-    return summary.value
-  }
-
+  if (!summaryNeedsBreadthFallback.value) return summary.value
   const breadth = realtimeOverview.value?.breadth
-  if (!breadth) {
-    return summary.value
-  }
-
+  if (!breadth) return summary.value
   return {
     ...summary.value,
     limitUpCount: Number(breadth.limitUpCount ?? summary.value.limitUpCount ?? 0),
@@ -216,133 +173,43 @@ const displaySummary = computed(() => {
     flatCount: Number(breadth.flatCount ?? summary.value.flatCount ?? 0)
   }
 })
-const summaryDataNotice = computed(() => {
-  const notices = []
-  if (isMarketDegraded.value) {
-    notices.push(`当前为部分同步结果：${activeDegradeReasonText.value || '关键广度或榜单暂未同步完成'}。`)
-  }
-  if (summaryNeedsBreadthFallback.value) {
-    notices.push('涨跌家数与涨跌停已自动改用实时广度补足，避免把缺失快照误读成 0。')
-  }
-  if (summaryTurnoverPending.value) {
-    notices.push('热门板块成交占比尚未同步完成，本页不再把缺失值展示成 0。')
-  }
-  return notices.join(' ')
-})
-const hasLimitMetricData = computed(() => hasPositiveMetricValues([
-  displaySummary.value?.limitUpCount,
-  displaySummary.value?.limitDownCount,
-  displaySummary.value?.limitUpCount5dAvg,
-  displaySummary.value?.maxLimitUpStreak
-]))
-const hasBrokenBoardMetricData = computed(() => hasPositiveMetricValues([
-  displaySummary.value?.brokenBoardRate,
-  displaySummary.value?.brokenBoardRate5dAvg,
-  displaySummary.value?.brokenBoardCount
-]))
-const hasBreadthMetricData = computed(() => hasPositiveMetricValues([
-  displaySummary.value?.diffusionScore,
-  displaySummary.value?.continuationScore,
-  displaySummary.value?.advancers,
-  displaySummary.value?.decliners,
-  displaySummary.value?.flatCount
-]))
-const hasTurnoverMetricData = computed(() => !summaryTurnoverPending.value && hasPositiveMetricValues([
-  displaySummary.value?.top3SectorTurnoverShare,
-  displaySummary.value?.top3SectorTurnoverShare5dAvg,
-  displaySummary.value?.top10SectorTurnoverShare5dAvg
-]))
-const isSummaryMetricCardsLoading = computed(() => isHeroLoading.value)
-const createLoadingMetricCard = detail => ({
-  isPlaceholder: true,
-  value: '加载中',
-  detail
-})
-const limitMetricCard = computed(() => {
-  if (isSummaryMetricCardsLoading.value) {
-    return createLoadingMetricCard('最新涨停、跌停与连板快照正在加载。')
-  }
 
-  if (isMarketDegraded.value && !hasLimitMetricData.value) {
-    return {
-      isPlaceholder: true,
-      value: '待补齐',
-      detail: '涨停、跌停与连板统计尚未补齐，避免把缺失快照误读成 0。'
-    }
-  }
-
-  return {
-    isPlaceholder: false,
-    value: `${displaySummary.value?.limitUpCount ?? 0} / ${displaySummary.value?.limitDownCount ?? 0}`,
-    detail: `5日均值 ${(displaySummary.value?.limitUpCount5dAvg ?? 0).toFixed(1)} / 最高连板 ${displaySummary.value?.maxLimitUpStreak ?? 0}`
-  }
-})
-const brokenBoardMetricCard = computed(() => {
-  if (isSummaryMetricCardsLoading.value) {
-    return createLoadingMetricCard('最新炸板率统计正在加载。')
-  }
-
-  if (isMarketDegraded.value && !hasBrokenBoardMetricData.value) {
-    return {
-      isPlaceholder: true,
-      value: '暂不展示',
-      detail: '炸板率统计尚未补齐，暂不输出缺失结论。'
-    }
-  }
-
-  return {
-    isPlaceholder: false,
-    value: `${(displaySummary.value?.brokenBoardRate ?? 0).toFixed(2)}%`,
-    detail: `5日均值 ${(displaySummary.value?.brokenBoardRate5dAvg ?? 0).toFixed(2)}% / 炸板数 ${displaySummary.value?.brokenBoardCount ?? 0}`
-  }
-})
-const breadthMetricCard = computed(() => {
-  if (isSummaryMetricCardsLoading.value) {
-    return createLoadingMetricCard('最新扩散与持续快照正在加载。')
-  }
-
-  if (isMarketDegraded.value && !hasBreadthMetricData.value) {
-    return {
-      isPlaceholder: true,
-      value: '以实时补充为准',
-      detail: '扩散与持续数据尚未补齐，先以下方实时总览为准。'
-    }
-  }
-
-  return {
-    isPlaceholder: false,
-    value: `${(displaySummary.value?.diffusionScore ?? 0).toFixed(1)} / ${(displaySummary.value?.continuationScore ?? 0).toFixed(1)}`,
-    detail: `涨跌家数 ${displaySummary.value?.advancers ?? 0} / ${displaySummary.value?.decliners ?? 0} / 平盘 ${displaySummary.value?.flatCount ?? 0}`
-  }
-})
-const turnoverMetricCard = computed(() => {
-  if (isSummaryMetricCardsLoading.value) {
-    return createLoadingMetricCard('热门板块成交占比快照正在加载。')
-  }
-
-  if (isMarketDegraded.value && !hasTurnoverMetricData.value) {
-    return {
-      isPlaceholder: true,
-      value: '待补齐',
-      detail: '热门板块成交占比尚未入库，先等待榜单与成交占比补齐。'
-    }
-  }
-
-  if (summaryTurnoverPending.value) {
-    return {
-      isPlaceholder: true,
-      value: '待同步',
-      detail: '板块成交占比尚未入库，避免误读为 0。'
-    }
-  }
-
-  return {
-    isPlaceholder: false,
-    value: formatPercentOrPending(displaySummary.value?.top3SectorTurnoverShare),
-    detail: `5日均值 ${(displaySummary.value?.top3SectorTurnoverShare5dAvg ?? 0).toFixed(2)}% / Top10 ${(displaySummary.value?.top10SectorTurnoverShare5dAvg ?? 0).toFixed(2)}%`
-  }
+const dataStaleHours = computed(() => {
+  const t = summary.value?.snapshotTime
+  if (!t) return -1
+  const ms = Date.now() - new Date(t).getTime()
+  return Number.isFinite(ms) ? ms / 3600000 : -1
 })
 
+// Sector detail computed
+const showDegradedSectorEmptyState = computed(() => !sectors.value.length && sectorPageStatus.value.isDegraded && hasSectorRankingGap(sectorPageStatus.value.degradeReason))
+const sectorEmptyTitle = computed(() => showDegradedSectorEmptyState.value ? '板块排行暂未同步完成。' : '当前暂无板块榜单。')
+const sectorEmptyBody = computed(() => {
+  if (showDegradedSectorEmptyState.value) {
+    const ts = snapshotTime.value ? `（快照时间：${formatDate(snapshotTime.value)}）` : ''
+    return `下方展示最近有效数据，请注意快照时间。${ts}`
+  }
+  return '请稍后重试或切换轮动维度。'
+})
+const toolbarBoardCountText = computed(() => {
+  if (!initialDashboardResolved.value) return '榜单加载中'
+  if (isMarketDegraded.value && !sectors.value.length) return '榜单暂无数据'
+  return `共 ${total.value} 个板块`
+})
+
+const pageOffset = computed(() => (page.value - 1) * pageSize.value)
+
+const historyDisplayItems = computed(() => history.value.map(item => ({
+  tradingDate: item.tradingDate,
+  date: formatDate(item.tradingDate).slice(5, 10),
+  label: isHistoryChipDegraded(item) ? '同步不完整' : item.stageLabel,
+  detail: isHistoryChipDegraded(item)
+    ? (localizeDegradeReason(summary.value?.degradeReason) || '仅同步到摘要结果')
+    : `${item.stageScore.toFixed(1)} 分`,
+  isDegraded: isHistoryChipDegraded(item)
+})))
+
+// ── Normalizers ──
 const normalizeSummary = payload => payload ? ({
   snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
   sessionPhase: payload.sessionPhase ?? payload.SessionPhase ?? '',
@@ -533,6 +400,12 @@ const normalizeRealtimeOverview = payload => payload ? ({
   breadth: normalizeBreadth(payload.breadth ?? payload.Breadth ?? null)
 }) : null
 
+// ── Formatters ──
+const cnDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+})
+
 const formatDate = value => {
   if (!value) return '--'
   const date = new Date(value)
@@ -540,30 +413,13 @@ const formatDate = value => {
   return cnDateTimeFormatter.format(date)
 }
 
-const formatSignedPercent = value => {
-  const number = Number(value ?? 0)
-  return `${number >= 0 ? '+' : ''}${number.toFixed(2)}%`
+// ── Sector helpers ──
+const isHistoryChipDegraded = item => {
+  if (!item) return false
+  if (item.stageScore === 0 && item.stageLabel === '混沌') return true
+  if (!isSummaryDegraded.value || !summary.value?.snapshotTime) return false
+  return toDateKey(item.tradingDate) === toDateKey(summary.value.snapshotTime)
 }
-
-const formatMoney = value => {
-  const number = Number(value ?? 0)
-  const abs = Math.abs(number)
-  if (abs >= 100000000) return `${(number / 100000000).toFixed(2)} 亿`
-  if (abs >= 10000) return `${(number / 10000).toFixed(2)} 万`
-  return number.toFixed(0)
-}
-
-const formatSignedAmount = value => {
-  const number = Number(value ?? 0)
-  return `${number >= 0 ? '+' : ''}${number.toFixed(2)} 亿`
-}
-
-const formatPercentOrPending = value => {
-  const number = Number(value ?? 0)
-  return number > 0 ? `${number.toFixed(2)}%` : '待同步'
-}
-
-const formatScale = value => `${(Number(value ?? 0) * 100).toFixed(0)}%`
 
 const getRealtimeSectorSort = value => {
   if (value === 'change') return 'change'
@@ -571,110 +427,21 @@ const getRealtimeSectorSort = value => {
   return 'rank'
 }
 
-const isSparseSectorSnapshot = item => {
-  if (!item) return false
-  const memberTotal = Number(item.advancerCount ?? 0) + Number(item.declinerCount ?? 0) + Number(item.flatMemberCount ?? 0)
-  return !item.leaderSymbol && memberTotal === 0 && Number(item.newsHotCount ?? 0) === 0
-}
-
-const isSparseSectorDetail = payload => {
-  if (!payload?.snapshot) return false
-  const memberTotal = Number(payload.snapshot.advancerCount ?? 0) + Number(payload.snapshot.declinerCount ?? 0) + Number(payload.snapshot.flatMemberCount ?? 0)
-  return memberTotal === 0 && !payload.snapshot.leaderSymbol && (!payload.leaders?.length) && (!payload.news?.length)
-}
-
-const getLeaderEmptyHint = payload => (isSparseSectorDetail(payload) ? '当前只同步到板块快照，龙头股明细待补齐。' : '当前没有龙头股快照。')
-const getNewsEmptyHint = payload => (isSparseSectorDetail(payload) ? '当前只同步到板块快照，相关新闻仍待补齐。' : '本地事实库暂无该板块新闻。')
-const getSectorOrderLabel = index => `当前第${(page.value - 1) * pageSize.value + index + 1}`
-const getReferenceRankLabel = item => `${realtimeSectorBoardEnabled.value ? '东财' : '快照'}#${item.rankNo}`
-const isHistoryChipDegraded = item => {
-  if (!item || !isSummaryDegraded.value || !summary.value?.snapshotTime) return false
-  return toDateKey(item.tradingDate) === toDateKey(summary.value.snapshotTime)
-}
-const getHistoryChipLabel = item => (isHistoryChipDegraded(item) ? '同步不完整' : item.stageLabel)
-const getHistoryChipDetail = item => {
-  if (!isHistoryChipDegraded(item)) return `${item.stageScore.toFixed(1)} 分`
-  return heroStageReason.value || '仅同步到摘要结果'
-}
-const createSyncFeedback = () => {
-  if (isMarketDegraded.value) {
-    return {
-      type: 'partial',
-      message: `本次同步已完成，但仍有部分数据缺失：${activeDegradeReasonText.value || '关键广度或板块榜单仍未同步完成'}。`
-    }
-  }
-
-  return {
-    type: 'success',
-    message: '最新市场摘要与板块榜单已同步完成。'
-  }
-}
-
 const applyRealtimeSectorBoard = (items, realtimePayload, sortValue) => {
-  if (!Array.isArray(items) || !items.length || !realtimeSectorBoardEnabled.value) {
-    return Array.isArray(items) ? [...items] : []
-  }
-
+  if (!Array.isArray(items) || !items.length || !realtimeSectorBoardEnabled.value) return Array.isArray(items) ? [...items] : []
   const realtimeItems = Array.isArray(realtimePayload?.items) ? realtimePayload.items : []
-  if (!realtimeItems.length) {
-    return [...items]
-  }
-
+  if (!realtimeItems.length) return [...items]
   const realtimeMap = new Map(realtimeItems.map(item => [item.sectorCode, item]))
   const mergedItems = items.map(item => {
-    const realtimeItem = realtimeMap.get(item.sectorCode)
-    return realtimeItem
-      ? {
-          ...item,
-          changePercent: realtimeItem.changePercent,
-          mainNetInflow: realtimeItem.mainNetInflow,
-          rankNo: realtimeItem.rankNo,
-          snapshotTime: realtimeItem.snapshotTime || item.snapshotTime,
-          realtimeTurnoverAmount: realtimeItem.turnoverAmount,
-          realtimeTurnoverShare: realtimeItem.turnoverShare
-        }
-      : item
+    const ri = realtimeMap.get(item.sectorCode)
+    return ri ? { ...item, changePercent: ri.changePercent, mainNetInflow: ri.mainNetInflow, rankNo: ri.rankNo, snapshotTime: ri.snapshotTime || item.snapshotTime, realtimeTurnoverAmount: ri.turnoverAmount, realtimeTurnoverShare: ri.turnoverShare } : item
   })
-
-  if (sortValue === 'change') {
-    return [...mergedItems].sort((left, right) => {
-      if (right.changePercent !== left.changePercent) return right.changePercent - left.changePercent
-      return left.rankNo - right.rankNo
-    })
-  }
-
-  if (sortValue === 'flow') {
-    return [...mergedItems].sort((left, right) => {
-      if (right.mainNetInflow !== left.mainNetInflow) return right.mainNetInflow - left.mainNetInflow
-      return right.changePercent - left.changePercent
-    })
-  }
-
+  if (sortValue === 'change') return [...mergedItems].sort((a, b) => b.changePercent !== a.changePercent ? b.changePercent - a.changePercent : a.rankNo - b.rankNo)
+  if (sortValue === 'flow') return [...mergedItems].sort((a, b) => b.mainNetInflow !== a.mainNetInflow ? b.mainNetInflow - a.mainNetInflow : b.changePercent - a.changePercent)
   return mergedItems
 }
 
-const getWindowStrength = item => {
-  if (compareWindow.value === '5d') return item.strengthAvg5d
-  if (compareWindow.value === '20d') return item.strengthAvg20d
-  return item.strengthAvg10d
-}
-
-const getWindowRankChange = item => {
-  if (compareWindow.value === '5d') return item.rankChange5d
-  if (compareWindow.value === '20d') return item.rankChange20d
-  return item.rankChange10d
-}
-
-const getWindowRankLabel = item => {
-  const value = getWindowRankChange(item)
-  return `${value >= 0 ? '+' : ''}${value}`
-}
-
-const openExternal = url => {
-  if (!url) return
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
-
+// ── API ──
 const fetchJson = async url => {
   const response = await fetch(url)
   if (!response.ok) {
@@ -687,12 +454,7 @@ const fetchJson = async url => {
 }
 
 const fetchDetail = async sectorCode => {
-  if (!sectorCode) {
-    detail.value = null
-    selectedSectorCode.value = ''
-    return
-  }
-
+  if (!sectorCode) { detail.value = null; selectedSectorCode.value = ''; return }
   selectedSectorCode.value = sectorCode
   detailLoading.value = true
   detailError.value = ''
@@ -702,24 +464,15 @@ const fetchDetail = async sectorCode => {
   } catch (err) {
     detail.value = null
     detailError.value = err.message || '板块详情加载失败'
-  } finally {
-    detailLoading.value = false
-  }
+  } finally { detailLoading.value = false }
 }
 
 const fetchRealtimeSectorBoard = async ({ silent = false } = {}) => {
   if (!realtimeSectorBoardEnabled.value) {
-    realtimeSectorBoard.value = null
-    realtimeSectorBoardError.value = ''
-    sectors.value = [...sectorBaseItems.value]
-    return null
+    realtimeSectorBoard.value = null; realtimeSectorBoardError.value = ''; sectors.value = [...sectorBaseItems.value]; return null
   }
-
-  if (!silent) {
-    realtimeSectorBoardLoading.value = true
-  }
+  if (!silent) realtimeSectorBoardLoading.value = true
   realtimeSectorBoardError.value = ''
-
   try {
     const realtimeSort = getRealtimeSectorSort(sort.value)
     const payload = await fetchJson(`/api/market/sectors/realtime?boardType=${encodeURIComponent(boardType.value)}&take=${Math.max(pageSize.value * 6, 60)}&sort=${encodeURIComponent(realtimeSort)}`)
@@ -727,21 +480,13 @@ const fetchRealtimeSectorBoard = async ({ silent = false } = {}) => {
     sectors.value = applyRealtimeSectorBoard(sectorBaseItems.value, realtimeSectorBoard.value, sort.value)
     return realtimeSectorBoard.value
   } catch (err) {
-    realtimeSectorBoard.value = null
-    realtimeSectorBoardError.value = err.message || '实时板块榜加载失败'
-    sectors.value = [...sectorBaseItems.value]
-    return null
-  } finally {
-    realtimeSectorBoardLoading.value = false
-  }
+    realtimeSectorBoard.value = null; realtimeSectorBoardError.value = err.message || '实时板块榜加载失败'; sectors.value = [...sectorBaseItems.value]; return null
+  } finally { realtimeSectorBoardLoading.value = false }
 }
 
 const fetchDashboard = async ({ resetPage = false, preserveSyncFeedback = false } = {}) => {
   if (resetPage) page.value = 1
-  if (!preserveSyncFeedback) {
-    syncFeedback.value = null
-  }
-
+  if (!preserveSyncFeedback) syncFeedback.value = null
   loading.value = true
   error.value = ''
   try {
@@ -750,7 +495,6 @@ const fetchDashboard = async ({ resetPage = false, preserveSyncFeedback = false 
       fetchJson('/api/market/sentiment/history?days=10'),
       fetchJson(`/api/market/sectors?boardType=${encodeURIComponent(boardType.value)}&page=${page.value}&pageSize=${pageSize.value}&sort=${encodeURIComponent(sort.value)}`)
     ])
-
     summary.value = normalizeSummary(summaryPayload)
     history.value = Array.isArray(historyPayload) ? historyPayload.map(normalizeHistoryItem) : []
     total.value = Number(sectorPayload?.total ?? sectorPayload?.Total ?? 0)
@@ -762,19 +506,12 @@ const fetchDashboard = async ({ resetPage = false, preserveSyncFeedback = false 
     sectorBaseItems.value = Array.isArray(sectorPayload?.items ?? sectorPayload?.Items) ? (sectorPayload.items ?? sectorPayload.Items).map(normalizeSectorItem) : []
     sectors.value = [...sectorBaseItems.value]
     await fetchRealtimeSectorBoard({ silent: true })
-
-    const nextSelected = sectors.value.some(item => item.sectorCode === selectedSectorCode.value)
-      ? selectedSectorCode.value
-      : sectors.value[0]?.sectorCode || ''
+    const nextSelected = sectors.value.some(i => i.sectorCode === selectedSectorCode.value) ? selectedSectorCode.value : sectors.value[0]?.sectorCode || ''
     await fetchDetail(nextSelected)
   } catch (err) {
-    summary.value = null
-    history.value = []
-    sectors.value = []
-    total.value = 0
+    summary.value = null; history.value = []; sectors.value = []; total.value = 0
     sectorPageStatus.value = { isDegraded: false, degradeReason: '' }
-    detail.value = null
-    selectedSectorCode.value = ''
+    detail.value = null; selectedSectorCode.value = ''
     error.value = err.message || '情绪轮动数据加载失败'
   } finally {
     initialDashboardResolved.value = true
@@ -782,14 +519,32 @@ const fetchDashboard = async ({ resetPage = false, preserveSyncFeedback = false 
   }
 }
 
-const fetchRealtimeOverview = async () => {
-  if (!realtimeOverviewEnabled.value) {
-    realtimeOverview.value = null
-    realtimeError.value = ''
-    realtimeLoading.value = false
-    return
-  }
+const fetchAudit = async () => {
+  try {
+    const raw = await fetchJson('/api/market/audit')
+    if (!raw) return
+    auditData.value = {
+      dataSources: (raw.sources ?? []).map(s => ({
+        name: s.name,
+        status: s.status,
+        lastSuccessTime: s.lastSuccess,
+        consecutiveFailures: s.consecutiveFailures,
+        latency: s.avgLatencyMs
+      })),
+      formula: [
+        `阶段评分 = ${raw.algorithm?.stageScore ?? ''}`,
+        `扩散评分 = ${raw.algorithm?.diffusionScore ?? ''}`,
+        `延续评分 = ${raw.algorithm?.continuationScore ?? ''}`,
+        raw.algorithm?.stageLabel ?? ''
+      ].filter(Boolean).join('\n'),
+      computedAt: raw.lastComputation?.timestamp ?? '',
+      computeDurationMs: raw.lastComputation?.durationMs ?? 0
+    }
+  } catch { /* audit is non-critical */ }
+}
 
+const fetchRealtimeOverview = async () => {
+  if (!realtimeOverviewEnabled.value) { realtimeOverview.value = null; realtimeError.value = ''; realtimeLoading.value = false; return }
   realtimeLoading.value = true
   realtimeError.value = ''
   try {
@@ -798,21 +553,10 @@ const fetchRealtimeOverview = async () => {
   } catch (err) {
     realtimeOverview.value = null
     realtimeError.value = err.message || '实时总览加载失败'
-  } finally {
-    realtimeLoading.value = false
-  }
+  } finally { realtimeLoading.value = false }
 }
 
-const handleBoardChange = () => fetchDashboard({ resetPage: true })
-const handleSortChange = () => fetchDashboard({ resetPage: true })
-
-const dataStaleHours = computed(() => {
-  const t = summary.value?.snapshotTime
-  if (!t) return -1
-  const ms = Date.now() - new Date(t).getTime()
-  return Number.isFinite(ms) ? ms / 3600000 : -1
-})
-
+// ── Sync ──
 const forceSync = async () => {
   syncing.value = true
   syncFeedback.value = null
@@ -822,324 +566,211 @@ const forceSync = async () => {
       const body = await res.json().catch(() => null)
       throw new Error(body?.message || `同步失败 (${res.status})`)
     }
+    const syncResult = await res.json()
+    const localizedSyncReason = localizeDegradeReasonOrFallback(syncResult.degradationReason)
     await fetchDashboard({ preserveSyncFeedback: true })
     await fetchRealtimeOverview()
-    syncFeedback.value = createSyncFeedback()
-  } catch (err) {
-    syncFeedback.value = {
-      type: 'error',
-      message: err.message || '强制同步失败'
+    if (!syncResult.synced) {
+      syncFeedback.value = { type: 'error', message: syncResult.degradationReason ? `同步失败：${localizedSyncReason}` : '同步失败：所有数据源不可用' }
+    } else if (syncResult.degradationReason) {
+      syncFeedback.value = { type: 'partial', message: `同步完成（部分降级）：${localizedSyncReason}` }
+    } else {
+      syncFeedback.value = isMarketDegraded.value
+        ? { type: 'partial', message: `本次同步已完成，但仍有部分数据缺失：${activeDegradeReasonText.value || '关键广度或板块榜单仍未同步完成'}。` }
+        : { type: 'success', message: '最新市场摘要与板块榜单已同步完成。' }
     }
-  } finally {
-    syncing.value = false
-  }
+  } catch (err) {
+    syncFeedback.value = { type: 'error', message: err.message || '强制同步失败' }
+  } finally { syncing.value = false }
 }
+
+// ── Auto-refresh ──
+function isMarketHours() {
+  const now = new Date()
+  const day = now.getDay()
+  if (day === 0 || day === 6) return false
+  const mins = now.getHours() * 60 + now.getMinutes()
+  return mins >= 555 && mins <= 930 // 9:15 – 15:30
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  refreshTimer = setInterval(() => {
+    if (isMarketHours()) {
+      fetchDashboard({ resetPage: false, preserveSyncFeedback: true })
+      fetchRealtimeOverview()
+    }
+  }, REFRESH_INTERVAL)
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+}
+
+// ── Event handlers ──
+const handleBoardChange = () => fetchDashboard({ resetPage: true })
+const handleSortChange = () => fetchDashboard({ resetPage: true })
 const handleWindowChange = () => fetchDetail(selectedSectorCode.value || sectors.value[0]?.sectorCode || '')
-const goPrev = () => {
-  if (page.value <= 1) return
-  page.value -= 1
-  fetchDashboard()
+const goPrev = () => { if (page.value > 1) { page.value -= 1; fetchDashboard() } }
+const goNext = () => { if (page.value < totalPages.value) { page.value += 1; fetchDashboard() } }
+const navigateToStockInfo = leader => {
+  const symbol = String(leader?.symbol ?? '').trim()
+  if (!symbol) return
+  window.dispatchEvent(new CustomEvent('navigate-stock', {
+    detail: {
+      symbol,
+      name: leader?.name ?? ''
+    }
+  }))
 }
-const goNext = () => {
-  if (page.value >= totalPages.value) return
-  page.value += 1
-  fetchDashboard()
-}
 
-watch(boardType, () => {
-  detail.value = null
-})
-
-watch(compareWindow, () => {
-  handleWindowChange()
-})
-
+// ── Watchers ──
+watch(boardType, () => { detail.value = null })
+watch(compareWindow, () => { handleWindowChange() })
 watch(realtimeOverviewEnabled, value => {
   localStorage.setItem('market_realtime_overview_enabled', String(value))
-  if (value) {
-    fetchRealtimeOverview()
-    return
-  }
-
-  realtimeOverview.value = null
-  realtimeError.value = ''
+  if (value) { fetchRealtimeOverview(); return }
+  realtimeOverview.value = null; realtimeError.value = ''
 })
-
 watch(realtimeSectorBoardEnabled, value => {
   localStorage.setItem('market_realtime_sector_board_enabled', String(value))
-  if (value) {
-    fetchRealtimeSectorBoard()
-    return
-  }
-
-  realtimeSectorBoard.value = null
-  realtimeSectorBoardError.value = ''
-  sectors.value = [...sectorBaseItems.value]
+  if (value) { fetchRealtimeSectorBoard(); return }
+  realtimeSectorBoard.value = null; realtimeSectorBoardError.value = ''; sectors.value = [...sectorBaseItems.value]
 })
 
+// ── Lifecycle ──
 onMounted(() => {
   fetchDashboard()
   fetchRealtimeOverview()
+  fetchAudit()
+  startAutoRefresh()
 })
+onUnmounted(() => { stopAutoRefresh() })
 </script>
 
 <template>
   <section class="market-shell">
-    <header class="market-hero">
-      <div class="hero-copy">
-        <p class="market-kicker">Market Pulse / Sector Rotation</p>
-        <h2>情绪轮动</h2>
-        <p class="hero-subtitle">{{ heroSubtitle }}</p>
-        <div class="hero-actions">
-          <button class="hero-button" type="button" @click="forceSync" :disabled="syncing || loading">
-            {{ syncing ? '正在同步...' : '同步最新数据' }}
-          </button>
-          <button class="hero-button secondary" type="button" @click="fetchRealtimeOverview" :disabled="realtimeLoading || !realtimeOverviewEnabled">刷新实时总览</button>
-          <button class="hero-button secondary" type="button" @click="realtimeOverviewEnabled = !realtimeOverviewEnabled">
-            {{ realtimeOverviewEnabled ? '隐藏实时总览' : '显示实时总览' }}
-          </button>
-        </div>
-      </div>
-      <div class="hero-stage" :class="[stageToneClass, { 'hero-stage-loading': isHeroLoading }]">
-        <span class="stage-phase">{{ heroStagePhase }}</span>
-        <strong>{{ heroStageTitle }}</strong>
-        <span>{{ heroStageDetail }}</span>
-        <small v-if="heroStageReason" class="hero-stage-reason">{{ heroStageReason }}</small>
-        <small>{{ heroStageTimestamp }}</small>
-      </div>
-    </header>
+    <!-- 1. 温度条 -->
+    <MarketTemperatureBar
+      :stage-label="displaySummary?.stageLabelV2 || displaySummary?.stageLabel || '加载中'"
+      :stage-score="displaySummary?.stageScore ?? 0"
+      :confidence="displaySummary?.stageConfidence ?? 0"
+      :session-phase="displaySummary?.sessionPhase ?? ''"
+      :snapshot-time="displaySummary?.snapshotTime ?? ''"
+      :is-degraded="isSummaryDegraded"
+      :degrade-reason="activeDegradeReasonText"
+      :syncing="syncing"
+      @sync="forceSync"
+    />
 
-    <div v-if="syncing" class="feedback syncing">正在从东方财富同步最新板块数据，请稍候...</div>
+    <!-- 反馈条 -->
     <div v-if="syncFeedback" class="feedback" :class="[`feedback-${syncFeedback.type}`]">{{ syncFeedback.message }}</div>
-    <div v-if="dataStaleHours > 24" class="feedback stale-warning">数据快照距今已超过 {{ Math.floor(dataStaleHours) }} 小时，点击"同步最新数据"获取最新行情。</div>
+    <div v-if="isSummaryDegraded && activeDegradeReasonText" class="feedback feedback-partial">{{ activeDegradeReasonText }}</div>
+    <div v-if="realtimeError" class="feedback error compact">{{ realtimeError }}</div>
+    <div v-if="realtimeSectorBoardError" class="feedback error compact">{{ realtimeSectorBoardError }}</div>
+    <div v-if="dataStaleHours > 24" class="feedback stale-warning">数据快照距今已超过 {{ Math.floor(dataStaleHours) }} 小时，点击同步按钮获取最新行情。</div>
 
-    <section class="board-toolbar">
-      <label class="toolbar-field">
-        <span>轮动维度</span>
-        <select v-model="boardType" @change="handleBoardChange">
-          <option v-for="option in boardOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
-      </label>
-      <label class="toolbar-field">
-        <span>排序方式</span>
-        <select v-model="sort" @change="handleSortChange">
-          <option v-for="option in sortOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
-      </label>
-      <label class="toolbar-field">
-        <span>比较窗口</span>
-        <select v-model="compareWindow" @change="handleWindowChange">
-          <option v-for="option in compareWindowOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
-      </label>
-      <div class="toolbar-meta">
-        <strong>{{ activeSortLabel }} / {{ compareWindowLabel }}</strong>
-        <span>{{ toolbarBoardCountText }}</span>
-        <span>快照 {{ formatDate(snapshotTime) }}</span>
-        <span v-if="realtimeSectorBoardEnabled">东财实时榜 {{ formatDate(realtimeSectorBoard?.snapshotTime) }}</span>
-        <button class="toolbar-inline-button" type="button" @click="fetchRealtimeSectorBoard" :disabled="realtimeSectorBoardLoading || !realtimeSectorBoardEnabled">刷新实时榜</button>
-        <button class="toolbar-inline-button secondary" type="button" @click="realtimeSectorBoardEnabled = !realtimeSectorBoardEnabled">
-          {{ realtimeSectorBoardEnabled ? '隐藏实时榜' : '显示实时榜' }}
-        </button>
-      </div>
-    </section>
+    <!-- 2. 指数+涨停跌停行 -->
+    <IndexMetricStrip
+      :indices="realtimeOverview?.indices ?? []"
+      :limit-up-count="displaySummary?.limitUpCount ?? 0"
+      :limit-down-count="displaySummary?.limitDownCount ?? 0"
+      :broken-board-count="displaySummary?.brokenBoardCount ?? 0"
+      :broken-board-rate="displaySummary?.brokenBoardRate ?? 0"
+      :max-limit-up-streak="displaySummary?.maxLimitUpStreak ?? 0"
+      :limit-up-count5d-avg="displaySummary?.limitUpCount5dAvg ?? 0"
+      :broken-board-rate5d-avg="displaySummary?.brokenBoardRate5dAvg ?? 0"
+      :limit-timestamp="displaySummary?.snapshotTime ?? ''"
+      :broken-board-unavailable="isBrokenBoardUnavailable"
+      :limit-up-unavailable="isLimitUpUnavailable"
+      :max-streak-unavailable="isMaxStreakUnavailable"
+    />
 
-    <p v-if="realtimeSectorBoardError" class="feedback error compact">{{ realtimeSectorBoardError }}</p>
+    <!-- 3. 涨跌分布 + 资金广度 并排 -->
+    <div class="overview-row">
+      <BreadthBucketChart
+        :buckets="realtimeOverview?.breadth?.buckets ?? []"
+        :advancers="displaySummary?.advancers ?? 0"
+        :decliners="displaySummary?.decliners ?? 0"
+        :flat-count="displaySummary?.flatCount ?? 0"
+        :timestamp="realtimeOverview?.breadth?.tradingDate ?? displaySummary?.snapshotTime ?? ''"
+        :unavailable="isBreadthUnavailable"
+      />
+      <CapitalBreadthPanel
+        :main-capital-flow="realtimeOverview?.mainCapitalFlow"
+        :northbound-flow="realtimeOverview?.northboundFlow"
+        :diffusion-score="displaySummary?.diffusionScore ?? 0"
+        :continuation-score="displaySummary?.continuationScore ?? 0"
+        :top3-sector-turnover-share="displaySummary?.top3SectorTurnoverShare ?? 0"
+        :top10-sector-turnover-share="displaySummary?.top10SectorTurnoverShare ?? 0"
+        :top3-sector-turnover-share5d-avg="displaySummary?.top3SectorTurnoverShare5dAvg ?? 0"
+        :top10-sector-turnover-share5d-avg="displaySummary?.top10SectorTurnoverShare5dAvg ?? 0"
+        :total-turnover="displaySummary?.totalTurnover ?? 0"
+        :advancers="displaySummary?.advancers ?? 0"
+        :decliners="displaySummary?.decliners ?? 0"
+        :main-flow-unavailable="mainFlowUnavailable"
+        :northbound-unavailable="northboundUnavailable"
+        :diffusion-unavailable="diffusionUnavailable"
+        :continuation-unavailable="continuationUnavailable"
+        :turnover-share-unavailable="turnoverShareUnavailable"
+      />
+    </div>
 
+    <!-- 4. 工具栏 -->
+    <SectorToolbar
+      v-model:board-type="boardType"
+      v-model:sort="sort"
+      v-model:compare-window="compareWindow"
+      :board-options="boardOptions"
+      :sort-options="sortOptions"
+      :compare-window-options="compareWindowOptions"
+      :board-count-text="toolbarBoardCountText"
+      :snapshot-time="snapshotTime"
+      :refresh-loading="realtimeSectorBoardLoading"
+      @board-change="handleBoardChange"
+      @sort-change="handleSortChange"
+      @window-change="handleWindowChange"
+      @refresh="fetchRealtimeSectorBoard"
+    />
+
+    <!-- 5. 错误/加载状态 -->
     <div v-if="error" class="feedback error">{{ error }}</div>
     <div v-else-if="loading" class="feedback">正在同步情绪轮动快照...</div>
+    <!-- 6. 板块排名 + 详情 -->
     <section v-else class="market-grid">
-      <div class="sector-list">
-        <div class="panel-heading">
-          <div>
-            <p class="market-kicker panel-kicker">Priority Board</p>
-            <h3>{{ activeSortLabel }}榜单</h3>
-          </div>
-          <small>{{ compareWindowLabel }}</small>
-        </div>
-        <div v-if="!sectors.length" class="sector-empty-state">
-          <strong>{{ sectorEmptyTitle }}</strong>
-          <p>{{ sectorEmptyBody }}</p>
-          <small v-if="sectorEmptyReason">{{ sectorEmptyReason }}</small>
-        </div>
-        <template v-else>
-          <button
-            v-for="(item, index) in sectors"
-            :key="`${item.boardType}-${item.sectorCode}`"
-            type="button"
-            class="sector-card"
-            :class="{ active: item.sectorCode === selectedSectorCode }"
-            @click="fetchDetail(item.sectorCode)"
-          >
-            <div class="sector-head">
-              <div class="sector-order-group">
-                <span class="sector-order">{{ getSectorOrderLabel(index) }}</span>
-                <span class="sector-rank">{{ getReferenceRankLabel(item) }}</span>
-              </div>
-              <strong>{{ item.sectorName }}</strong>
-              <div class="sector-state-group">
-                <span v-if="isSparseSectorSnapshot(item)" class="coverage-badge">快照有限</span>
-                <span v-if="item.isMainline" class="mainline-badge">主线</span>
-                <span class="sector-change" :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</span>
-              </div>
-            </div>
-            <div class="sector-metrics">
-              <span>综合 {{ item.strengthScore.toFixed(1) }}</span>
-              <span>{{ compareWindowLabel }} {{ getWindowStrength(item).toFixed(1) }}</span>
-              <span>扩散 {{ item.diffusionRate.toFixed(1) }}</span>
-              <span>窗口变化 {{ getWindowRankLabel(item) }}</span>
-            </div>
-            <div class="sector-meta">
-              <span>{{ item.newsSentiment }} / 热点 {{ item.newsHotCount }}</span>
-              <span>{{ item.leaderName || '暂无龙头' }}</span>
-              <span>主线 {{ item.mainlineScore.toFixed(1) }} / 龙头稳定 {{ item.leaderStabilityScore.toFixed(1) }}</span>
-            </div>
-          </button>
-
-          <footer class="pagination">
-            <button @click="goPrev" :disabled="page <= 1">上一页</button>
-            <span>第 {{ page }} / {{ totalPages }} 页</span>
-            <button @click="goNext" :disabled="page >= totalPages">下一页</button>
-          </footer>
-        </template>
-      </div>
-
-      <aside class="detail-panel">
-        <div class="panel-heading detail-panel-heading">
-          <div>
-            <p class="market-kicker panel-kicker">Sector Detail</p>
-            <h3>板块详情</h3>
-          </div>
-          <small>{{ selectedSnapshot?.sectorCode || '未选择' }}</small>
-        </div>
-        <div v-if="detailError" class="feedback error compact">{{ detailError }}</div>
-        <div v-else-if="detailLoading" class="feedback compact">正在加载板块详情...</div>
-        <template v-else-if="detail">
-          <header class="detail-head">
-            <div>
-              <p>{{ detail.snapshot.boardType }} / {{ detail.snapshot.sectorCode }}</p>
-              <h3>{{ detail.snapshot.sectorName }}</h3>
-            </div>
-            <div class="detail-badge" :class="{ positive: detail.snapshot.changePercent >= 0, negative: detail.snapshot.changePercent < 0 }">
-              {{ formatSignedPercent(detail.snapshot.changePercent) }}
-            </div>
-          </header>
-
-          <div v-if="isSparseSectorDetail(detail)" class="detail-warning">
-            当前板块只有涨幅快照，龙头、成员拆解或资讯尚未同步完整；以下内容先按“有限数据”理解。
-          </div>
-
-          <section class="detail-block">
-            <h4>龙头分布</h4>
-            <p class="detail-summary">主线分 {{ detail.snapshot.mainlineScore.toFixed(1) }} / 龙头稳定 {{ detail.snapshot.leaderStabilityScore.toFixed(1) }} / {{ detail.snapshot.isMainline ? '当前主线' : '观察中' }}</p>
-            <div v-if="!detail.leaders.length" class="empty-hint">{{ getLeaderEmptyHint(detail) }}</div>
-            <div v-else class="leader-list">
-              <div v-for="leader in detail.leaders" :key="`${detail.snapshot.sectorCode}-${leader.symbol}`" class="leader-item">
-                <span>#{{ leader.rankInSector }} {{ leader.name }} {{ leader.symbol }}</span>
-                <strong :class="{ positive: leader.changePercent >= 0, negative: leader.changePercent < 0 }">{{ formatSignedPercent(leader.changePercent) }}</strong>
-              </div>
-            </div>
-          </section>
-
-          <section class="detail-block">
-            <h4>近端趋势</h4>
-            <div v-if="!detail.history.length" class="empty-hint">暂无可用历史。</div>
-            <div v-else class="trend-list">
-              <div v-for="item in detail.history" :key="`${detail.snapshot.sectorCode}-${item.tradingDate}`" class="trend-item">
-                <span>{{ formatDate(item.tradingDate).slice(0, 10) }}</span>
-                <span>{{ formatSignedPercent(item.changePercent) }}</span>
-                <span>{{ compareWindow }} {{ (compareWindow === '5d' ? item.strengthAvg5d : compareWindow === '20d' ? item.strengthAvg20d : item.strengthAvg10d).toFixed(1) }}</span>
-                <span>窗口变化 {{ compareWindow === '5d' ? item.rankChange5d : compareWindow === '20d' ? item.rankChange20d : item.rankChange10d }}</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="detail-block">
-            <h4>扩散拆解</h4>
-            <div class="trend-list breadth-breakdown">
-              <div class="trend-item">
-                <span>上涨成员</span>
-                <strong>{{ detail.snapshot.advancerCount }}</strong>
-              </div>
-              <div class="trend-item">
-                <span>下跌成员</span>
-                <strong>{{ detail.snapshot.declinerCount }}</strong>
-              </div>
-              <div class="trend-item">
-                <span>平盘成员</span>
-                <strong>{{ detail.snapshot.flatMemberCount }}</strong>
-              </div>
-              <div class="trend-item">
-                <span>涨停成员</span>
-                <strong>{{ detail.snapshot.limitUpMemberCount }}</strong>
-              </div>
-            </div>
-          </section>
-
-          <section class="detail-block">
-            <h4>相关新闻</h4>
-            <div v-if="!detail.news.length" class="empty-hint">{{ getNewsEmptyHint(detail) }}</div>
-            <article v-for="item in detail.news" :key="`${detail.snapshot.sectorCode}-${item.title}-${item.publishTime}`" class="news-item">
-              <div>
-                <strong>{{ item.translatedTitle || item.title }}</strong>
-                <p>{{ item.source }} / {{ item.sentiment }} / {{ formatDate(item.publishTime) }}</p>
-              </div>
-              <button v-if="item.url" class="ghost-button" @click="openExternal(item.url)">原文</button>
-            </article>
-          </section>
-        </template>
-        <div v-else class="feedback compact">当前没有可展示的板块详情。</div>
-      </aside>
+      <SectorRankingList
+        :sectors="sectors"
+        :selected-sector-code="selectedSectorCode"
+        :page="page"
+        :total-pages="totalPages"
+        :compare-window="compareWindow"
+        :compare-window-label="compareWindowLabel"
+        :page-offset="pageOffset"
+        :empty-title="sectorEmptyTitle"
+        :empty-body="sectorEmptyBody"
+        @select="fetchDetail"
+        @prev="goPrev"
+        @next="goNext"
+      />
+      <SectorDetailPanel
+        :detail="detail"
+        :detail-loading="detailLoading"
+        :detail-error="detailError"
+        :compare-window="compareWindow"
+        :compare-window-label="compareWindowLabel"
+        @navigate-stock="navigateToStockInfo"
+      />
     </section>
 
-    <p v-if="summaryDataNotice" class="summary-alert">{{ summaryDataNotice }}</p>
+    <!-- 7. 10日情绪历史 -->
+    <SentimentHistoryStrip :items="historyDisplayItems" />
 
-    <section class="metric-grid">
-      <article class="metric-card" :class="{ 'metric-card-placeholder': limitMetricCard.isPlaceholder }">
-        <span>涨停 / 跌停</span>
-        <strong>{{ limitMetricCard.value }}</strong>
-        <small>{{ limitMetricCard.detail }}</small>
-      </article>
-      <article class="metric-card" :class="{ 'metric-card-placeholder': brokenBoardMetricCard.isPlaceholder }">
-        <span>炸板率</span>
-        <strong>{{ brokenBoardMetricCard.value }}</strong>
-        <small>{{ brokenBoardMetricCard.detail }}</small>
-      </article>
-      <article class="metric-card" :class="{ 'metric-card-placeholder': breadthMetricCard.isPlaceholder }">
-        <span>扩散 / 持续</span>
-        <strong>{{ breadthMetricCard.value }}</strong>
-        <small>{{ breadthMetricCard.detail }}</small>
-      </article>
-      <article class="metric-card" :class="{ 'metric-card-placeholder': turnoverMetricCard.isPlaceholder }">
-        <span>热门板块成交占比</span>
-        <strong>{{ turnoverMetricCard.value }}</strong>
-        <small>{{ turnoverMetricCard.detail }}</small>
-      </article>
-    </section>
-
-    <section class="history-strip">
-      <div v-for="item in history" :key="`${item.tradingDate}-${item.snapshotTime}`" class="history-chip">
-        <span>{{ formatDate(item.tradingDate).slice(0, 10) }}</span>
-        <strong>{{ getHistoryChipLabel(item) }}</strong>
-        <small>{{ getHistoryChipDetail(item) }}</small>
-      </div>
-    </section>
-
-    <p v-if="realtimeOverviewEnabled" class="realtime-note">
-      实时总览为盘中快照，仅供参考{{ isMarketDegraded ? '；当前页面仍以部分同步结果呈现。' : '。' }}
-    </p>
-
-    <MarketRealtimeOverview
-      v-if="realtimeOverviewEnabled"
-      :overview="realtimeOverview"
-      :loading="realtimeLoading"
-      :page-loading="loading"
-      :degraded="isMarketDegraded"
-      :error="realtimeError"
-      :format-date="formatDate"
-      :format-money="formatMoney"
-      :format-signed-percent="formatSignedPercent"
-      :format-signed-amount="formatSignedAmount"
+    <!-- 8. 数据审计面板 -->
+    <DataAuditPanel
+      :data-sources="auditData?.dataSources ?? []"
+      :formula="auditData?.formula ?? ''"
+      :computed-at="auditData?.computedAt ?? ''"
+      :compute-duration-ms="auditData?.computeDurationMs ?? 0"
     />
   </section>
 </template>
@@ -1147,570 +778,51 @@ onMounted(() => {
 <style scoped>
 .market-shell {
   display: grid;
-  gap: var(--space-5);
-  padding: var(--space-6);
-  color: var(--color-text-primary);
+  gap: 6px;
+  padding: 8px;
+  background: #111827;
+  color: #e6eaf2;
+  font-family: 'Consolas', 'Monaco', 'Menlo', monospace;
+  font-size: 13px;
+  min-height: 100vh;
 }
 
-.market-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-5);
-  padding: var(--space-6);
-  border-radius: var(--radius-xl);
-  background:
-    radial-gradient(circle at right top, rgba(37, 99, 235, 0.08), transparent 30%),
-    radial-gradient(circle at left bottom, rgba(217, 119, 6, 0.06), transparent 35%),
-    linear-gradient(135deg, var(--color-bg-surface-alt) 0%, var(--color-bg-surface) 60%);
-  border: 1px solid var(--color-border-light);
-  box-shadow: var(--shadow-md);
-}
-
-.market-kicker {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-xs);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-accent);
-}
-
-.panel-kicker {
-  margin-bottom: var(--space-1);
-}
-
-.hero-copy h2 {
-  margin: 0;
-  font-size: var(--text-2xl);
-}
-
-.hero-subtitle {
-  margin: var(--space-3) 0 0;
-  max-width: 640px;
-  color: var(--color-text-secondary);
-  line-height: var(--leading-relaxed);
-}
-
-.hero-actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-  flex-wrap: wrap;
-}
-
-.hero-button {
-  height: 34px;
-  padding: 0 var(--space-4);
-  border: 1px solid transparent;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-  color: #fff;
-  font-weight: 600;
-  font-size: var(--text-md);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.hero-button:hover {
-  background: var(--color-accent-hover);
-}
-
-.hero-button.secondary {
-  background: var(--color-bg-surface);
-  color: var(--color-text-body);
-  border-color: var(--color-border-light);
-}
-
-.hero-button.secondary:hover {
-  border-color: var(--color-border-medium);
-  background: var(--color-bg-surface-alt);
-}
-
-.hero-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.toolbar-inline-button {
-  height: 28px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-full);
-  background: var(--color-bg-surface);
-  color: var(--color-text-body);
-  font-weight: 600;
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.toolbar-inline-button:hover {
-  border-color: var(--color-border-medium);
-  background: var(--color-bg-surface-alt);
-}
-
-.toolbar-inline-button.secondary {
-  color: var(--color-text-secondary);
-}
-
-.toolbar-inline-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.hero-stage {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 180px;
-  padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-surface-alt);
-  border: 1px solid var(--color-border-light);
-  align-content: start;
-}
-
-.hero-stage strong {
-  font-size: var(--text-3xl);
-}
-
-.hero-stage-reason {
-  color: inherit;
-  opacity: 0.86;
-}
-
-.hero-stage-loading {
-  background:
-    linear-gradient(135deg, rgba(148, 163, 184, 0.12) 0%, rgba(148, 163, 184, 0.04) 100%),
-    var(--color-bg-surface-alt);
-}
-
-.stage-phase {
-  font-size: var(--text-xs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.tone-positive { color: var(--color-market-fall); border-left: 4px solid var(--color-market-fall); }
-.tone-warning { color: var(--color-warning); border-left: 4px solid var(--color-warning); }
-.tone-negative { color: var(--color-market-rise); border-left: 4px solid var(--color-market-rise); }
-.tone-neutral { color: var(--color-text-body); border-left: 4px solid var(--color-neutral); }
-.tone-loading { color: var(--color-text-body); border-left: 4px solid var(--color-border-medium); }
-.tone-degraded { color: var(--color-warning); border-left: 4px solid var(--color-warning); }
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-
-.summary-alert {
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-warning-border);
-  background: var(--color-warning-bg);
-  color: var(--color-warning);
-}
-
-.metric-card,
-.board-toolbar,
-.detail-panel,
-.history-chip {
-  border: 1px solid var(--color-border-light);
-  background: var(--color-bg-surface);
-  box-shadow: var(--shadow-sm);
-}
-
-.mainline-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-success-bg);
-  color: var(--color-success);
-  font-size: var(--text-sm);
-  font-weight: 700;
-}
-
-.detail-summary {
-  margin: 0 0 var(--space-3);
-  color: var(--color-text-secondary);
-}
-
-.metric-card {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-}
-
-.metric-card-placeholder {
-  border-style: dashed;
-  background:
-    linear-gradient(135deg, rgba(245, 158, 11, 0.10) 0%, rgba(245, 158, 11, 0.02) 100%),
-    var(--color-bg-surface);
-}
-
-.metric-card-placeholder strong {
-  font-size: var(--text-xl);
-}
-
-.metric-card-placeholder small {
-  color: var(--color-text-body);
-}
-
-.metric-card span,
-.metric-card small,
-.toolbar-field span,
-.toolbar-meta span,
-.sector-meta,
-.empty-hint,
-.news-item p,
+/* feedback */
 .feedback {
-  color: var(--color-text-secondary);
+  padding: 6px 10px;
+  border: 1px solid #334155;
+  background: #1a2233;
+  font-size: 12px;
+  color: #e6eaf2;
+  line-height: 1.35;
 }
+.feedback.error { color: #ff5c5c; border-color: #6a2a2a; background: #251417; }
+.feedback.feedback-success { color: #1ee88f; border-color: #2d6a52; background: #12271f; }
+.feedback.feedback-partial { color: #c2cad8; border-color: #4a566d; background: #1a2233; }
+.feedback.feedback-error { color: #ff5c5c; border-color: #6a2a2a; background: #251417; }
+.feedback.stale-warning { color: #c2cad8; border-color: #4a566d; background: #1a2233; }
+.feedback.compact { padding: 4px 8px; }
 
-.metric-card strong {
-  font-size: var(--text-3xl);
-}
-
-.history-strip {
-  display: flex;
-  gap: var(--space-3);
-  overflow-x: auto;
-  padding-bottom: var(--space-1);
-}
-
-.history-chip {
+/* overview row */
+.overview-row {
   display: grid;
-  gap: var(--space-1);
-  min-width: 120px;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-lg);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
 }
+.overview-row > * { min-width: 0; }
 
-.board-toolbar {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 240px)) 1fr;
-  gap: var(--space-4);
-  align-items: end;
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-}
-
-.toolbar-field {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.toolbar-field span {
-  font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.toolbar-field select {
-  height: 34px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-light);
-  background: var(--color-bg-surface-alt);
-  font-size: var(--text-md);
-  color: var(--color-text-body);
-}
-
-.toolbar-meta {
-  display: grid;
-  justify-items: end;
-  gap: var(--space-1-5);
-}
-
+/* grid */
 .market-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.88fr);
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 6px;
 }
+.market-grid > * { min-width: 0; }
 
-.sector-list {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.sector-empty-state {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border: 1px dashed var(--color-warning-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-warning-bg);
-  color: var(--color-warning);
-}
-
-.sector-empty-state p,
-.sector-empty-state small {
-  margin: 0;
-  color: inherit;
-}
-
-.panel-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  align-items: start;
-  padding: var(--space-0-5) var(--space-0-5) var(--space-2);
-}
-
-.panel-heading h3 {
-  margin: 0;
-}
-
-.detail-panel-heading {
-  padding-bottom: 0;
-}
-
-.sector-card {
-  display: grid;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-  text-align: left;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.sector-card:hover {
-  box-shadow: var(--shadow-md);
-  border-color: var(--color-border-medium);
-}
-
-.sector-card.active {
-  border-color: var(--color-accent-border);
-  box-shadow: var(--shadow-md);
-}
-
-.sector-order-group,
-.sector-state-group {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.sector-order {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-accent-subtle);
-  color: var(--color-accent);
-  font-size: var(--text-sm);
-  font-weight: 700;
-}
-
-.sector-head,
-.sector-metrics,
-.sector-meta,
-.detail-head,
-.leader-item,
-.trend-item,
-.news-item,
-.pagination {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  align-items: center;
-}
-
-.sector-rank {
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  font-weight: 700;
-}
-
-.coverage-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-danger-bg);
-  color: var(--color-danger);
-  font-size: var(--text-sm);
-  font-weight: 700;
-}
-
-.sector-change,
-.detail-badge,
-.leader-item strong {
-  font-variant-numeric: tabular-nums;
-}
-
-.positive { color: var(--color-market-rise); }
-.negative { color: var(--color-market-fall); }
-
-.detail-panel {
-  display: grid;
-  gap: var(--space-4);
-  padding: var(--space-5);
-  border-radius: var(--radius-lg);
-  align-content: start;
-}
-
-.detail-head h3,
-.detail-block h4 {
-  margin: 0;
-}
-
-.detail-head p {
-  margin: 0 0 var(--space-1-5);
-  color: var(--color-text-secondary);
-}
-
-.detail-badge {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-surface-alt);
-  font-weight: 700;
-}
-
-.detail-block {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.detail-warning {
-  padding: var(--space-3) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-warning-bg);
-  border: 1px solid var(--color-warning-border);
-  color: var(--color-warning);
-}
-
-.leader-list,
-.trend-list {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.news-item {
-  padding: var(--space-3) 0;
-  border-top: 1px solid var(--color-border-light);
-}
-
-.news-item:first-of-type {
-  border-top: 0;
-  padding-top: 0;
-}
-
-.ghost-button,
-.pagination button {
-  height: 34px;
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-  padding: 0 var(--space-3);
-  background: var(--color-bg-surface);
-  color: var(--color-text-body);
-  font-size: var(--text-md);
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.ghost-button:hover,
-.pagination button:hover {
-  border-color: var(--color-border-medium);
-  background: var(--color-bg-surface-alt);
-}
-
-.pagination {
-  padding: var(--space-3) var(--space-0-5) 0;
-}
-
-.feedback {
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-surface);
-  border: 1px solid var(--color-border-light);
-}
-
-.feedback.error {
-  color: var(--color-danger);
-  border-color: var(--color-danger-border);
-  background: var(--color-danger-bg);
-}
-
-.feedback.feedback-success {
-  color: var(--color-success);
-  border-color: var(--color-success-border);
-  background: var(--color-success-bg);
-}
-
-.feedback.feedback-partial {
-  color: var(--color-warning);
-  border-color: var(--color-warning-border);
-  background: var(--color-warning-bg);
-}
-
-.feedback.feedback-error {
-  color: var(--color-danger);
-  border-color: var(--color-danger-border);
-  background: var(--color-danger-bg);
-}
-
-.feedback.compact {
-  padding: var(--space-3) var(--space-4);
-}
-
-.feedback.syncing {
-  color: var(--color-accent);
-  border-color: var(--color-accent-border);
-  background: var(--color-accent-subtle);
-}
-
-.feedback.stale-warning {
-  color: var(--color-warning);
-  border-color: var(--color-warning-border);
-  background: var(--color-warning-bg);
-}
-
-.realtime-note {
-  margin: 0;
-  color: var(--color-text-secondary);
-}
-
+/* responsive */
 @media (max-width: 1100px) {
-  .metric-grid,
-  .market-grid,
-  .board-toolbar {
-    grid-template-columns: 1fr;
-  }
-
-  .toolbar-meta {
-    justify-items: start;
-  }
-}
-
-@media (max-width: 720px) {
-  .market-shell {
-    padding: var(--space-4);
-  }
-
-  .market-hero,
-  .panel-heading,
-  .sector-head,
-  .sector-metrics,
-  .sector-meta,
-  .detail-head,
-  .leader-item,
-  .trend-item,
-  .news-item,
-  .pagination {
-    display: grid;
-  }
+  .overview-row, .market-grid { grid-template-columns: 1fr; }
 }
 </style>
+
+
