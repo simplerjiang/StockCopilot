@@ -177,6 +177,9 @@ public sealed class EastmoneySectorRotationClientTests
         [Fact]
         public async Task GetMarketBreadthAsync_FallsBackWhenUlistTurnoverFails()
         {
+                ResetDataSourceTrackerSources();
+                try
+                {
                 var handler = new RouteHttpMessageHandler(request =>
                 {
                         var url = request.RequestUri?.ToString() ?? string.Empty;
@@ -209,13 +212,22 @@ public sealed class EastmoneySectorRotationClientTests
                 var client = new EastmoneySectorRotationClient(httpClient);
 
                 var snapshot = await client.GetMarketBreadthAsync(200);
+                var turnoverSource = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_fs_sh_sz");
 
                 Assert.Equal(30m, snapshot.TotalTurnover);
                 Assert.Equal(1, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
+                Assert.NotNull(turnoverSource);
+                Assert.Equal("error", turnoverSource!.Status);
+                Assert.Contains("ulist unavailable", turnoverSource.LastError, StringComparison.OrdinalIgnoreCase);
+                }
+                finally
+                {
+                        ResetDataSourceTrackerSources();
+                }
         }
 
         [Fact]
-        public async Task GetMarketBreadthAsync_RecordsTurnoverSourceFailureWhenEarlyPathThrows()
+        public async Task GetMarketBreadthAsync_EarlyBreadthFailure_DoesNotRecordTurnoverFailure()
         {
                 ResetDataSourceTrackerSources();
                 try
@@ -236,13 +248,15 @@ public sealed class EastmoneySectorRotationClientTests
                         var client = new EastmoneySectorRotationClient(httpClient);
 
                         var exception = await Assert.ThrowsAsync<HttpRequestException>(() => client.GetMarketBreadthAsync(200));
-                        var source = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_fs_sh_sz");
+                        var turnoverSource = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_fs_sh_sz");
+                        var breadthSource = DataSourceTracker.GetAll().SingleOrDefault(item => item.Name == "eastmoney_market_breadth_clist");
 
                         Assert.Equal("market breadth unavailable", exception.Message);
-                        Assert.NotNull(source);
-                        Assert.Equal("error", source!.Status);
-                        Assert.Contains("market breadth unavailable", source.LastError, StringComparison.OrdinalIgnoreCase);
-                        Assert.Equal(1, source.ConsecutiveFailures);
+                        Assert.Null(turnoverSource);
+                        Assert.NotNull(breadthSource);
+                        Assert.Equal("error", breadthSource!.Status);
+                        Assert.Contains("market breadth unavailable", breadthSource.LastError, StringComparison.OrdinalIgnoreCase);
+                        Assert.Equal(1, breadthSource.ConsecutiveFailures);
                         Assert.Equal(0, handler.CountRequests(["/api/qt/ulist.np/get", "secids=1.000001,0.399001"]));
                 }
                 finally

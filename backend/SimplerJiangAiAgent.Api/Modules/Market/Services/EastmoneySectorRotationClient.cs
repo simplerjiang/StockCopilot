@@ -70,9 +70,8 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
 
     public async Task<EastmoneyMarketBreadthSnapshot> GetMarketBreadthAsync(int take, CancellationToken cancellationToken = default)
     {
-        const string turnoverSourceKey = "eastmoney_market_fs_sh_sz";
-        var turnoverSourceStopwatch = Stopwatch.StartNew();
-        var turnoverSourceTracked = false;
+        const string breadthSourceKey = "eastmoney_market_breadth_clist";
+        var breadthSourceStopwatch = Stopwatch.StartNew();
         var targetCount = Math.Clamp(take, 200, 6000);
         var rows = new Dictionary<string, (decimal ChangePercent, decimal TurnoverAmount)>(StringComparer.OrdinalIgnoreCase);
         try
@@ -131,18 +130,15 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
                 totalTurnover += Math.Max(0, row.TurnoverAmount);
             }
 
+            DataSourceTracker.RecordSourceSuccess(breadthSourceKey, breadthSourceStopwatch.Elapsed.TotalMilliseconds);
+
             totalTurnover = await ResolveMarketTurnoverFromShSzAsync(totalTurnover, cancellationToken);
-            turnoverSourceTracked = true;
 
             return new EastmoneyMarketBreadthSnapshot(advancers, decliners, flatCount, totalTurnover);
         }
         catch (Exception ex)
         {
-            if (!turnoverSourceTracked)
-            {
-                DataSourceTracker.RecordSourceFailure(turnoverSourceKey, ex, turnoverSourceStopwatch.Elapsed.TotalMilliseconds);
-                turnoverSourceTracked = true;
-            }
+            DataSourceTracker.RecordSourceFailure(breadthSourceKey, ex, breadthSourceStopwatch.Elapsed.TotalMilliseconds);
 
             throw;
         }
