@@ -173,6 +173,8 @@ const buildApiUrl = (query) => {
 
 export function useFinancialCenterQuery() {
   const query = reactive(parseFromUrl())
+  const rawItems = ref([])
+  const rawTotal = ref(0)
   const items = ref([])
   const total = ref(0)
   const loading = ref(false)
@@ -223,9 +225,12 @@ export function useFinancialCenterQuery() {
             }
           }
           symbolNameMap[sym] = name || ''
+          // 名称到位后重算前端过滤（关键词模式下生效）
+          applyClientFilter()
         })
         .catch(() => {
           symbolNameMap[sym] = ''
+          applyClientFilter()
         })
         .finally(() => {
           nameInflight--
@@ -254,12 +259,49 @@ export function useFinancialCenterQuery() {
     return fallback
   }
 
+  /**
+   * V040-S5-FU（B-2）：后端 keyword 参数当前不做名称过滤，
+   * 前端在收到列表后做二次过滤：name.includes(kw) || symbol.includes(kw)。
+   * 关键词模式下 fetchReports 会把 pageSize 临时拉到 100，并把 page 锁到 1。
+   */
+  const applyClientFilter = () => {
+    const list = rawItems.value
+    const kw = (query.keyword || '').trim().toLowerCase()
+    if (!kw) {
+      items.value = list
+      total.value = rawTotal.value
+      return
+    }
+    const filtered = list.filter((it) => {
+      const sym = String(it?.symbol || it?.Symbol || '').toLowerCase()
+      const name = String(symbolNameMap[it?.symbol || it?.Symbol] || '').toLowerCase()
+      return sym.includes(kw) || name.includes(kw)
+    })
+    items.value = filtered
+    total.value = filtered.length
+  }
+
   const fetchReports = async () => {
     const reqId = ++lastRequestId.value
     loading.value = true
     error.value = ''
     try {
-      const url = buildApiUrl(query)
+      const isKeywordActive = !!(query.keyword && query.keyword.trim())
+      // 关键词模式下临时把 pageSize 拉到 100、page 锁到 1，避免分页与前端过滤冲突
+      const effectiveQuery = isKeywordActive
+        ? {
+            symbols: query.symbols,
+            startDate: query.startDate,
+            endDate: query.endDate,
+            reportTypes: query.reportTypes,
+            keyword: query.keyword,
+            page: 1,
+            pageSize: Math.max(Number(query.pageSize) || 0, 100),
+            sortField: query.sortField,
+            sortDirection: query.sortDirection
+          }
+        : query
+      const url = buildApiUrl(effectiveQuery)
       const res = await fetch(url)
       const contentType = (res.headers && typeof res.headers.get === 'function')
         ? (res.headers.get('content-type') || '')
@@ -270,8 +312,9 @@ export function useFinancialCenterQuery() {
       const data = await res.json()
       if (reqId !== lastRequestId.value) return
       const list = normaliseItems(data)
-      items.value = list
-      total.value = normaliseTotal(data, list.length)
+      rawItems.value = list
+      rawTotal.value = normaliseTotal(data, list.length)
+      applyClientFilter()
       // 触发懒加载股票名
       for (const item of list) {
         const sym = item?.symbol || item?.Symbol
@@ -279,6 +322,8 @@ export function useFinancialCenterQuery() {
       }
     } catch (err) {
       if (reqId !== lastRequestId.value) return
+      rawItems.value = []
+      rawTotal.value = 0
       items.value = []
       total.value = 0
       error.value = (err && err.message) ? err.message : '加载失败'
@@ -318,6 +363,12 @@ export function useFinancialCenterQuery() {
     ],
     scheduleSyncToUrl,
     { deep: false }
+  )
+
+  // keyword 变化时若已有原始数据，立即重算前端过滤
+  watch(
+    () => query.keyword,
+    () => { applyClientFilter() }
   )
 
   return {

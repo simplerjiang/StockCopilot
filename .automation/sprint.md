@@ -99,7 +99,7 @@
 - **浏览器验收**：延后到 V040-S6
 
 ### Story V040-S6: v0.4.0 全链路验收
-- **状态**：TODO
+- **状态**：DONE
 - **级别**：M
 - **验收标准**：
   - Test Agent 跑通后端单元测试 + 前端 vitest
@@ -109,6 +109,13 @@
   - 更新 `.automation/tasks.json` 记录 v0.4.0 完成
   - 写 v0.4.0 完成报告到 `.automation/reports/`
 - **依赖**：V040-S1 ~ V040-S5 全部 DONE
+- **完成时间**：2026-04-22
+- **commits**：（commit 后回填短码）
+- **完成说明**：R1 REJECT 35/100（B-1 三表全空、B-2 keyword 失效、B-3 版本号），最小改动闭环 — 前端字典扩中文键 + `*` 前缀剥离、keyword 前端二次过滤（pageSize 临时拉到 100，page 锁 1）、版本号 0.3.4→0.4.0；R2 PASS 87/100；后端测试 608/0/0，前端 vitest 370/0/2，packaged 重打包成功并通过浏览器验收。
+- **遗留 backlog**：
+  - V040-S6-FU-1（毛利润字段，建议后端补 `*营业总成本` 字段或前端用 `revenue - operatingCost` 表达式补算）
+  - V040-S6-FU-2（后端 keyword 全文匹配，超 100 条避免漏）
+  - D-2 渠道 Tag 配色仍归 V040-S3-FU-1
 
 ## 技术债 Stories（与 v0.4.0 主线并行）
 
@@ -161,3 +168,10 @@
 - v0.3.2 散户热度反向指标 → `/memories/repo/sprints/v0.3.2-retail-heat-contrarian.md`
 - v0.3.2 S7 市场数据不可用恢复（开发完成，盘中验收 4/21–4/23 独立跟踪）
 - `tasks.json` 自 2026-04-22 起仅作 append-only 历史事件流，不再用作活跃任务管理
+
+## Backlog（v0.4.1+ 待排）
+
+- **V040-S6-FU-1**：财报中心详情抽屉「毛利润」字段缺失。后端 ths 渠道未返回 `grossProfit`，也未提供 `*营业总成本`。建议两条路二选一：(a) 后端在采集后补算 `revenue - 营业总成本` 落库；(b) 前端 `pickFieldValue` 支持表达式 fallback。优先级 v0.4.1 高。
+- **V040-S6-FU-2**：财报中心关键词搜索后端不生效，目前由前端二次过滤兜底（关键词模式下 pageSize 临时拉到 100、page 锁 1），匹配总数超过 100 时存在漏。需要后端在 `GET /api/stocks/financial/reports` 支持 `keyword` 模糊匹配 `symbol`/`name`。优先级 v0.4.1 高。
+- **V040-S3-FU-1**：财报中心渠道 Tag 配色在表格列与采集面板/抽屉不统一（`ths` 在表格走绿、在采集面板走紫；`未分类/Unknown` pill 设计未定）。优先级 v0.4.1 中。
+- **V040-DEBT-4**（候选）：后端 `StockSearchService` 无排序无市场过滤，腾讯 `s3` API 同时返回 `sh000001`（指数）+ `sz000001`（平安银行）时下游消费者按 `data[0]` 取首条会踩坑。V040-S6-FU 已在前端 `useFinancialCenterQuery` 加 `pickStockMatch` 兜底，但其他消费者（股票详情页等）仍裸消费。建议 v0.4.1 在后端补 market 过滤或显式排序。

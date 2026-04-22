@@ -98,6 +98,70 @@ describe('pickFieldValue', () => {
     expect(pickFieldValue(undefined, field)).toBeNull()
     expect(pickFieldValue({}, field)).toBeNull()
   })
+
+  it('中文键命中（fallback）', () => {
+    const totalAssets = BALANCE_SHEET_FIELDS.find(f => f.key === 'totalAssets')
+    expect(pickFieldValue({ '资产合计': 1234 }, totalAssets)).toBe(1234)
+  })
+
+  it('带 * 前缀中文键命中（透明剥离）', () => {
+    const totalAssets = BALANCE_SHEET_FIELDS.find(f => f.key === 'totalAssets')
+    expect(pickFieldValue({ '*资产合计': 5678 }, totalAssets)).toBe(5678)
+    const netProfit = INCOME_STATEMENT_FIELDS.find(f => f.key === 'netProfit')
+    expect(pickFieldValue({ '*净利润': 9999 }, netProfit)).toBe(9999)
+    const op = CASH_FLOW_FIELDS.find(f => f.key === 'operatingCashFlow')
+    expect(pickFieldValue({ '*经营活动产生的现金流量净额': 4242 }, op)).toBe(4242)
+  })
+
+  it('原始 key 优先于 * 剥离 key', () => {
+    const totalAssets = BALANCE_SHEET_FIELDS.find(f => f.key === 'totalAssets')
+    // 同时存在 * 和不带 * 的两种 key 时，返回不带 * 的（fallback 中明确含 '资产合计'）
+    expect(pickFieldValue({ '资产合计': 1, '*资产合计': 2 }, totalAssets)).toBe(1)
+  })
+
+  it('_同比 噪声字段不会误命中', () => {
+    const totalAssets = BALANCE_SHEET_FIELDS.find(f => f.key === 'totalAssets')
+    // 仅存在 _同比 后缀键时不应命中
+    expect(pickFieldValue({ '资产合计_同比': 0.12, '*资产合计_同比': 0.34 }, totalAssets)).toBeNull()
+  })
+
+  it('真实后端响应样本（ths 渠道带 * 前缀）能命中三表', () => {
+    const balanceSheet = {
+      '*资产合计': 1000,
+      '*负债合计': 400,
+      '*所有者权益（或股东权益）合计': 600,
+      '货币资金': 200,
+      '应收账款': 50,
+      '*资产合计_同比': 0.1
+    }
+    const income = {
+      '*营业总收入': 800,
+      '三、营业利润': 250,
+      '*净利润': 200,
+      '（一）基本每股收益': 1.23
+    }
+    const cashFlow = {
+      '*经营活动产生的现金流量净额': 300,
+      '*投资活动产生的现金流量净额': -100,
+      '*筹资活动产生的现金流量净额': -50,
+      '*现金及现金等价物净增加额': 150,
+      '*期末现金及现金等价物余额': 500
+    }
+    expect(pickFieldValue(balanceSheet, BALANCE_SHEET_FIELDS[0])).toBe(1000)
+    expect(pickFieldValue(balanceSheet, BALANCE_SHEET_FIELDS[1])).toBe(400)
+    expect(pickFieldValue(balanceSheet, BALANCE_SHEET_FIELDS[2])).toBe(600)
+    expect(pickFieldValue(balanceSheet, BALANCE_SHEET_FIELDS[3])).toBe(200)
+    expect(pickFieldValue(balanceSheet, BALANCE_SHEET_FIELDS[4])).toBe(50)
+    expect(pickFieldValue(income, INCOME_STATEMENT_FIELDS[0])).toBe(800)
+    expect(pickFieldValue(income, INCOME_STATEMENT_FIELDS[1])).toBe(250)
+    expect(pickFieldValue(income, INCOME_STATEMENT_FIELDS[2])).toBe(200)
+    expect(pickFieldValue(income, INCOME_STATEMENT_FIELDS[3])).toBe(1.23)
+    expect(pickFieldValue(cashFlow, CASH_FLOW_FIELDS[0])).toBe(300)
+    expect(pickFieldValue(cashFlow, CASH_FLOW_FIELDS[1])).toBe(-100)
+    expect(pickFieldValue(cashFlow, CASH_FLOW_FIELDS[2])).toBe(-50)
+    expect(pickFieldValue(cashFlow, CASH_FLOW_FIELDS[3])).toBe(150)
+    expect(pickFieldValue(cashFlow, CASH_FLOW_FIELDS[4])).toBe(500)
+  })
 })
 
 describe('formatFieldValue', () => {

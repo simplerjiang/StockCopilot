@@ -217,11 +217,11 @@ const reportTypes = computed(() => REPORT_TYPE_OPTIONS)
           class="fc-input fc-input--full"
           :value="keywordDraft"
           :disabled="loading"
-          placeholder="股票名 / 关键词…"
+          placeholder="输入股票代码或公司名（前端过滤）"
           @input="onKeywordInput"
           @keydown.enter.prevent="onKeywordEnter"
         />
-        <p class="fc-filter-hint">输入后自动查询，按回车立即应用</p>
+        <p class="fc-filter-hint">关键词在前端二次过滤，仅展示当前页匹配项；如需精确请用股票代码筛选</p>
       </div>
     </div>
 

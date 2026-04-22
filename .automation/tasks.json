@@ -1194,6 +1194,66 @@
       "completedAt": "2026-04-22",
       "commits": ["9aa0230"],
       "notes": "EF InMemory 触发 ManyServiceProvidersCreatedWarning，导致全量回归时 14 案例 CreateDbContext 失败。修复：CreateDbContext 助手 ConfigureWarnings 忽略该警告。全量 607 全绿。"
+    },
+    {
+      "id": "V040-S1",
+      "title": "后端财报列表分页查询接口",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "commits": ["a911e33", "831c7c8"],
+      "notes": "新增 GET /api/stocks/financial/reports 分页 + GET /api/stocks/financial/reports/{id} 详情；排序支持 reportDate / updatedAt asc|desc；分页响应含 total/pageSize/page/items；12 单元测试覆盖空集 / 单页 / 多页 / 筛选 / 不存在 id；ParseSort 静默降级日志补齐。"
+    },
+    {
+      "id": "V040-DEBT-3",
+      "title": "引入 WebApplicationFactory 集成测试基础设施",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["aee132c"],
+      "notes": "引入 Microsoft.AspNetCore.Mvc.Testing 8.0.16；Program.cs 末尾追加 public partial class Program {}；新增 FinancialReportsEndpointTests.cs 通过 Stub 替换 IFinancialDataReadService 隔离外部依赖；新增集成测试 GetFinancialReports_WithFullQuery_BindsParametersAndReturns200；后端 dotnet test 608/0/0 全绿。"
+    },
+    {
+      "id": "V040-DEBT-2",
+      "title": "修复 10 个预存前端失败用例",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["b67584b"],
+      "notes": "MarketSentimentTab.spec.js 8 + StockCharts.spec.js 1 + TradingWorkbench.spec.js 1，全部为 A 类（测试期望未跟上重构）+ 1 处 echarts mock 缺 API；不改生产代码；vitest 316 passed / 0 failed / 2 skipped。"
+    },
+    {
+      "id": "V040-S4",
+      "title": "采集结果透明化（前端 UI 接入）",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["96d12a6"],
+      "notes": "FinancialDataTestPanel + FinancialReportTab 显示 6 新字段；新建 sourceChannelTag util；vitest 相关用例全绿（sourceChannelTag 10/10、FinancialFilterBar 13/13、FinancialReportTab 20/20）；frontend build 0 error；同步修复 4 处面向开发者文案为面向用户口吻；渠道 Tag 配色不一致归 V040-S3-FU-1。"
+    },
+    {
+      "id": "V040-S5",
+      "title": "财报中心详情抽屉（轻量版，不含 PDF 预览）",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["e187f8c"],
+      "notes": "新建 financialApi.js + financialFieldDictionary.js；重写 FinancialDetailDrawer.vue（500 行）覆盖标题 / loading / error / 重试 / 元数据 dl（含 sourceChannelTag）/ 三表概览 / sticky 重新采集 + 关闭 / PDF 占位；vitest 343/0/2 全绿（新增 30 cases）；frontend build 0 error。PDF 预览延后到 v0.4.1。"
+    },
+    {
+      "id": "V040-S6",
+      "title": "v0.4.0 全链路验收 + 收尾",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "notes": "R1 REJECT 35/100：B-1 三表全空、B-2 keyword 失效、B-3 版本号 0.3.4。最小改动闭环：前端 financialFieldDictionary 扩中文键 + `*` 前缀剥离（B-1）；useFinancialCenterQuery 关键词模式临时把 pageSize 拉到 100、page 锁 1，前端二次过滤（B-2）；Directory.Build.props / package.json / windows-installer.iss / build-windows-installer.ps1 升 0.3.4→0.4.0（B-3）。R2 PASS 87/100；后端 608/0/0、前端 vitest 370/0/2；packaged 重打包 + 浏览器验收通过。遗留 backlog：V040-S6-FU-1（毛利润字段）/ V040-S6-FU-2（后端 keyword）/ V040-S3-FU-1（Tag 配色）。"
+    },
+    {
+      "id": "V040-MILESTONE",
+      "title": "v0.4.0 财报中心基础落地 milestone",
+      "status": "done",
+      "completedAt": "2026-04-22",
+      "notes": "v0.4.0 全部 6 个 Story（V040-S1..S6）+ 3 个技术债（V040-DEBT-1/2/3）完成。User Rep R2 PASS 87/100。打包 EXE/Installer 0.4.0 已生成。后端 608/0/0、前端 vitest 370/0/2。下一阶段 v0.4.1 主线：L-1 毛利润 → L-2 后端 keyword → N-1 PDF 占位 → D-2 Tag 配色。"
     }
   ]
 }

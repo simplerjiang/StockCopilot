@@ -123,7 +123,7 @@ describe('useFinancialCenterQuery — fetchReports request URL', () => {
     query.startDate = '2025-01-01'
     query.endDate = '2025-12-31'
     query.reportTypes = ['annual', 'q1']
-    query.keyword = 'test'
+    // keyword 留空，避免触发 B-2 关键词模式 pageSize/page 覆盖
     query.page = 2
     query.pageSize = 50
     query.sortField = 'collectedAt'
@@ -137,7 +137,7 @@ describe('useFinancialCenterQuery — fetchReports request URL', () => {
     expect(url).toContain('reportType=Annual%2CQ1')
     expect(url).toContain('startDate=2025-01-01')
     expect(url).toContain('endDate=2025-12-31')
-    expect(url).toContain('keyword=test')
+    expect(url).not.toContain('keyword=')
     expect(url).toContain('page=2')
     expect(url).toContain('pageSize=50')
     expect(url).toContain('sort=collectedAt%3Aasc')
@@ -334,5 +334,135 @@ describe('useFinancialCenterQuery — response shape parsing', () => {
     inst = useFinancialCenterQuery()
     await inst.fetchReports()
     expect(inst.total.value).toBe(10)
+  })
+})
+
+describe('useFinancialCenterQuery — keyword frontend filter (B-2)', () => {
+  it('keyword 非空时把 pageSize 临时拉到 100、page 锁到 1', async () => {
+    const fetchMock = vi.fn().mockImplementation((url) => {
+      if (typeof url === 'string' && url.startsWith('/api/stocks/financial/reports')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [], total: 0 }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    global.fetch = fetchMock
+
+    const { query, fetchReports } = useFinancialCenterQuery()
+    query.keyword = '茅台'
+    query.page = 5
+    query.pageSize = 20
+    await fetchReports()
+    const url = fetchMock.mock.calls[0][0]
+    expect(url).toContain('page=1')
+    expect(url).toContain('pageSize=100')
+    // 用户在 query 上的 page/pageSize 不被改变（保持 URL 同步契约）
+    expect(query.page).toBe(5)
+    expect(query.pageSize).toBe(20)
+  })
+
+  it('keyword 空时按用户的 page/pageSize 透传到后端', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ items: [], total: 0 })
+    })
+    global.fetch = fetchMock
+
+    const { query, fetchReports } = useFinancialCenterQuery()
+    query.page = 3
+    query.pageSize = 50
+    await fetchReports()
+    const url = fetchMock.mock.calls[0][0]
+    expect(url).toContain('page=3')
+    expect(url).toContain('pageSize=50')
+  })
+
+  it('收到列表后按 symbol 子串过滤（关键词为代码）', async () => {
+    const fetchMock = vi.fn().mockImplementation((url) => {
+      if (url.startsWith('/api/stocks/financial/reports')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            items: [
+              { id: '1', symbol: '600519' },
+              { id: '2', symbol: '000001' },
+              { id: '3', symbol: '600036' }
+            ],
+            total: 3
+          })
+        })
+      }
+      // /api/stocks/search → 返回空，避免影响 symbol 子串匹配
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    global.fetch = fetchMock
+
+    const { query, fetchReports, items, total } = useFinancialCenterQuery()
+    query.keyword = '600'
+    await fetchReports()
+    await flushMicrotasks()
+    expect(items.value.map(i => i.symbol)).toEqual(['600519', '600036'])
+    expect(total.value).toBe(2)
+  })
+
+  it('收到列表后按 name 子串过滤（关键词为公司名）', async () => {
+    const fetchMock = vi.fn().mockImplementation((url) => {
+      if (url.startsWith('/api/stocks/financial/reports')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            items: [
+              { id: '1', symbol: '600519' },
+              { id: '2', symbol: '000001' }
+            ],
+            total: 2
+          })
+        })
+      }
+      const m = /q=([^&]+)/.exec(url)
+      const sym = m ? decodeURIComponent(m[1]) : ''
+      const name = sym === '600519' ? '贵州茅台' : '平安银行'
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve([{ symbol: sym, name }])
+      })
+    })
+    global.fetch = fetchMock
+
+    const { query, fetchReports, items, total } = useFinancialCenterQuery()
+    query.keyword = '茅台'
+    await fetchReports()
+    // 等名字异步加载并触发重算
+    for (let i = 0; i < 8; i++) await flushMicrotasks()
+    expect(items.value.map(i => i.symbol)).toEqual(['600519'])
+    expect(total.value).toBe(1)
+  })
+
+  it('keyword 清空后立即恢复原始列表与原始 total', async () => {
+    const fetchMock = vi.fn().mockImplementation((url) => {
+      if (url.startsWith('/api/stocks/financial/reports')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            items: [
+              { id: '1', symbol: '600519' },
+              { id: '2', symbol: '000001' }
+            ],
+            total: 2
+          })
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    })
+    global.fetch = fetchMock
+
+    const { query, fetchReports, items, total } = useFinancialCenterQuery()
+    query.keyword = '600519'
+    await fetchReports()
+    await flushMicrotasks()
+    expect(items.value.length).toBe(1)
+    query.keyword = ''
+    await flushMicrotasks()
+    expect(items.value.length).toBe(2)
+    expect(total.value).toBe(2)
   })
 })
