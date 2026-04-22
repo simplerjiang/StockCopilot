@@ -133,7 +133,8 @@ describe('useFinancialCenterQuery — fetchReports request URL', () => {
     const url = fetchMock.mock.calls[0][0]
     expect(url).toContain('/api/stocks/financial/reports?')
     expect(url).toContain('symbol=600519%2C000001')
-    expect(url).toContain('reportType=annual%2Cq1')
+    // 后端 LiteDB IN 大小写敏感，前端发送时把小写枚举映射为首字母大写
+    expect(url).toContain('reportType=Annual%2CQ1')
     expect(url).toContain('startDate=2025-01-01')
     expect(url).toContain('endDate=2025-12-31')
     expect(url).toContain('keyword=test')

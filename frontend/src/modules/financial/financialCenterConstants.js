@@ -20,28 +20,29 @@ export const REPORT_TYPE_LABEL = {
 /**
  * 来源渠道 → tag 着色样式
  * 使用 design-tokens 语义色，避免硬编码
+ * Keys 与后端 MainSourceChannel 全小写枚举对齐：emweb / datacenter / ths / pdf
  */
 export const SOURCE_CHANNEL_STYLE = {
-  eastmoney: {
-    label: '东方财富',
+  emweb: {
+    label: 'EM 网页',
     bg: 'var(--color-info-bg)',
     color: 'var(--color-info)',
     border: 'var(--color-info-border)'
   },
-  sina: {
-    label: '新浪财经',
-    bg: 'var(--color-warning-bg)',
-    color: 'var(--color-warning)',
-    border: 'var(--color-warning-border)'
+  datacenter: {
+    label: '数据中心',
+    bg: 'var(--color-tag-sector-bg)',
+    color: 'var(--color-tag-sector)',
+    border: 'var(--color-tag-sector-bg)'
   },
-  cninfo: {
-    label: '巨潮资讯',
+  ths: {
+    label: '同花顺',
     bg: 'var(--color-success-bg)',
     color: 'var(--color-success)',
     border: 'var(--color-success-border)'
   },
-  manual: {
-    label: '手动录入',
+  pdf: {
+    label: 'PDF',
     bg: 'var(--color-neutral-bg)',
     color: 'var(--color-neutral)',
     border: 'var(--color-neutral-border)'

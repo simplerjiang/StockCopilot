@@ -77,13 +77,16 @@ const formatDateTime = (raw) => {
 
 const reportTypeText = (type) => {
   if (!type) return '—'
-  return REPORT_TYPE_LABEL[type] || type
+  const key = String(type).toLowerCase()
+  return REPORT_TYPE_LABEL[key] || type
 }
 
 const symbolName = (symbol) => {
   if (!symbol) return '—'
-  if (!Object.prototype.hasOwnProperty.call(props.symbolNameMap, symbol)) return ''
-  return props.symbolNameMap[symbol] || '—'
+  // 用属性访问触发 Vue 3 reactive Proxy 的 get trap，确保懒加载完成后单元格刷新
+  const v = props.symbolNameMap[symbol]
+  if (v === undefined) return ''
+  return v || '—'
 }
 
 const getField = (item, lower, upper) => {

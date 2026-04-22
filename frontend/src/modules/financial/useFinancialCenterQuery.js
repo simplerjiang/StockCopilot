@@ -5,6 +5,14 @@
 import { reactive, ref, watch } from 'vue'
 import { DEFAULT_QUERY, SORT_FIELDS, buildDefaultDateRange } from './financialCenterConstants.js'
 
+// 前端枚举（小写）→ 后端存储值（首字母大写）映射
+const REPORT_TYPE_API_MAP = {
+  annual: 'Annual',
+  q1: 'Q1',
+  q2: 'Q2',
+  q3: 'Q3'
+}
+
 const URL_PREFIX = 'fc.'
 const URL_KEYS = {
   symbols: `${URL_PREFIX}symbols`,
@@ -148,7 +156,8 @@ const buildApiUrl = (query) => {
     params.set('symbol', query.symbols.join(','))
   }
   if (query.reportTypes && query.reportTypes.length > 0) {
-    params.set('reportType', query.reportTypes.join(','))
+    // 后端 LiteDB BsonExpression IN 大小写敏感，存储值首字母大写（Annual/Q1/Q2/Q3）
+    params.set('reportType', query.reportTypes.map(t => REPORT_TYPE_API_MAP[t] || t).join(','))
   }
   if (query.startDate) params.set('startDate', query.startDate)
   if (query.endDate) params.set('endDate', query.endDate)

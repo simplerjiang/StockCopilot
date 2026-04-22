@@ -203,9 +203,10 @@ const getField = (key, alt) => {
   color: var(--color-accent-text);
 }
 
+/* P1 调整：callout 配色按规范使用 info 语义色 */
 .fc-drawer-callout {
-  background: var(--color-accent-subtle);
-  border: 1px solid var(--color-accent-border);
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info-border);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   color: var(--color-accent-text);
