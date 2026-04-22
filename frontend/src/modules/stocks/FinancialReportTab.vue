@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref, toRef, watch } from 'vue'
 import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
+import { listPdfFiles } from '../financial/financialApi.js'
+import FinancialReportComparePane from '../financial/FinancialReportComparePane.vue'
 
 const props = defineProps({
   symbol: { type: String, default: '' },
@@ -461,6 +463,70 @@ const hasCollectMeta = computed(() => Boolean(
   || collectFallbackReason.value
   || collectPdfSummary.value
 ))
+
+// ---- V041-S6: 「查看 PDF 原件 / 对照」入口 ----
+const pdfViewerOpen = ref(false)
+const pdfViewerLoading = ref(false)
+const pdfViewerError = ref('')
+const pdfViewerFileId = ref(null)
+let pdfResolveToken = 0
+
+async function openPdfViewer() {
+  const symbol = symbolRef.value?.trim() || ''
+  if (!symbol || pdfViewerLoading.value) return
+  pdfViewerOpen.value = true
+  pdfViewerError.value = ''
+  pdfViewerFileId.value = null
+  pdfViewerLoading.value = true
+  const token = ++pdfResolveToken
+  try {
+    const reportType = summary.value?.periods?.[0]?.reportType
+      || summary.value?.periods?.[0]?.ReportType
+      || null
+    const reportDate = summary.value?.periods?.[0]?.reportDate
+      || summary.value?.periods?.[0]?.ReportDate
+      || null
+    const res = await listPdfFiles({ symbol, reportType, page: 1, pageSize: 5 })
+    if (token !== pdfResolveToken) return
+    const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    if (items.length === 0) {
+      pdfViewerError.value = '该报告暂无 PDF 原件，请先触发「刷新数据」重新采集。'
+      return
+    }
+    let pick = null
+    if (reportDate) {
+      pick = items.find(x => (x.reportPeriod || x.ReportPeriod) === reportDate) || null
+    }
+    if (!pick) pick = items[0]
+    const id = pick?.id ?? pick?.Id ?? null
+    if (!id) {
+      pdfViewerError.value = '该报告暂无可用 PDF 文件 ID。'
+      return
+    }
+    pdfViewerFileId.value = String(id)
+  } catch (e) {
+    if (token !== pdfResolveToken) return
+    pdfViewerError.value = e?.message || '加载 PDF 列表失败'
+  } finally {
+    if (token === pdfResolveToken) {
+      pdfViewerLoading.value = false
+    }
+  }
+}
+
+function closePdfViewer() {
+  pdfViewerOpen.value = false
+  pdfViewerFileId.value = null
+  pdfViewerError.value = ''
+  pdfResolveToken++
+}
+
+function onComparePaneRefresh(detail) {
+  // S 级最小处理：仅日志记录；列表元数据回写留待后续 Story（本 Tab 数据来自 trend/summary 聚合，无逐报告字段）。
+  // TODO(V041-Sx): 若未来 trend/summary 暴露 reparse 元信息，可在此触发 fetchData() 局部刷新。
+  // eslint-disable-next-line no-console
+  console.debug('[FinancialReportTab] ComparePane refresh', detail)
+}
 </script>
 
 <template>
@@ -481,9 +547,18 @@ const hasCollectMeta = computed(() => Boolean(
 
       <div class="report-header">
         <span class="header-title">财务报表</span>
-        <button class="refresh-btn" @click="collectData" :disabled="collecting">
-          {{ collecting ? '刷新中...' : '🔄 刷新数据' }}
-        </button>
+        <div class="report-header-actions">
+          <button
+            type="button"
+            class="view-pdf-btn"
+            data-testid="view-pdf-btn"
+            @click="openPdfViewer"
+            :disabled="pdfViewerLoading"
+          >{{ pdfViewerLoading ? '加载中...' : '📄 查看 PDF 原件' }}</button>
+          <button class="refresh-btn" @click="collectData" :disabled="collecting">
+            {{ collecting ? '刷新中...' : '🔄 刷新数据' }}
+          </button>
+        </div>
       </div>
       <p v-if="collectResult && collectResult.success && hasRenderableFinancialData" class="collect-info">
         ✅ 已通过 {{ collectResult.channel }} 获取 {{ collectResult.reportCount }} 期报表，耗时 {{ (collectResult.durationMs / 1000).toFixed(1) }}s
@@ -614,6 +689,39 @@ const hasCollectMeta = computed(() => Boolean(
       <div v-else-if="!showPartialDataState" class="empty-section">暂无分红数据</div>
 
     </template>
+
+    <!-- V041-S6: PDF 原件 / 对照查看器 -->
+    <Teleport to="body">
+      <div
+        v-if="pdfViewerOpen"
+        class="pdf-viewer-overlay"
+        data-testid="pdf-viewer-modal"
+        @click.self="closePdfViewer"
+      >
+        <div class="pdf-viewer-dialog" role="dialog" aria-modal="true" aria-label="PDF 原件对照">
+          <header class="pdf-viewer-header">
+            <h3 class="pdf-viewer-title">PDF 原件 / 对照</h3>
+            <button
+              type="button"
+              class="pdf-viewer-close"
+              data-testid="pdf-viewer-close"
+              @click="closePdfViewer"
+              title="关闭"
+            >✕</button>
+          </header>
+          <div class="pdf-viewer-body">
+            <div v-if="pdfViewerLoading" class="pdf-viewer-state">正在查找 PDF 原件...</div>
+            <div v-else-if="pdfViewerError" class="pdf-viewer-state pdf-viewer-error" role="alert">{{ pdfViewerError }}</div>
+            <FinancialReportComparePane
+              v-else-if="pdfViewerFileId"
+              :pdf-file-id="pdfViewerFileId"
+              @refresh="onComparePaneRefresh"
+              @close="closePdfViewer"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -845,4 +953,86 @@ td:first-child, th:first-child { text-align: left; }
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* V041-S6: PDF viewer entry button + modal */
+.report-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.view-pdf-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+  background: var(--bg-secondary, #2a2a2e);
+  color: var(--text-primary, #e0e0e0);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+.view-pdf-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #3a3a3e);
+}
+.view-pdf-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pdf-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+.pdf-viewer-dialog {
+  width: min(92vw, 1280px);
+  height: min(90vh, 860px);
+  background: #15202b;
+  border: 1px solid #2a3a4a;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.pdf-viewer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a3a4a;
+  background: #1a2535;
+}
+.pdf-viewer-title {
+  margin: 0;
+  font-size: 14px;
+  color: #e0e0e0;
+  font-weight: 600;
+}
+.pdf-viewer-close {
+  border: none;
+  background: transparent;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.pdf-viewer-close:hover { background: #2a3a4a; color: #fff; }
+.pdf-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+.pdf-viewer-body > * { flex: 1; min-height: 0; }
+.pdf-viewer-state {
+  padding: 24px;
+  color: #aaa;
+  font-size: 13px;
+}
+.pdf-viewer-error { color: #ffb3ab; }
 </style>

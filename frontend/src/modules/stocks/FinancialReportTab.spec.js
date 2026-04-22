@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+
+// V041-S6: stub ComparePane to keep tests focused on Tab behaviour and avoid pulling
+// the PDF viewer / parse / voting subtree.
+vi.mock('../financial/FinancialReportComparePane.vue', () => ({
+  default: {
+    name: 'FinancialReportComparePaneStub',
+    props: ['pdfFileId', 'pdfFileDetail', 'loading', 'error'],
+    emits: ['refresh', 'close'],
+    template: '<div class="compare-pane-stub" data-testid="compare-pane-stub">stub:{{ pdfFileId }}</div>'
+  }
+}))
+
 import FinancialReportTab from './FinancialReportTab.vue'
 
 const mockFetch = vi.fn()
@@ -460,5 +472,132 @@ describe('FinancialReportTab', () => {
     expect(meta.find('[data-field="reportPeriod"]').text()).toContain('2024-09-30')
     expect(meta.find('[data-field="sourceChannel"] .source-channel-tag').attributes('data-channel-key')).toBe('pdf')
     expect(meta.find('[data-field="pdfSummary"]').exists()).toBe(true)
+  })
+
+  // ============================================================================
+  // V041-S6: 「查看 PDF 原件 / 对照」入口 + ComparePane 复用
+  // ============================================================================
+
+  it('V041-S6 入口可见性：数据加载后 report-header 中可见 view-pdf-btn', async () => {
+    setupFetchMock()
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="view-pdf-btn"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('查看 PDF 原件')
+    wrapper.unmount()
+  })
+
+  it('V041-S6 点击跳转：解析 pdfFileId 后挂载 ComparePane stub', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (url.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [
+            { id: 4242, reportPeriod: '2024-12-31', fileName: 'mt.pdf' },
+            { id: 4001, reportPeriod: '2024-06-30', fileName: 'old.pdf' }
+          ],
+          total: 2,
+          page: 1,
+          pageSize: 5
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    // Modal Teleport 到 body，需要在 document 上找
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    const stub = modal.querySelector('[data-testid="compare-pane-stub"]')
+    expect(stub).not.toBeNull()
+    // 期望按 reportDate 匹配，挑到 id=4242 的那条
+    expect(stub.textContent).toContain('4242')
+
+    // 至少调用过一次 listPdfFiles（带 symbol 参数）
+    const pdfCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/pdf-files?'))
+    expect(pdfCall).toBeTruthy()
+    expect(String(pdfCall[0])).toContain('symbol=600519')
+
+    wrapper.unmount()
+    // 清理 Teleport 残留
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  it('V041-S6 reparse 回写：ComparePane emit refresh 后 Tab 不抛异常且 modal 仍可关闭', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (url.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [{ id: 7777, reportPeriod: '2024-12-31', fileName: 'rp.pdf' }]
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const stubComp = wrapper.findComponent({ name: 'FinancialReportComparePaneStub' })
+    expect(stubComp.exists()).toBe(true)
+
+    // 触发 refresh —— Tab 自身 onComparePaneRefresh 不应抛异常
+    expect(() => stubComp.vm.$emit('refresh', { id: 7777, voteConfidence: 0.95 })).not.toThrow()
+    await flushPromises()
+
+    // modal 仍存在
+    expect(document.querySelector('[data-testid="pdf-viewer-modal"]')).not.toBeNull()
+
+    // 触发 ComparePane close → 关闭 modal
+    stubComp.vm.$emit('close')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="pdf-viewer-modal"]')).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('V041-S6 空态：listPdfFiles 返回空列表时显示提示，不挂载 ComparePane', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (url.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({ items: [], total: 0, page: 1, pageSize: 5 }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    expect(modal.querySelector('[data-testid="compare-pane-stub"]')).toBeNull()
+    expect(modal.textContent).toContain('暂无 PDF 原件')
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
   })
 })
