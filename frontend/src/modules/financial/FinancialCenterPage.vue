@@ -156,6 +156,7 @@ onMounted(() => {
     <FinancialDetailDrawer
       :visible="drawerVisible"
       :item="drawerItem"
+      :report-id="drawerItem?.id ?? null"
       @close="onCloseDetail"
     />
   </div>

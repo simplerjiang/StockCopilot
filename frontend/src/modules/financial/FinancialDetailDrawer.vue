@@ -1,12 +1,31 @@
-<script setup>
-import { onBeforeUnmount, watch } from 'vue'
+﻿<script setup>
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { fetchFinancialReportDetail, recollectFinancialReport } from './financialApi.js'
+import {
+  BALANCE_SHEET_FIELDS,
+  INCOME_STATEMENT_FIELDS,
+  CASH_FLOW_FIELDS,
+  pickFieldValue,
+  formatFieldValue
+} from './financialFieldDictionary.js'
+import { REPORT_TYPE_LABEL } from './financialCenterConstants.js'
+import { getSourceChannelTag, sourceChannelTagStyle } from './sourceChannelTag.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
-  item: { type: Object, default: null }
+  item: { type: Object, default: null },
+  reportId: { type: [String, Number], default: null }
 })
 
 const emit = defineEmits(['close'])
+
+const detail = ref(null)
+const loading = ref(false)
+const error = ref('')
+
+const recollecting = ref(false)
+const recollectError = ref('')
+const recollectMessage = ref('')
 
 const close = () => emit('close')
 
@@ -18,16 +37,86 @@ const onKeydown = (e) => {
   if (e.key === 'Escape' && props.visible) close()
 }
 
+const resolveId = () => {
+  if (props.reportId !== null && props.reportId !== undefined && props.reportId !== '') {
+    return props.reportId
+  }
+  if (props.item) {
+    return props.item.id ?? props.item.Id ?? null
+  }
+  return null
+}
+
+const resolveSymbol = () => {
+  if (!props.item) return ''
+  return props.item.symbol || props.item.Symbol || ''
+}
+
+let fetchToken = 0
+
+async function loadDetail() {
+  const id = resolveId()
+  if (!id) {
+    detail.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
+  const token = ++fetchToken
+  loading.value = true
+  error.value = ''
+  try {
+    const data = await fetchFinancialReportDetail(id)
+    if (token !== fetchToken) return
+    detail.value = data
+  } catch (e) {
+    if (token !== fetchToken) return
+    error.value = e?.message || '加载详情失败'
+    detail.value = null
+  } finally {
+    if (token === fetchToken) {
+      loading.value = false
+    }
+  }
+}
+
+async function onRecollect() {
+  const symbol = resolveSymbol()
+  if (!symbol || recollecting.value) return
+  recollecting.value = true
+  recollectError.value = ''
+  recollectMessage.value = ''
+  try {
+    await recollectFinancialReport(symbol)
+    recollectMessage.value = '已重新采集，刷新中...'
+    await loadDetail()
+  } catch (e) {
+    recollectError.value = e?.message || '重新采集失败'
+  } finally {
+    recollecting.value = false
+  }
+}
+
 watch(
   () => props.visible,
   (v) => {
     if (v) {
       window.addEventListener('keydown', onKeydown)
+      recollectError.value = ''
+      recollectMessage.value = ''
+      loadDetail()
     } else {
       window.removeEventListener('keydown', onKeydown)
     }
   },
   { immediate: true }
+)
+
+watch(
+  () => [props.item, props.reportId],
+  () => {
+    if (props.visible) loadDetail()
+  }
 )
 
 onBeforeUnmount(() => {
@@ -44,10 +133,60 @@ const formatDate = (raw) => {
   return `${y}-${m}-${day}`
 }
 
-const getField = (key, alt) => {
-  if (!props.item) return ''
-  return props.item[key] !== undefined ? props.item[key] : props.item[alt]
+const formatDateTime = (raw) => {
+  if (!raw) return '—'
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return String(raw)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${y}-${m}-${day} ${hh}:${mm}`
 }
+
+const reportTypeLabel = (raw) => {
+  if (!raw) return '—'
+  const key = String(raw).toLowerCase()
+  return REPORT_TYPE_LABEL[key] || raw
+}
+
+const view = computed(() => detail.value || props.item || null)
+
+const headerTitle = computed(() => {
+  const v = view.value
+  if (!v) return '财报详情'
+  const sym = v.symbol || v.Symbol || ''
+  const date = v.reportDate || v.ReportDate || ''
+  const type = reportTypeLabel(v.reportType || v.ReportType)
+  const parts = [sym, date, type].filter(p => p && p !== '—')
+  return parts.length > 0 ? parts.join(' · ') : '财报详情'
+})
+
+const sourceTag = computed(() => {
+  const v = view.value
+  if (!v) return null
+  const ch = v.sourceChannel || v.SourceChannel
+  return getSourceChannelTag(ch)
+})
+
+const buildRows = (dictKeyLower, fields) => {
+  const v = detail.value
+  let dict = null
+  if (v) {
+    const upper = dictKeyLower.charAt(0).toUpperCase() + dictKeyLower.slice(1)
+    dict = v[dictKeyLower] || v[upper] || null
+  }
+  return fields.map(f => ({
+    key: f.key,
+    label: f.label,
+    display: formatFieldValue(pickFieldValue(dict, f))
+  }))
+}
+
+const balanceRows = computed(() => buildRows('balanceSheet', BALANCE_SHEET_FIELDS))
+const incomeRows = computed(() => buildRows('incomeStatement', INCOME_STATEMENT_FIELDS))
+const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
 </script>
 
 <template>
@@ -66,28 +205,123 @@ const getField = (key, alt) => {
         @click.stop
       >
         <header class="fc-drawer-header">
-          <h3 class="fc-drawer-title">财报详情</h3>
+          <h3 class="fc-drawer-title">{{ headerTitle }}</h3>
           <button type="button" class="fc-drawer-close" @click="close" title="关闭">✕</button>
         </header>
+
         <div class="fc-drawer-body">
-          <dl class="fc-drawer-list">
-            <div class="fc-drawer-row">
-              <dt>Symbol</dt>
-              <dd class="fc-drawer-mono">{{ getField('symbol', 'Symbol') || '—' }}</dd>
-            </div>
-            <div class="fc-drawer-row">
-              <dt>ReportDate</dt>
-              <dd>{{ formatDate(getField('reportDate', 'ReportDate')) }}</dd>
-            </div>
-            <div class="fc-drawer-row">
-              <dt>Report ID</dt>
-              <dd class="fc-drawer-mono">{{ getField('id', 'Id') ?? '—' }}</dd>
-            </div>
-          </dl>
-          <div class="fc-drawer-callout">
-            💡 详情功能由 V040-S5 提供（敬请期待）
+          <div v-if="loading" class="fc-drawer-skeleton">
+            <p>正在加载财报详情...</p>
+            <div class="fc-skel-block" />
+            <div class="fc-skel-block" />
+            <div class="fc-skel-block" />
           </div>
+
+          <div v-else-if="error" class="fc-drawer-error" role="alert">
+            <p class="fc-drawer-error-msg">{{ error }}</p>
+            <button type="button" class="fc-drawer-btn" @click="loadDetail">重试</button>
+          </div>
+
+          <template v-else>
+            <section class="fc-drawer-section">
+              <h4 class="fc-drawer-section-title">基本信息</h4>
+              <dl class="fc-drawer-list">
+                <div class="fc-drawer-row">
+                  <dt>报告期</dt>
+                  <dd>{{ formatDate(view?.reportDate || view?.ReportDate) }}</dd>
+                </div>
+                <div class="fc-drawer-row">
+                  <dt>报告类型</dt>
+                  <dd>{{ reportTypeLabel(view?.reportType || view?.ReportType) }}</dd>
+                </div>
+                <div class="fc-drawer-row">
+                  <dt>来源渠道</dt>
+                  <dd>
+                    <span
+                      v-if="sourceTag"
+                      class="fc-drawer-tag"
+                      :style="sourceChannelTagStyle(sourceTag)"
+                    >{{ sourceTag.label }}</span>
+                    <span v-else>—</span>
+                  </dd>
+                </div>
+                <div class="fc-drawer-row">
+                  <dt>采集时间</dt>
+                  <dd>{{ formatDateTime(view?.collectedAt || view?.CollectedAt) }}</dd>
+                </div>
+                <div class="fc-drawer-row">
+                  <dt>更新时间</dt>
+                  <dd>{{ formatDateTime(view?.updatedAt || view?.UpdatedAt) }}</dd>
+                </div>
+                <div class="fc-drawer-row">
+                  <dt>Report ID</dt>
+                  <dd class="fc-drawer-mono">{{ view?.id ?? view?.Id ?? '—' }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="fc-drawer-section">
+              <h4 class="fc-drawer-section-title">资产负债表</h4>
+              <dl class="fc-drawer-list">
+                <div v-for="row in balanceRows" :key="row.key" class="fc-drawer-row">
+                  <dt>{{ row.label }}</dt>
+                  <dd class="fc-drawer-num">{{ row.display }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="fc-drawer-section">
+              <h4 class="fc-drawer-section-title">利润表</h4>
+              <dl class="fc-drawer-list">
+                <div v-for="row in incomeRows" :key="row.key" class="fc-drawer-row">
+                  <dt>{{ row.label }}</dt>
+                  <dd class="fc-drawer-num">{{ row.display }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="fc-drawer-section">
+              <h4 class="fc-drawer-section-title">现金流量表</h4>
+              <dl class="fc-drawer-list">
+                <div v-for="row in cashRows" :key="row.key" class="fc-drawer-row">
+                  <dt>{{ row.label }}</dt>
+                  <dd class="fc-drawer-num">{{ row.display }}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section class="fc-drawer-section">
+              <h4 class="fc-drawer-section-title">PDF 原件</h4>
+              <div class="fc-drawer-pdf-placeholder">
+                📄 PDF 原件预览 —— 将在 v0.4.1 提供
+              </div>
+            </section>
+          </template>
         </div>
+
+        <footer class="fc-drawer-footer">
+          <div v-if="recollectError" class="fc-drawer-footer-error" role="alert">
+            {{ recollectError }}
+          </div>
+          <div v-else-if="recollectMessage" class="fc-drawer-footer-info">
+            {{ recollectMessage }}
+          </div>
+          <div class="fc-drawer-footer-actions">
+            <button
+              type="button"
+              class="fc-drawer-btn fc-drawer-btn--primary"
+              :disabled="recollecting || !resolveSymbol()"
+              @click="onRecollect"
+            >
+              {{ recollecting ? '正在重新采集...' : '重新采集' }}
+            </button>
+            <button
+              type="button"
+              class="fc-drawer-btn"
+              @click="close"
+            >关闭</button>
+          </div>
+        </footer>
       </aside>
     </div>
   </Teleport>
@@ -110,7 +344,7 @@ const getField = (key, alt) => {
 }
 
 .fc-drawer {
-  width: 480px;
+  width: 520px;
   max-width: 100vw;
   height: 100vh;
   background: var(--color-bg-surface);
@@ -164,7 +398,22 @@ const getField = (key, alt) => {
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
+}
+
+.fc-drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fc-drawer-section-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .fc-drawer-list {
@@ -203,14 +452,113 @@ const getField = (key, alt) => {
   color: var(--color-accent-text);
 }
 
-/* P1 调整：callout 配色按规范使用 info 语义色 */
-.fc-drawer-callout {
-  background: var(--color-info-bg);
-  border: 1px solid var(--color-info-border);
+.fc-drawer-num {
+  font-family: var(--font-family-mono);
+  color: var(--color-text-primary);
+}
+
+.fc-drawer-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fc-drawer-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  color: var(--color-text-secondary);
+}
+
+.fc-skel-block {
+  height: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface-alt);
+}
+
+.fc-drawer-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
-  color: var(--color-accent-text);
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.fc-drawer-error-msg {
+  margin: 0;
   font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
+}
+
+.fc-drawer-pdf-placeholder {
+  border: 1px dashed var(--color-border-medium);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  background: var(--color-bg-surface-alt);
+}
+
+.fc-drawer-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border-light);
+  padding: var(--space-3) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-bg-surface);
+}
+
+.fc-drawer-footer-error {
+  font-size: var(--text-sm);
+  color: var(--color-danger);
+}
+
+.fc-drawer-footer-info {
+  font-size: var(--text-sm);
+  color: var(--color-info);
+}
+
+.fc-drawer-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.fc-drawer-btn {
+  appearance: none;
+  border: 1px solid var(--color-border-medium);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.fc-drawer-btn:hover:not(:disabled) {
+  background: var(--color-bg-surface-alt);
+}
+
+.fc-drawer-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.fc-drawer-btn--primary {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent, #fff);
+  border-color: var(--color-accent);
+}
+
+.fc-drawer-btn--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover, var(--color-accent));
 }
 </style>

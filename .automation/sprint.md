@@ -22,8 +22,8 @@
 - **状态**：DONE
 - **级别**：M
 - **验收标准**：
-  - 新增 `GET /api/financial/reports?symbol=&reportType=&startDate=&endDate=&page=&pageSize=&sort=` 分页接口
-  - 新增 `GET /api/financial/reports/{id}` 详情接口（返回三表概览 + 元数据）
+  - 新增 `GET /api/stocks/financial/reports?symbol=&reportType=&startDate=&endDate=&page=&pageSize=&sort=` 分页接口
+  - 新增 `GET /api/stocks/financial/reports/{id}` 详情接口（返回三表概览 + 元数据）
   - 排序支持 `reportDate desc/asc`、`updatedAt desc/asc`
   - 分页响应包含 `total / pageSize / page / items`
   - 单元测试覆盖：空集 / 单页 / 多页 / 筛选组合 / 不存在的 id
@@ -38,7 +38,7 @@
 ### Story V040-DEBT-3: 引入 WebApplicationFactory 集成测试基础设施
 - **状态**：DONE
 - **级别**：S
-- **验收标准**：在 `SimplerJiangAiAgent.Api.Tests` 引入 `Microsoft.AspNetCore.Mvc.Testing` + 1 个 `[AsParameters]` 绑定 case 覆盖 `GET /api/financial/reports`。
+- **验收标准**：在 `SimplerJiangAiAgent.Api.Tests` 引入 `Microsoft.AspNetCore.Mvc.Testing` + 1 个 `[AsParameters]` 绑定 case 覆盖 `GET /api/stocks/financial/reports`。
 - **依赖**：无
 - **完成时间**：2026-04-22
 - **commits**：`813fdeb`
@@ -85,7 +85,7 @@
 - **遗留 backlog**：渠道 → Tag 颜色与 V040-S3 表格内 `SOURCE_CHANNEL_STYLE` 不完全一致（ths 在表格走绿、在采集面板走紫），合并到 V040-S3-FU-1 一起处理。
 
 ### Story V040-S5: 详情抽屉（轻量版，不含 PDF 预览）
-- **状态**：TODO
+- **状态**：DONE
 - **级别**：S
 - **验收标准**：
   - 抽屉显示：报告期 / 标题 / 来源 / 采集时间 / 三表概览（前 5 个关键字段）/ 元数据
@@ -93,6 +93,10 @@
   - PDF 预览不在本 Story（v0.4.1 实现）
   - 占位区域写明"PDF 原件预览将在 v0.4.1 提供"
 - **依赖**：V040-S1, V040-S3
+- **完成时间**：2026-04-22
+- **commits**：`c38b362`
+- **完成说明**：新建 `financialApi.js`（`fetchFinancialReportDetail` / `recollectFinancialReport`，真实路径 `/api/stocks/financial/reports/{id}` 与 `/api/stocks/financial/collect/{symbol}`，spec 中描述的 `/api/financial/reports/{id}` 为历史笔误）；新建 `financialFieldDictionary.js` 三表业务白名单各 5 字段 + 中文 label + fallback 链；重写 `FinancialDetailDrawer.vue`（500 行）覆盖标题 / loading / error / 重试 / 元数据 dl（含 sourceChannelTag）/ 三表概览 / sticky 重新采集 + 关闭 / PDF 占位；vitest 343 / 0 / 2 全绿（新增 30 cases）；frontend build 0 error。
+- **浏览器验收**：延后到 V040-S6
 
 ### Story V040-S6: v0.4.0 全链路验收
 - **状态**：TODO
