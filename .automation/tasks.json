@@ -1,6 +1,15 @@
 {
   "tasks": [
     {
+      "id": "V040-S3",
+      "title": "财报中心前端页面骨架",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "commits": ["3597ada", "807bdf6", "8e17f8b", "fce6408"],
+      "notes": "UI Designer 二轮走查 PASS 98/100；vitest 52 + Browser MCP 8 cases；前端 build 0 error；console.error=0；路由用 ?tab=financial-center 与现有体系一致；遗留 V040-S3-FU-1 backlog（渠道配色抽样 + Unknown pill 设计）。"
+    },
+    {
       "id": "MANUAL-20260407-OLLAMA-BENCH-EXPANSION",
       "title": "Local Ollama benchmarking and runtime parameter expansion",
       "status": "done",

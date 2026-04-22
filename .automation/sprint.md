@@ -47,7 +47,7 @@
 - **完成说明**：3 cycles 完成，607 + 4 单测全绿；HTTP 响应含 11 原字段 + 6 完整新字段 + 5 友好别名。
 
 ### Story V040-S3: 财报中心前端页面骨架
-- **状态**：TODO
+- **状态**：DONE（commits: 3597ada / 807bdf6 / 8e17f8b / fce6408）
 - **级别**：M
 - **验收标准**：
   - 新增路由 `/financial-center` 与左侧导航入口
@@ -57,6 +57,9 @@
   - 详情抽屉入口（详情内容由 V040-S5 实现）
   - 浏览器验收（Browser MCP）：实际筛选/分页/排序操作 + 控制台无错误
 - **依赖**：V040-S1
+- **实现说明**：路由形态为 `?tab=financial-center`（与现有 `App.vue` 体系一致；未引入 vue-router）。
+- **完成说明**：UI Designer 二轮走查 98/100；vitest 52 cases / Browser MCP 8 cases (7 PASS / 1 SKIP 数据不足)；console.error=0；前端 build 0 error；后端无回归。
+- **遗留 backlog**：V040-S3-FU-1（emweb/datacenter/ths 实采样本到位后渠道 tag 抽样校色；「未分类/Unknown」pill 设计待 V040-S6 数据治理决策）。
 
 ### Story V040-S4: 采集结果透明化（前端 UI 接入）
 - **状态**：TODO
