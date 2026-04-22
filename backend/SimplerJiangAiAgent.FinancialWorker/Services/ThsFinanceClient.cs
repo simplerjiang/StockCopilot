@@ -6,7 +6,7 @@ namespace SimplerJiangAiAgent.FinancialWorker.Services;
 /// <summary>
 /// 从同花顺 basic API 采集三大报表（第三降级通道）
 /// </summary>
-public class ThsFinanceClient
+public class ThsFinanceClient : IThsFinanceClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<ThsFinanceClient> _logger;

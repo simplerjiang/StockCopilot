@@ -6,7 +6,7 @@ namespace SimplerJiangAiAgent.FinancialWorker.Services;
 /// <summary>
 /// 从 Eastmoney datacenter API 采集三大报表（emweb CDN 拦截时的第一备用通道）
 /// </summary>
-public class EastmoneyDatacenterClient
+public class EastmoneyDatacenterClient : IEastmoneyDatacenterClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<EastmoneyDatacenterClient> _logger;

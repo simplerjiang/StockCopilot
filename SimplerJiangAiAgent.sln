@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplerJiangAiAgent.Desktop
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplerJiangAiAgent.FinancialWorker", "backend\SimplerJiangAiAgent.FinancialWorker\SimplerJiangAiAgent.FinancialWorker.csproj", "{F7E426AB-2FB9-49A5-A706-28C4395C2BAB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimplerJiangAiAgent.FinancialWorker.Tests", "backend\SimplerJiangAiAgent.FinancialWorker.Tests\SimplerJiangAiAgent.FinancialWorker.Tests.csproj", "{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -57,6 +59,18 @@ Global
 		{F7E426AB-2FB9-49A5-A706-28C4395C2BAB}.Release|x64.Build.0 = Release|Any CPU
 		{F7E426AB-2FB9-49A5-A706-28C4395C2BAB}.Release|x86.ActiveCfg = Release|Any CPU
 		{F7E426AB-2FB9-49A5-A706-28C4395C2BAB}.Release|x86.Build.0 = Release|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Debug|x64.Build.0 = Debug|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Debug|x86.Build.0 = Debug|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Release|x64.ActiveCfg = Release|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Release|x64.Build.0 = Release|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Release|x86.ActiveCfg = Release|Any CPU
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -65,5 +79,6 @@ Global
 		{F6AE7EF3-0A07-4FBF-BCEB-789266C16BAB} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
 		{5CF4F3EE-830F-442A-8278-050509E8A7E2} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
 		{F7E426AB-2FB9-49A5-A706-28C4395C2BAB} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
+		{6CD80FAE-F6E5-475D-BB9F-3E2AF0748921} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
 	EndGlobalSection
 EndGlobal
