@@ -39,7 +39,7 @@
 - **风险备注**：V041-DEBT-1 LiteDB BsonMapper.Global 并发 race 已用 [Collection] 串行兜底，建议后续注入私有实例彻底隔离。
 
 ### V041-S2: 后端 4 个正式接口 + 阶段日志扩展
-- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`3fd5c4d`
+- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`7efb444`
 - 4 接口（list/detail/content/reparse）+ 5 阶段 stageLogs 整体覆盖 + AccessKey SHA256(16)+.pdf；reparse 通过 IHttpClientFactory 代理到 FinancialWorker:5120（5 分钟超时）；content 沙箱化 Path.GetFullPath + StartsWith 校验；6 个 [Fact] 全绿，Api.Tests 614/0/0、FinancialWorker.Tests 20/20，0 回归。
 - **风险备注**：(1) Test Agent NIT — Api `AppRuntimePaths` 多识别 `Database:DataRootPath`，Worker `FinancialWorkerRuntimePaths` 仅看 `SJAI_DATA_ROOT` env，部署时统一前需注意；(2) AccessKey 旧记录在下次写入/reparse 时刷新，无后台批量迁移。
 
