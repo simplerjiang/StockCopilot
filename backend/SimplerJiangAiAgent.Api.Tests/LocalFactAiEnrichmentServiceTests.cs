@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -1482,8 +1483,11 @@ public sealed class LocalFactAiEnrichmentServiceTests
 
     private static AppDbContext CreateDbContext(string databaseName, InMemoryDatabaseRoot root)
     {
+        // V040-DEBT-1: 全量回归 20+ DbContextOptions 后 EF 触发 ManyServiceProvidersCreatedWarning 抛错；
+        // 这是测试基础设施警告（每个测试 new options 是 InMemory 测试的常规模式），不是生产问题，按 EF 文档忽略。
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(databaseName, root)
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
 
         return new AppDbContext(options);

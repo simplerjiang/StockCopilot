@@ -7,7 +7,7 @@ namespace SimplerJiangAiAgent.FinancialWorker.Services.Pdf;
 /// <summary>
 /// PDF 完整处理管线: 下载 → 提取 → 投票 → 解析 → 存储
 /// </summary>
-public class PdfProcessingPipeline
+public class PdfProcessingPipeline : IPdfProcessingPipeline
 {
     private readonly CninfoClient _cninfoClient;
     private readonly PdfVotingEngine _votingEngine;

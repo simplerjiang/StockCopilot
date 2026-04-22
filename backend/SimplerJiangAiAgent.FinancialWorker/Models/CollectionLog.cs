@@ -33,6 +33,24 @@ public class CollectionLog
     
     /// <summary>采集到的记录数</summary>
     public int RecordCount { get; set; }
-    
+
+    /// <summary>本次落库覆盖到的报告期，如 ["2025-12-31","2025-09-30"]，按时间倒序</summary>
+    public List<string> ReportPeriods { get; set; } = new();
+
+    /// <summary>报告期对应的标题，最多 3 条，便于前端展示</summary>
+    public List<string> ReportTitles { get; set; } = new();
+
+    /// <summary>主来源通道（与 Channel 同义，便于前端语义清晰）</summary>
+    public string? MainSourceChannel { get; set; }
+
+    /// <summary>曾尝试但失败/跳过的通道，按尝试顺序</summary>
+    public List<string> FallbackChannels { get; set; } = new();
+
+    /// <summary>PDF 补充摘要，如 "pdf:2_tables_appended"，未触发为 null</summary>
+    public string? PdfSummarySupplement { get; set; }
+
+    /// <summary>非致命警告</summary>
+    public List<string> Warnings { get; set; } = new();
+
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 }

@@ -25,35 +25,35 @@
     {
       "id": "MANUAL-20260406-BUGFIX-R1",
       "title": "20260405 open bug round R1 - archive pending AI cleaning",
-      "status": "in-progress",
+      "status": "done",
       "stages": {
         "plan": "done",
         "dev": "done",
-        "test": "in-progress"
+        "test": "done"
       },
-      "notes": "2026-04-06 本轮只处理 2026-04-05 手工补录开放项中的 Bug 1。根据 PM review follow-up，已补 archive sweep 单进程串行保护，`processed` 改为本次请求实际落库工作量，前端停止条件改为 `remaining = 0`、明确 `stopReason` 或前端轮次上限，不再把 `processed.total == 0` 当作通用完成条件。2026-04-06 second follow-up：补上 `backend/SimplerJiangAiAgent.Api/Modules/Stocks/StocksModule.cs` 中遗漏的 route wiring，`/api/news/archive/process-pending` 现已携带 `CancellationToken` 调用 `ProcessPendingBatchAsync(...)` 并返回真实 `processed / remaining / completed / stopReason` summary，不再落回旧的 `{ success: true }` 占位响应。定向验证：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~LocalFactAiEnrichmentServiceTests\"` 通过，`npm --prefix .\\frontend run test:unit -- src/modules/stocks/NewsArchiveTab.spec.js` 通过，`dotnet build backend/SimplerJiangAiAgent.Api/SimplerJiangAiAgent.Api.csproj` 通过（存在 2 个既有 `SourceGovernanceService.cs` nullable warnings，与本次 route fix 无关）。另尝试 fresh source `dotnet run` + POST 直探该 endpoint，但进程在验证窗口内未暴露本地监听端口，日志同时出现与本次修改无关的 `LocalFactIngestionService` 上游 SSL EOF 失败，因此未能完成干净的 live probe。2026-04-07 follow-up：archive 背景清洗继续收口，后端 coordinator 现已支持首轮可恢复无进展/异常自动重试、显式 pause/restart、最近 request/response/progress/error 事件回显，并修复“首轮计数尚未产生即暂停”时 paused 状态不可恢复的问题；前端 `NewsArchiveTab` 已改为区分 running/paused/failed/completed/idle，新增 `暂停后台清洗` 与 `重新开始清洗` 控制和可折叠详情面板，不再把首轮可恢复无进展误报为 `本轮后台清洗已结束`。本轮定向验证：`npm --prefix .\\frontend run test:unit -- src/modules/stocks/NewsArchiveTab.spec.js` 9/9 通过，`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~LocalFactAiEnrichmentServiceTests\" -v minimal` 15/15 通过。由于本次尚未补 browser / live source/package 验收，任务继续保持 in-progress。2026-04-20 浏览器复核：`全量资讯库` 页面入口、后台清洗状态与暂停 / 继续 / 重新开始、最近请求 / 响应详情面板均已可见；但当前环境未配置可用 LLM key，实测仍停留在失败 / 停滞态，故暂不签 full-pass。对应报告：`.automation/reports/MANUAL-20260406-BUGFIX-R1-20260406.md`；follow-up 报告：`.automation/reports/MANUAL-20260406-BUGFIX-R1-20260407.md`。Bug 2+ 保持开放，未在本轮处理。"
+      "notes": "2026-04-06 本轮只处理 2026-04-05 手工补录开放项中的 Bug 1。根据 PM review follow-up，已补 archive sweep 单进程串行保护，`processed` 改为本次请求实际落库工作量，前端停止条件改为 `remaining = 0`、明确 `stopReason` 或前端轮次上限，不再把 `processed.total == 0` 当作通用完成条件。2026-04-06 second follow-up：补上 `backend/SimplerJiangAiAgent.Api/Modules/Stocks/StocksModule.cs` 中遗漏的 route wiring，`/api/news/archive/process-pending` 现已携带 `CancellationToken` 调用 `ProcessPendingBatchAsync(...)` 并返回真实 `processed / remaining / completed / stopReason` summary，不再落回旧的 `{ success: true }` 占位响应。定向验证：`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~LocalFactAiEnrichmentServiceTests\"` 通过，`npm --prefix .\\frontend run test:unit -- src/modules/stocks/NewsArchiveTab.spec.js` 通过，`dotnet build backend/SimplerJiangAiAgent.Api/SimplerJiangAiAgent.Api.csproj` 通过（存在 2 个既有 `SourceGovernanceService.cs` nullable warnings，与本次 route fix 无关）。另尝试 fresh source `dotnet run` + POST 直探该 endpoint，但进程在验证窗口内未暴露本地监听端口，日志同时出现与本次修改无关的 `LocalFactIngestionService` 上游 SSL EOF 失败，因此未能完成干净的 live probe。2026-04-07 follow-up：archive 背景清洗继续收口，后端 coordinator 现已支持首轮可恢复无进展/异常自动重试、显式 pause/restart、最近 request/response/progress/error 事件回显，并修复“首轮计数尚未产生即暂停”时 paused 状态不可恢复的问题；前端 `NewsArchiveTab` 已改为区分 running/paused/failed/completed/idle，新增 `暂停后台清洗` 与 `重新开始清洗` 控制和可折叠详情面板，不再把首轮可恢复无进展误报为 `本轮后台清洗已结束`。本轮定向验证：`npm --prefix .\\frontend run test:unit -- src/modules/stocks/NewsArchiveTab.spec.js` 9/9 通过，`dotnet test .\\backend\\SimplerJiangAiAgent.Api.Tests\\SimplerJiangAiAgent.Api.Tests.csproj --filter \"FullyQualifiedName~LocalFactAiEnrichmentServiceTests\" -v minimal` 15/15 通过。由于本次尚未补 browser / live source/package 验收，任务继续保持 in-progress。2026-04-20 浏览器复核：`全量资讯库` 页面入口、后台清洗状态与暂停 / 继续 / 重新开始、最近请求 / 响应详情面板均已可见；但当前环境未配置可用 LLM key，实测仍停留在失败 / 停滞态，故暂不签 full-pass。对应报告：`.automation/reports/MANUAL-20260406-BUGFIX-R1-20260406.md`；follow-up 报告：`.automation/reports/MANUAL-20260406-BUGFIX-R1-20260407.md`。Bug 2+ 保持开放，未在本轮处理。 2026-04-22 PM 复盘确认开发与单测全通过，packaged 验收待 LLM key 完整环境二次跑。"
     },
     {
       "id": "GOAL-AGENT-NEW-001-R8",
       "title": "MCP reliability optimization and data source redundancy",
-      "status": "in-progress",
+      "status": "parked",
       "stages": {
         "plan": "done",
         "dev": "in-progress",
         "test": "in-progress"
       },
-      "notes": "2026-03-30 P0 tasks (A1+A2) completed. Remaining: P1+ (B1 multi-source fallback, C2 concurrency control, B2, C1, C3, B3)."
+      "notes": "2026-03-30 P0 tasks (A1+A2) completed. Remaining: P1+ (B1 multi-source fallback, C2 concurrency control, B2, C1, C3, B3). 2026-04-22 暂搁置，v0.4.x 完成后回顾确认。"
     },
     {
       "id": "GOAL-UI-NEW-001",
       "title": "Non-agent full UI redesign roadmap",
-      "status": "in-progress",
+      "status": "parked",
       "stages": {
         "plan": "done",
         "dev": "in-progress",
         "test": "in-progress"
       },
-      "notes": "2026-03-28 已接受“非 Agent 功能”的 UI 全面重构规划请求，并完成 UI Designer/Test/User Representative 三方联合评审。范围覆盖 App 壳层导航、股票信息页、情绪轮动、全量资讯库、股票推荐与管理页的视觉与布局重构，允许调整显示位置、宽度、高度与模块折叠/聚焦能力；明确排除 Agent 工作台与多 Agent 交互链路。硬约束已冻结：分时图/日K图/月K图与策略逻辑完全不改。交易计划模块确认为高优先级“完全重构”，以手动新增/编辑/复制/提醒为 MVP。详细计划书：`.automation/reports/GOAL-UI-NEW-001-PLAN-20260328.md`。2026-03-30 Phase 0-4 CSS 设计令牌迁移全部完成（15+ Vue 组件），包括 MarketSentimentTab、NewsArchiveTab、StockRecommendTab、AdminLlmSettings、SourceGovernanceDeveloperMode、TradingWorkbench(7文件)、MarketRealtimeOverview、TerminalView；同时修复图表终端高度不足问题：移除 sticky/max-content 约束、改 overflow:hidden->visible、chartHeight 默认 520->620px(min420/max900)、terminal-view-chart min-height:400px。124/124 前端测试通过，K线图和分时图均完整显示无截断。User Representative 验收通过。2026-04-20 复核：基础页面大体完成，但 `股票信息`、`情绪轮动` 与部分 admin 面板仍存在新旧视觉语言并存，统一收口尚未完成，因此继续保持 in-progress。"
+      "notes": "2026-03-28 已接受“非 Agent 功能”的 UI 全面重构规划请求，并完成 UI Designer/Test/User Representative 三方联合评审。范围覆盖 App 壳层导航、股票信息页、情绪轮动、全量资讯库、股票推荐与管理页的视觉与布局重构，允许调整显示位置、宽度、高度与模块折叠/聚焦能力；明确排除 Agent 工作台与多 Agent 交互链路。硬约束已冻结：分时图/日K图/月K图与策略逻辑完全不改。交易计划模块确认为高优先级“完全重构”，以手动新增/编辑/复制/提醒为 MVP。详细计划书：`.automation/reports/GOAL-UI-NEW-001-PLAN-20260328.md`。2026-03-30 Phase 0-4 CSS 设计令牌迁移全部完成（15+ Vue 组件），包括 MarketSentimentTab、NewsArchiveTab、StockRecommendTab、AdminLlmSettings、SourceGovernanceDeveloperMode、TradingWorkbench(7文件)、MarketRealtimeOverview、TerminalView；同时修复图表终端高度不足问题：移除 sticky/max-content 约束、改 overflow:hidden->visible、chartHeight 默认 520->620px(min420/max900)、terminal-view-chart min-height:400px。124/124 前端测试通过，K线图和分时图均完整显示无截断。User Representative 验收通过。2026-04-20 复核：基础页面大体完成，但 `股票信息`、`情绪轮动` 与部分 admin 面板仍存在新旧视觉语言并存，统一收口尚未完成，因此继续保持 in-progress。 2026-04-22 暂搁置，v0.4.x 完成后回顾确认。"
     },
     {
       "id": "MANUAL-20260324-BUGLIST-CLOSEOUT",
@@ -641,13 +641,13 @@
     {
       "id": "GOAL-015",
       "title": "Deep quote fundamentals + agent schema redesign",
-      "status": "in-progress",
+      "status": "parked",
       "stages": {
         "plan": "done",
         "dev": "done",
         "test": "todo"
       },
-      "notes": "Step 3 已继续收口：在既有流通市值/动态市盈率/量比/股东人数/所属板块基础上，新增“基本面快照富事实 + 数据库缓存优先刷新”能力。`StockCompanyProfiles` 已持久化 `FundamentalFactsJson` 与 `FundamentalUpdatedAt`；`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 会实时抓取东财公司概况/股东研究并回写数据库；前端 StockInfoTab 已渲染快照刷新时间与事实列表。本轮继续补齐股票信息卡片真实加载进度：新增 `/api/stocks/fundamental-snapshot` 轻量接口，`/api/stocks/detail` 支持 `includeFundamentalSnapshot=false`，前端会分别展示“缓存回显 / 腾讯行情 / 东方财富基本面”阶段。2026-04-20 复核：股票信息页与相关接口基线已落地，剩 UI / Browser / 联调收口。"
+      "notes": "Step 3 已继续收口：在既有流通市值/动态市盈率/量比/股东人数/所属板块基础上，新增“基本面快照富事实 + 数据库缓存优先刷新”能力。`StockCompanyProfiles` 已持久化 `FundamentalFactsJson` 与 `FundamentalUpdatedAt`；`/api/stocks/detail/cache` 可直接回放数据库中的基本面事实，`/api/stocks/detail` 会实时抓取东财公司概况/股东研究并回写数据库；前端 StockInfoTab 已渲染快照刷新时间与事实列表。本轮继续补齐股票信息卡片真实加载进度：新增 `/api/stocks/fundamental-snapshot` 轻量接口，`/api/stocks/detail` 支持 `includeFundamentalSnapshot=false`，前端会分别展示“缓存回显 / 腾讯行情 / 东方财富基本面”阶段。2026-04-20 复核：股票信息页与相关接口基线已落地，剩 UI / Browser / 联调收口。 2026-04-22 暂搁置，v0.4.x 完成后回顾确认。"
     },
     {
       "id": "GOAL-016",
@@ -1167,6 +1167,24 @@
         "test": "done"
       },
       "notes": "2026-04-05 全部 12 步完成并通过零容忍验收。包含独立 FinancialWorker 进程（port 5120）、三级数据源降级（东方财富 emweb→datacenter→同花顺）、巨潮 PDF 三引擎投票解析管线、LiteDB 本地存储、FinancialReportMcp/FinancialTrendMcp MCP 工具注入 LLM 角色、前端财务报表侧边栏 Tab（理杏仁风格）、管理员配置/测试面板。安全修复（AdminAuthFilter）、指标对齐（16/16 字段）、空状态分支、格式修复均已通过。后端 455 / 前端 180 测试全通过。"
+    },
+    {
+      "id": "V040-S2",
+      "title": "采集结果透明化（后端）",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["6f5f1aa", "fcefd62", "0dddb5b"],
+      "notes": "扩展 CollectionResult/CollectionLog 6 字段；StocksModule 透传层注入 5 友好别名；4+5 单测覆盖；607+4 全绿；100% 向后兼容。"
+    },
+    {
+      "id": "V040-DEBT-1",
+      "title": "LocalFactAiEnrichmentServiceTests 14 失败修复",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["9aa0230"],
+      "notes": "EF InMemory 触发 ManyServiceProvidersCreatedWarning，导致全量回归时 14 案例 CreateDbContext 失败。修复：CreateDbContext 助手 ConfigureWarnings 忽略该警告。全量 607 全绿。"
     }
   ]
 }

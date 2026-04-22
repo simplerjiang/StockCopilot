@@ -16,7 +16,7 @@ Directory.CreateDirectory(appDataPath);
 
 builder.Services.AddSingleton(new FinancialDbContext($"Filename={dbPath};Connection=shared"));
 
-builder.Services.AddHttpClient<EastmoneyFinanceClient>(client =>
+builder.Services.AddHttpClient<IEastmoneyFinanceClient, EastmoneyFinanceClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
     client.DefaultRequestHeaders.Add("User-Agent",
@@ -27,14 +27,14 @@ builder.Services.AddHttpClient<EastmoneyFinanceClient>(client =>
         "https://emweb.securities.eastmoney.com/");
 });
 
-builder.Services.AddHttpClient<EastmoneyDatacenterClient>(client =>
+builder.Services.AddHttpClient<IEastmoneyDatacenterClient, EastmoneyDatacenterClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
     client.DefaultRequestHeaders.Add("User-Agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
 });
 
-builder.Services.AddHttpClient<ThsFinanceClient>(client =>
+builder.Services.AddHttpClient<IThsFinanceClient, ThsFinanceClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
     client.DefaultRequestHeaders.Add("User-Agent",
@@ -56,6 +56,7 @@ builder.Services.AddSingleton<IPdfTextExtractor, IText7Extractor>();
 builder.Services.AddSingleton<PdfVotingEngine>();
 builder.Services.AddSingleton<FinancialTableParser>();
 builder.Services.AddSingleton<PdfProcessingPipeline>();
+builder.Services.AddSingleton<IPdfProcessingPipeline>(sp => sp.GetRequiredService<PdfProcessingPipeline>());
 
 builder.Services.AddSingleton<InMemoryLogStore>();
 builder.Services.AddHostedService<Worker>();

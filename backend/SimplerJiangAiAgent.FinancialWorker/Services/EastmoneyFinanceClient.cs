@@ -8,7 +8,7 @@ namespace SimplerJiangAiAgent.FinancialWorker.Services;
 /// <summary>
 /// 从 Eastmoney emweb API 采集三大报表 + 财务指标
 /// </summary>
-public class EastmoneyFinanceClient
+public class EastmoneyFinanceClient : IEastmoneyFinanceClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<EastmoneyFinanceClient> _logger;
