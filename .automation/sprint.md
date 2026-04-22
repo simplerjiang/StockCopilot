@@ -110,7 +110,7 @@
   - 写 v0.4.0 完成报告到 `.automation/reports/`
 - **依赖**：V040-S1 ~ V040-S5 全部 DONE
 - **完成时间**：2026-04-22
-- **commits**：（commit 后回填短码）
+- **commits**：`e7f278f`
 - **完成说明**：R1 REJECT 35/100（B-1 三表全空、B-2 keyword 失效、B-3 版本号），最小改动闭环 — 前端字典扩中文键 + `*` 前缀剥离、keyword 前端二次过滤（pageSize 临时拉到 100，page 锁 1）、版本号 0.3.4→0.4.0；R2 PASS 87/100；后端测试 608/0/0，前端 vitest 370/0/2，packaged 重打包成功并通过浏览器验收。
 - **遗留 backlog**：
   - V040-S6-FU-1（毛利润字段，建议后端补 `*营业总成本` 字段或前端用 `revenue - operatingCost` 表达式补算）
