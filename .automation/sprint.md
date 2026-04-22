@@ -62,7 +62,7 @@
 - **遗留 backlog**：V040-S3-FU-1（emweb/datacenter/ths 实采样本到位后渠道 tag 抽样校色；「未分类/Unknown」pill 设计待 V040-S6 数据治理决策）。
 
 ### Story V040-S4: 采集结果透明化（前端 UI 接入）
-- **状态**：TODO
+- **状态**：DONE
 - **级别**：S
 - **验收标准**：
   - `FinancialDataTestPanel.vue` 与 `FinancialReportTab.vue` 显示新字段
@@ -70,6 +70,10 @@
   - 降级原因用 Tag 着色（emweb/datacenter/ths/pdf 不同色）
   - 单元测试 + Browser 抽测
 - **依赖**：V040-S2
+- **完成时间**：2026-04-22
+- **commits**：`a2ee34c`
+- **完成说明**：3 文件改动 + 1 新建公共 util；vitest 与本 Story 相关用例全绿（sourceChannelTag 10/10、FinancialFilterBar 13/13、FinancialReportTab 20/20）；frontend build 0 error；浏览器验收并入 V040-S6 一起做。同时修复财报中心筛选区 4 处面向开发者的 hint 文案，改为面向用户口吻。
+- **遗留 backlog**：渠道 → Tag 颜色与 V040-S3 表格内 `SOURCE_CHANNEL_STYLE` 不完全一致（ths 在表格走绿、在采集面板走紫），合并到 V040-S3-FU-1 一起处理。
 
 ### Story V040-S5: 详情抽屉（轻量版，不含 PDF 预览）
 - **状态**：TODO

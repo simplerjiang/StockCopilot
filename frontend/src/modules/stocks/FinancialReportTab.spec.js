@@ -362,4 +362,103 @@ describe('FinancialReportTab', () => {
     expect(wrapper.find('.error-msg').exists()).toBe(true)
     expect(wrapper.find('.error-msg').text()).toContain('采集失败')
   })
+
+  it('renders V040-S4 透明化字段：报告期/标题/来源 Tag/降级原因/PDF 摘要', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(emptySummaryData))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        channel: 'emweb',
+        reportCount: 4,
+        durationMs: 3500,
+        reportPeriod: '2024-12-31',
+        reportTitle: '2024年年度报告',
+        sourceChannel: 'emweb',
+        fallbackReason: 'datacenter empty data',
+        pdfSummary: 'pdf:2_tables_appended'
+      }))
+      .mockResolvedValueOnce(createJsonResponse(mockTrendData))
+      .mockResolvedValueOnce(createJsonResponse(mockSummaryData))
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: 'SZ000001', active: true } })
+    await flushPromises()
+    await wrapper.find('.collect-btn').trigger('click')
+    await flushPromises()
+
+    const meta = wrapper.find('.collect-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-field="reportPeriod"]').text()).toContain('2024-12-31')
+    expect(meta.find('[data-field="reportTitle"]').text()).toContain('2024年年度报告')
+
+    const channelRow = meta.find('[data-field="sourceChannel"]')
+    expect(channelRow.exists()).toBe(true)
+    const tag = channelRow.find('.source-channel-tag')
+    expect(tag.exists()).toBe(true)
+    expect(tag.attributes('data-channel-key')).toBe('emweb')
+    expect(tag.text()).toBe('EM 网页')
+
+    expect(meta.find('[data-field="fallbackReason"]').text()).toContain('datacenter empty data')
+
+    const pdfRow = meta.find('[data-field="pdfSummary"]')
+    expect(pdfRow.exists()).toBe(true)
+    expect(wrapper.find('.pdf-summary-content').exists()).toBe(false)
+    await pdfRow.find('.pdf-summary-toggle').trigger('click')
+    expect(wrapper.find('.pdf-summary-content').text()).toContain('pdf:2_tables_appended')
+  })
+
+  it('omits 透明化 meta rows when fields are missing (旧响应兼容)', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(emptySummaryData))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        channel: 'emweb',
+        reportCount: 4,
+        durationMs: 3500
+      }))
+      .mockResolvedValueOnce(createJsonResponse(mockTrendData))
+      .mockResolvedValueOnce(createJsonResponse(mockSummaryData))
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: 'SZ000001', active: true } })
+    await flushPromises()
+    await wrapper.find('.collect-btn').trigger('click')
+    await flushPromises()
+
+    // sourceChannel falls back to legacy `channel`, so the row exists; other 4 should not.
+    const meta = wrapper.find('.collect-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-field="reportPeriod"]').exists()).toBe(false)
+    expect(meta.find('[data-field="reportTitle"]').exists()).toBe(false)
+    expect(meta.find('[data-field="fallbackReason"]').exists()).toBe(false)
+    expect(meta.find('[data-field="pdfSummary"]').exists()).toBe(false)
+    expect(meta.find('[data-field="sourceChannel"] .source-channel-tag').attributes('data-channel-key')).toBe('emweb')
+  })
+
+  it('falls back to reportPeriods[0] / pdfSummarySupplement aliases', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(emptySummaryData))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        channel: 'pdf',
+        reportCount: 1,
+        durationMs: 2000,
+        reportPeriods: ['2024-09-30', '2024-06-30'],
+        pdfSummarySupplement: 'pdf:1_tables_appended'
+      }))
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(sparsePdfSummaryData))
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: 'SZ000001', active: true } })
+    await flushPromises()
+    await wrapper.find('.collect-btn').trigger('click')
+    await flushPromises()
+
+    const meta = wrapper.find('.collect-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-field="reportPeriod"]').text()).toContain('2024-09-30')
+    expect(meta.find('[data-field="sourceChannel"] .source-channel-tag').attributes('data-channel-key')).toBe('pdf')
+    expect(meta.find('[data-field="pdfSummary"]').exists()).toBe(true)
+  })
 })

@@ -166,7 +166,7 @@ const reportTypes = computed(() => REPORT_TYPE_OPTIONS)
             @blur="addSymbolsFromDraft"
           />
         </div>
-        <p class="fc-filter-hint">回车 / 逗号生成标签，"查询"按钮触发</p>
+        <p class="fc-filter-hint">按回车或逗号添加多个代码，点"查询"应用</p>
       </div>
 
       <!-- 报告期 -->
@@ -189,7 +189,7 @@ const reportTypes = computed(() => REPORT_TYPE_OPTIONS)
             @change="onEndChange"
           />
         </div>
-        <p class="fc-filter-hint">默认近一年，change 立即触发</p>
+        <p class="fc-filter-hint">默认显示近一年，修改后立即生效</p>
       </div>
 
       <!-- 报告类型 -->
@@ -206,7 +206,7 @@ const reportTypes = computed(() => REPORT_TYPE_OPTIONS)
             @click="toggleType(opt.key)"
           >{{ opt.label }}</button>
         </div>
-        <p class="fc-filter-hint">点击立即触发，至少保留 1 项</p>
+        <p class="fc-filter-hint">修改后立即生效，至少保留 1 项</p>
       </div>
 
       <!-- 关键词 -->
@@ -221,7 +221,7 @@ const reportTypes = computed(() => REPORT_TYPE_OPTIONS)
           @input="onKeywordInput"
           @keydown.enter.prevent="onKeywordEnter"
         />
-        <p class="fc-filter-hint">300ms 防抖，回车立即触发</p>
+        <p class="fc-filter-hint">输入后自动查询，按回车立即应用</p>
       </div>
     </div>
 

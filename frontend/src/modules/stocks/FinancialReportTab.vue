@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, toRef, watch } from 'vue'
+import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
 
 const props = defineProps({
   symbol: { type: String, default: '' },
@@ -33,6 +34,33 @@ function toCollectNumber(value) {
   return Number.isFinite(num) ? num : 0
 }
 
+function pickFirstNonEmptyString(result, ...keys) {
+  if (!result || typeof result !== 'object') return ''
+  for (const k of keys) {
+    const v = result[k]
+    if (v == null) continue
+    if (typeof v === 'string') {
+      if (v.trim() !== '') return v
+    } else {
+      const s = String(v)
+      if (s !== '') return s
+    }
+  }
+  return ''
+}
+
+function pickFirstStringFromArray(result, ...keys) {
+  if (!result || typeof result !== 'object') return ''
+  for (const k of keys) {
+    const v = result[k]
+    if (Array.isArray(v) && v.length > 0) {
+      const first = v[0]
+      if (first != null && first !== '') return String(first)
+    }
+  }
+  return ''
+}
+
 function normalizeCollectResult(result) {
   if (!result || typeof result !== 'object') {
     return {
@@ -42,18 +70,34 @@ function normalizeCollectResult(result) {
       durationMs: 0,
       isDegraded: false,
       degradeReason: '',
-      errorMessage: ''
+      errorMessage: '',
+      reportPeriod: '',
+      reportTitle: '',
+      sourceChannel: '',
+      fallbackReason: '',
+      pdfSummary: ''
     }
   }
 
+  const channel = String(getCollectField(result, 'channel', 'Channel') ?? '')
+  const degradeReason = String(getCollectField(result, 'degradeReason', 'DegradeReason') ?? '')
+
   return {
     success: toCollectBoolean(getCollectField(result, 'success', 'Success')),
-    channel: String(getCollectField(result, 'channel', 'Channel') ?? ''),
+    channel,
     reportCount: toCollectNumber(getCollectField(result, 'reportCount', 'ReportCount')),
     durationMs: toCollectNumber(getCollectField(result, 'durationMs', 'DurationMs')),
     isDegraded: toCollectBoolean(getCollectField(result, 'isDegraded', 'IsDegraded')),
-    degradeReason: String(getCollectField(result, 'degradeReason', 'DegradeReason') ?? ''),
-    errorMessage: String(getCollectField(result, 'errorMessage', 'ErrorMessage') ?? '')
+    degradeReason,
+    errorMessage: String(getCollectField(result, 'errorMessage', 'ErrorMessage') ?? ''),
+    // V040-S4 采集结果透明化新字段（含友好别名 + 兜底回退）
+    reportPeriod: pickFirstNonEmptyString(result, 'reportPeriod', 'ReportPeriod')
+      || pickFirstStringFromArray(result, 'reportPeriods', 'ReportPeriods'),
+    reportTitle: pickFirstNonEmptyString(result, 'reportTitle', 'ReportTitle')
+      || pickFirstStringFromArray(result, 'reportTitles', 'ReportTitles'),
+    sourceChannel: pickFirstNonEmptyString(result, 'sourceChannel', 'SourceChannel', 'mainSourceChannel', 'MainSourceChannel') || channel,
+    fallbackReason: pickFirstNonEmptyString(result, 'fallbackReason', 'FallbackReason') || degradeReason,
+    pdfSummary: pickFirstNonEmptyString(result, 'pdfSummary', 'PdfSummary', 'pdfSummarySupplement', 'PdfSummarySupplement')
   }
 }
 
@@ -163,6 +207,7 @@ async function collectData() {
   collecting.value = true
   collectError.value = ''
   collectResult.value = null
+  pdfSummaryOpen.value = false
   try {
     const resp = await fetch(`/api/stocks/financial/collect/${encodeURIComponent(symbolRef.value)}`, { method: 'POST' })
     if (!resp.ok) {
@@ -398,6 +443,24 @@ function formatMetricValue(val, isRatio = false) {
   if (Math.abs(num) >= 1e4) return (num / 1e4).toFixed(2) + '万'
   return num.toFixed(2)
 }
+
+// ---- V040-S4 采集结果透明化新字段 ----
+const pdfSummaryOpen = ref(false)
+
+const collectReportPeriod = computed(() => collectResult.value?.reportPeriod || '')
+const collectReportTitle = computed(() => collectResult.value?.reportTitle || '')
+const collectSourceChannel = computed(() => collectResult.value?.sourceChannel || '')
+const collectFallbackReason = computed(() => collectResult.value?.fallbackReason || '')
+const collectPdfSummary = computed(() => collectResult.value?.pdfSummary || '')
+const collectChannelTag = computed(() => getSourceChannelTag(collectSourceChannel.value))
+
+const hasCollectMeta = computed(() => Boolean(
+  collectReportPeriod.value
+  || collectReportTitle.value
+  || collectSourceChannel.value
+  || collectFallbackReason.value
+  || collectPdfSummary.value
+))
 </script>
 
 <template>
@@ -433,6 +496,42 @@ function formatMetricValue(val, isRatio = false) {
           提示：{{ localizeCollectMessage(collectResult.degradeReason) }}
         </p>
       </div>
+      <!-- V040-S4 采集结果透明化：报告期 / 标题 / 来源 / 降级原因 / PDF 摘要 -->
+      <dl v-if="collectResult && hasCollectMeta" class="collect-meta">
+        <div v-if="collectReportPeriod" class="collect-meta-row" data-field="reportPeriod">
+          <dt>报告期</dt>
+          <dd>{{ collectReportPeriod }}</dd>
+        </div>
+        <div v-if="collectReportTitle" class="collect-meta-row" data-field="reportTitle">
+          <dt>报告标题</dt>
+          <dd>{{ collectReportTitle }}</dd>
+        </div>
+        <div v-if="collectSourceChannel" class="collect-meta-row" data-field="sourceChannel">
+          <dt>来源渠道</dt>
+          <dd>
+            <span
+              class="source-channel-tag"
+              :data-channel-key="collectChannelTag.key"
+              :style="sourceChannelTagStyle(collectChannelTag)"
+            >{{ collectChannelTag.label }}</span>
+          </dd>
+        </div>
+        <div v-if="collectFallbackReason" class="collect-meta-row" data-field="fallbackReason">
+          <dt>降级原因</dt>
+          <dd class="collect-meta-fallback">{{ collectFallbackReason }}</dd>
+        </div>
+        <div v-if="collectPdfSummary" class="collect-meta-row" data-field="pdfSummary">
+          <dt>PDF 摘要</dt>
+          <dd>
+            <button
+              type="button"
+              class="pdf-summary-toggle"
+              @click="pdfSummaryOpen = !pdfSummaryOpen"
+            >{{ pdfSummaryOpen ? '收起' : '展开' }}</button>
+            <pre v-if="pdfSummaryOpen" class="pdf-summary-content">{{ collectPdfSummary }}</pre>
+          </dd>
+        </div>
+      </dl>
       <p v-if="collectError" class="error-msg">{{ collectError }}</p>
 
       <template v-if="!showPartialDataState">
@@ -664,6 +763,67 @@ td:first-child, th:first-child { text-align: left; }
   color: #cbb781;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.collect-meta {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #152030;
+  border-radius: 6px;
+  border: 1px solid #2a3a4a;
+  font-size: 12px;
+}
+.collect-meta-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+}
+.collect-meta-row dt {
+  color: #91a6bc;
+  min-width: 70px;
+  flex-shrink: 0;
+  margin: 0;
+}
+.collect-meta-row dd {
+  color: #ddd;
+  margin: 0;
+  word-break: break-word;
+  flex: 1;
+}
+.collect-meta-fallback { color: #d97706; }
+.source-channel-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-weight: 500;
+}
+.pdf-summary-toggle {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: #3a4a5a;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pdf-summary-toggle:hover { background: #4a5a6a; }
+.pdf-summary-content {
+  margin: 6px 0 0;
+  padding: 8px;
+  background: #0d1622;
+  border-radius: 4px;
+  color: #c8d3e0;
+  font-size: 11px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
 .error-msg {

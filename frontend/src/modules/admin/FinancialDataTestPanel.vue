@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
 
 // Auth token (same as other admin panels)
 const token = ref(localStorage.getItem('admin-token') || '')
@@ -21,6 +22,7 @@ const testSymbol = ref('')
 const collecting = ref(false)
 const collectResult = ref(null)
 const collectError = ref('')
+const pdfSummaryOpen = ref(false)
 
 // Logs state
 const logs = ref([])
@@ -89,6 +91,58 @@ function formatLogNote(log) {
   return log?.errorMessage || '-'
 }
 
+// ---- V040-S4 采集结果透明化字段 ----
+function pickCollectField(result, ...keys) {
+  if (!result || typeof result !== 'object') return ''
+  for (const k of keys) {
+    const v = result[k]
+    if (v != null && v !== '') return v
+  }
+  return ''
+}
+
+function firstOfArrayField(result, ...keys) {
+  if (!result || typeof result !== 'object') return ''
+  for (const k of keys) {
+    const v = result[k]
+    if (Array.isArray(v) && v.length > 0) {
+      const first = v[0]
+      if (first != null && first !== '') return String(first)
+    }
+  }
+  return ''
+}
+
+const collectReportPeriod = computed(() => {
+  const r = collectResult.value
+  return pickCollectField(r, 'reportPeriod') || firstOfArrayField(r, 'reportPeriods')
+})
+
+const collectReportTitle = computed(() => {
+  const r = collectResult.value
+  return pickCollectField(r, 'reportTitle') || firstOfArrayField(r, 'reportTitles')
+})
+
+const collectSourceChannel = computed(() => {
+  const r = collectResult.value
+  const v = pickCollectField(r, 'sourceChannel', 'mainSourceChannel', 'channel', 'Channel')
+  return v ? String(v) : ''
+})
+
+const collectFallbackReason = computed(() => {
+  const r = collectResult.value
+  const v = pickCollectField(r, 'fallbackReason', 'degradeReason', 'DegradeReason')
+  return v ? String(v) : ''
+})
+
+const collectPdfSummary = computed(() => {
+  const r = collectResult.value
+  const v = pickCollectField(r, 'pdfSummary', 'pdfSummarySupplement', 'PdfSummarySupplement')
+  return v ? String(v) : ''
+})
+
+const collectChannelTag = computed(() => getSourceChannelTag(collectSourceChannel.value))
+
 // ---- Auth ----
 async function login() {
   try {
@@ -155,6 +209,7 @@ async function testCollect() {
   collecting.value = true
   collectResult.value = null
   collectError.value = ''
+  pdfSummaryOpen.value = false
   try {
     const res = await fetch(`/api/stocks/financial/collect/${testSymbol.value.trim()}`, {
       method: 'POST',
@@ -289,9 +344,42 @@ onMounted(() => {
             分红: {{ collectResult.dividendCount ?? 0 }} 条 |
             融资融券: {{ collectResult.marginTradingCount ?? 0 }} 条
           </div>
-          <div class="result-detail error" v-if="collectResult.isDegraded">
-            ⚠️ 降级: {{ collectResult.degradeReason }}
-          </div>
+          <!-- V040-S4 采集结果透明化新字段 -->
+          <dl class="collect-meta">
+            <div v-if="collectReportPeriod" class="collect-meta-row" data-field="reportPeriod">
+              <dt>报告期</dt>
+              <dd>{{ collectReportPeriod }}</dd>
+            </div>
+            <div v-if="collectReportTitle" class="collect-meta-row" data-field="reportTitle">
+              <dt>报告标题</dt>
+              <dd>{{ collectReportTitle }}</dd>
+            </div>
+            <div v-if="collectSourceChannel" class="collect-meta-row" data-field="sourceChannel">
+              <dt>来源渠道</dt>
+              <dd>
+                <span
+                  class="source-channel-tag"
+                  :data-channel-key="collectChannelTag.key"
+                  :style="sourceChannelTagStyle(collectChannelTag)"
+                >{{ collectChannelTag.label }}</span>
+              </dd>
+            </div>
+            <div v-if="collectFallbackReason" class="collect-meta-row" data-field="fallbackReason">
+              <dt>降级原因</dt>
+              <dd class="collect-meta-fallback">{{ collectFallbackReason }}</dd>
+            </div>
+            <div v-if="collectPdfSummary" class="collect-meta-row" data-field="pdfSummary">
+              <dt>PDF 摘要</dt>
+              <dd>
+                <button
+                  type="button"
+                  class="btn-small pdf-summary-toggle"
+                  @click="pdfSummaryOpen = !pdfSummaryOpen"
+                >{{ pdfSummaryOpen ? '收起' : '展开' }}</button>
+                <pre v-if="pdfSummaryOpen" class="pdf-summary-content">{{ collectPdfSummary }}</pre>
+              </dd>
+            </div>
+          </dl>
           <div class="result-detail error" v-if="collectResult.errorMessage">
             {{ collectResult.errorMessage }}
           </div>
@@ -396,6 +484,21 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .result-header.success { color: #2ecc71; }
 .result-header.error { color: #e74c3c; }
 .result-detail { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+.collect-meta { margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.collect-meta-row { display: flex; gap: 8px; align-items: flex-start; margin: 0; }
+.collect-meta-row dt { color: #91a6bc; min-width: 70px; flex-shrink: 0; margin: 0; }
+.collect-meta-row dd { color: #ddd; margin: 0; word-break: break-word; flex: 1; }
+.collect-meta-fallback { color: #d97706; }
+.source-channel-tag {
+  display: inline-block; padding: 1px 8px; font-size: 11px; line-height: 1.5;
+  border-radius: 10px; border: 1px solid transparent; font-weight: 500;
+}
+.pdf-summary-toggle { margin-right: 6px; }
+.pdf-summary-content {
+  margin: 6px 0 0; padding: 8px; background: #0d1622; border-radius: 4px;
+  color: #c8d3e0; font-size: 11px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+}
 
 .msg { font-size: 12px; margin-top: 6px; }
 .msg.success { color: #2ecc71; }
