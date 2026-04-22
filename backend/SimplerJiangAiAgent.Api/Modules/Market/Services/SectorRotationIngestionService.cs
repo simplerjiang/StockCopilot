@@ -307,12 +307,20 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             var tradingDateOffset = new DateTimeOffset(persistedTradingDate, TimeSpan.Zero);
             var durationMs = syncStopwatch.ElapsedMilliseconds;
             var degradedSnapshot = degradedFlags.ToArray();
-            var wasComplete = degradedSnapshot.Length == 0;
+            var businessComplete = degradedSnapshot.Length == 0;
+            var sourceHealthy = boardFetchResults.Values.All(result => result.Succeeded)
+                && breadthTask.Result.Succeeded
+                && totalTurnoverTask.Result.Succeeded
+                && limitUpTask.Result.Succeeded
+                && limitDownTask.Result.Succeeded
+                && brokenBoardTask.Result.Succeeded
+                && maxStreakTask.Result.Succeeded;
             DataSourceTracker.RecordSync(
                 DateTimeOffset.UtcNow,
                 durationMs,
                 tradingDateOffset,
-                wasComplete,
+                sourceHealthy,
+                businessComplete,
                 degradedSnapshot,
                 allRows.Count,
                 marketSnapshot.TotalTurnover);
@@ -320,7 +328,8 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 DateTimeOffset.UtcNow,
                 durationMs,
                 tradingDateOffset,
-                wasComplete,
+                sourceHealthy,
+                businessComplete,
                 degradedSnapshot);
         }
         catch (Exception ex)

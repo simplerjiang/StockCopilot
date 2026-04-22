@@ -325,6 +325,8 @@ public sealed class MarketModule : IModule
                 timestamp = s.Timestamp,
                 durationMs = s.DurationMs,
                 tradingDate = s.TradingDate,
+                sourceHealthy = s.SourceHealthy,
+                businessComplete = s.BusinessComplete,
                 wasComplete = s.WasComplete,
                 degradedSources = s.DegradedSources,
                 reasons = BuildReasons(s.DegradedSources),
@@ -351,6 +353,8 @@ public sealed class MarketModule : IModule
                     timestamp = computation.Timestamp,
                     durationMs = computation.DurationMs,
                     tradingDate = computation.TradingDate,
+                    sourceHealthy = computation.SourceHealthy,
+                    businessComplete = computation.BusinessComplete,
                     wasComplete = computation.WasComplete,
                     degradedSources = computation.DegradedSources,
                     reasons = BuildReasons(computation.DegradedSources)
@@ -502,7 +506,8 @@ internal static class DataSourceTracker
         DateTimeOffset timestamp,
         long durationMs,
         DateTimeOffset tradingDate,
-        bool wasComplete,
+        bool sourceHealthy,
+        bool businessComplete,
         IReadOnlyList<string> degradedSources,
         int sectorRowCount,
         decimal totalTurnover)
@@ -511,7 +516,9 @@ internal static class DataSourceTracker
             timestamp,
             durationMs,
             tradingDate,
-            wasComplete,
+            sourceHealthy,
+            businessComplete,
+            businessComplete,
             degradedSources,
             sectorRowCount,
             totalTurnover);
@@ -530,10 +537,29 @@ internal static class DataSourceTracker
         DateTimeOffset timestamp,
         long durationMs,
         DateTimeOffset tradingDate,
-        bool wasComplete,
+        bool sourceHealthy,
+        bool businessComplete,
         IReadOnlyList<string> degradedSources)
     {
-        _lastComputation = new ComputationSnapshot(timestamp, durationMs, tradingDate, wasComplete, degradedSources);
+        _lastComputation = new ComputationSnapshot(
+            timestamp,
+            durationMs,
+            tradingDate,
+            sourceHealthy,
+            businessComplete,
+            businessComplete,
+            degradedSources);
+    }
+
+    internal static void ResetForTests()
+    {
+        Sources.Clear();
+        BoardStates.Clear();
+        lock (RecentSyncsLock)
+        {
+            RecentSyncs.Clear();
+            _lastComputation = null;
+        }
     }
 
     private static double? UpdateLatency(double? current, double? latencyMs)
@@ -601,6 +627,8 @@ internal sealed record RecentSyncSnapshot(
     DateTimeOffset Timestamp,
     long DurationMs,
     DateTimeOffset TradingDate,
+    bool SourceHealthy,
+    bool BusinessComplete,
     bool WasComplete,
     IReadOnlyList<string> DegradedSources,
     int SectorRowCount,
@@ -610,5 +638,7 @@ internal sealed record ComputationSnapshot(
     DateTimeOffset Timestamp,
     long DurationMs,
     DateTimeOffset TradingDate,
+    bool SourceHealthy,
+    bool BusinessComplete,
     bool WasComplete,
     IReadOnlyList<string> DegradedSources);

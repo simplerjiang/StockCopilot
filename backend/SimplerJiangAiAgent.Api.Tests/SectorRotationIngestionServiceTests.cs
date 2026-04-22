@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
+using SimplerJiangAiAgent.Api.Modules.Market;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
 
@@ -146,6 +147,61 @@ public sealed class SectorRotationIngestionServiceTests
 		Assert.Equal(0m, sentiment.StageScore);
 		Assert.Contains("market_breadth_unavailable", sentiment.RawJson);
 		Assert.Single(await dbContext.SectorRotationSnapshots.ToListAsync());
+	}
+
+	[Fact]
+	public async Task SyncAsync_TracksSourceHealthyAndBusinessCompleteSeparately_WhenBoardDataIsEmpty()
+	{
+		DataSourceTracker.ResetForTests();
+		try
+		{
+			await using var dbContext = CreateDbContext();
+			var client = new FakeSectorRotationClient
+			{
+				BoardRankings = new Dictionary<string, IReadOnlyList<EastmoneySectorBoardRow>>(StringComparer.OrdinalIgnoreCase)
+				{
+					[SectorBoardTypes.Industry] =
+					[
+						new EastmoneySectorBoardRow(SectorBoardTypes.Industry, "BK1001", "半导体", 2.8m, 120m, 40m, 30m, 20m, 30m, 300m, 12m, 1, "{}")
+					]
+				},
+				Leaders = new Dictionary<string, IReadOnlyList<EastmoneySectorLeaderRow>>(StringComparer.OrdinalIgnoreCase)
+				{
+					["BK1001"] =
+					[
+						new EastmoneySectorLeaderRow(1, "688001", "华芯", 7.8m, 90m, false, false)
+					]
+				},
+				MarketBreadth = new EastmoneyMarketBreadthSnapshot(2200, 1800, 200, 5000m),
+				LimitUpCount = 42,
+				LimitDownCount = 6,
+				BrokenBoardCount = 8,
+				MaxLimitUpStreak = 4
+			};
+
+			var service = new SectorRotationIngestionService(
+				dbContext,
+				client,
+				Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
+				NullLogger<SectorRotationIngestionService>.Instance);
+
+			await service.SyncAsync();
+
+			var recentSync = Assert.Single(DataSourceTracker.GetRecentSyncs());
+			Assert.True(recentSync.SourceHealthy);
+			Assert.False(recentSync.BusinessComplete);
+			Assert.False(recentSync.WasComplete);
+
+			var computation = DataSourceTracker.LastComputation;
+			Assert.NotNull(computation);
+			Assert.True(computation!.SourceHealthy);
+			Assert.False(computation.BusinessComplete);
+			Assert.False(computation.WasComplete);
+		}
+		finally
+		{
+			DataSourceTracker.ResetForTests();
+		}
 	}
 
 	[Fact]
