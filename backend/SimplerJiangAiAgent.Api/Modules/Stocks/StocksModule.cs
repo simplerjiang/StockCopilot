@@ -63,6 +63,8 @@ public sealed class StocksModule : IModule
         services.AddScoped<IStockDataService, StockDataService>();
         services.AddScoped<IStockHistoryService, StockHistoryService>();
         services.AddScoped<IFinancialDataReadService, FinancialDataReadService>();
+        services.AddScoped<IPdfFileQueryService, PdfFileQueryService>();
+        services.AddSingleton<IPdfReparseGateway, HttpPdfReparseGateway>();
         services.AddHttpClient<IStockSearchService, StockSearchService>(client => ConfigureStockHttpClient(client, stockHttpTimeout));
         services.AddScoped<IStockAgentHistoryService, StockAgentHistoryService>();
         services.AddScoped<IStockAgentFeatureEngineeringService, StockAgentFeatureEngineeringService>();
@@ -211,6 +213,101 @@ public sealed class StocksModule : IModule
             return detail is null ? Results.NotFound() : Results.Ok(detail);
         })
         .WithName("GetStockFinancialReportById")
+        .WithOpenApi();
+
+        // ── v0.4.1 §S2：PDF 文件 4 接口 ──
+        financialGroup.MapGet("/pdf-files", (
+            string? symbol,
+            string? reportType,
+            int? page,
+            int? pageSize,
+            IPdfFileQueryService pdfFileQuery) =>
+        {
+            var query = new PdfFileListQuery(
+                Symbol: string.IsNullOrWhiteSpace(symbol) ? null : symbol.Trim(),
+                ReportType: string.IsNullOrWhiteSpace(reportType) ? null : reportType.Trim(),
+                Page: Math.Max(1, page ?? 1),
+                PageSize: Math.Clamp(pageSize ?? 20, 1, 100));
+            return Results.Ok(pdfFileQuery.List(query));
+        })
+        .WithName("ListPdfFiles")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/pdf-files/{id}", (string id, IPdfFileQueryService pdfFileQuery) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+            var detail = pdfFileQuery.GetById(id.Trim());
+            return detail is null ? Results.NotFound() : Results.Ok(detail);
+        })
+        .WithName("GetPdfFileById")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/pdf-files/{id}/content", (string id, HttpContext httpContext, IPdfFileQueryService pdfFileQuery) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+            var resolution = pdfFileQuery.ResolveContent(id.Trim());
+            switch (resolution.Status)
+            {
+                case "found":
+                    var safeName = string.IsNullOrWhiteSpace(resolution.AccessKey) ? "document.pdf" : resolution.AccessKey;
+                    httpContext.Response.Headers["Content-Disposition"] = $"inline; filename=\"{safeName}\"";
+                    return Results.File(
+                        resolution.FullPath!,
+                        contentType: "application/pdf",
+                        fileDownloadName: null,
+                        enableRangeProcessing: true);
+                case "forbidden":
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                default:
+                    return Results.NotFound();
+            }
+        })
+        .WithName("GetPdfFileContent")
+        .WithOpenApi();
+
+        financialGroup.MapPost("/pdf-files/{id}/reparse", async (
+            string id,
+            IPdfReparseGateway gateway,
+            IPdfFileQueryService pdfFileQuery,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+
+            var trimmed = id.Trim();
+            var pre = pdfFileQuery.GetById(trimmed);
+            if (pre is null)
+            {
+                return Results.NotFound();
+            }
+
+            var gatewayResult = await gateway.ReparseAsync(trimmed, ct);
+            if (!gatewayResult.DocumentFound)
+            {
+                return Results.NotFound();
+            }
+            if (gatewayResult.PhysicalFileMissing)
+            {
+                return Results.NotFound();
+            }
+
+            // 重读详情，确保返回最新 stageLogs / parseUnits
+            var detail = pdfFileQuery.GetById(trimmed) ?? pre;
+            var response = new PdfFileReparseResponse(
+                Success: gatewayResult.Success,
+                Error: gatewayResult.Success ? null : gatewayResult.Error,
+                Detail: detail);
+            return Results.Ok(response);
+        })
+        .WithName("ReparsePdfFile")
         .WithOpenApi();
 
         financialGroup.MapPost("/collect/{symbol}", async (string symbol, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>

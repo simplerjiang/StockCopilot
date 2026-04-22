@@ -120,6 +120,14 @@ app.MapPost("/api/pdf-collect/{symbol}", async (string symbol, PdfProcessingPipe
 })
 .WithName("PdfCollect");
 
+// v0.4.1 §S2：单文件重新解析（同步，覆盖 stageLogs，更新 LastReparsedAt）
+app.MapPost("/api/pdf-reparse/{id}", async (string id, IPdfProcessingPipeline pipeline, CancellationToken ct) =>
+{
+    var outcome = await pipeline.ReparseAsync(id, ct);
+    return Results.Ok(outcome);
+})
+.WithName("PdfReparse");
+
 // === 数据查询 API ===
 app.MapGet("/api/reports/{symbol}", (string symbol, FinancialDbContext db) =>
 {

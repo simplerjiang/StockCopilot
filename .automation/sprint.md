@@ -9,303 +9,133 @@
 3. **预存在测试失败必须立项**：复核中发现非本 Story 引入的失败用例，须开独立技术债 Story 跟踪，不允许"已知失败"长期挂在主干。
 4. **`tasks.json` 与 `sprint.md` 关系**：`sprint.md` 是当前 Sprint 唯一权威看板；`tasks.json` 仅作历史任务事件流（append-only），不再用作活跃任务管理。
 
+---
+
 # v0.4.1 Sprint（PDF 原件对照与手动重新解析）
 
 ## Sprint 目标
 
-**让用户在软件内直接看到 PDF 原件，并且能把原件和解析结果并排对照，同时支持手动重新解析。**（来自 [docs/GOAL-v041-pdf-compare-and-reparse.md](../docs/GOAL-v041-pdf-compare-and-reparse.md) §1）
+**让用户在软件内直接看到 PDF 原件，并且能把原件和解析结果并排对照，同时支持手动重新解析。**
 
 ## 核心约束
 
-- **page_start / page_end / block_kind 必须持久化**：PDF 详情持久化模型每个解析单元必须落库 `page_start`（1-based 起始页）/ `page_end`（1-based 结束页）/ `block_kind`（枚举 `narrative_section` / `table` / `figure_caption`）三字段，为 v0.4.3 citation→PDF 跳转铺路。来自 §9.1 决策追加。
-- 不允许 v0.4.1 阶段交付「PDF 详情接口返回的解析单元缺三字段」的实现，这是验收硬条件。
+- **page_start / page_end / block_kind 必须持久化**（§9.1 硬约束）：每个解析单元落库须含三字段（1-based 页码 + 枚举 `narrative_section` / `table` / `figure_caption`），为 v0.4.3 citation→PDF 跳转铺路。
+- 不允许 v0.4.1 阶段交付「PDF 详情接口返回的解析单元缺三字段」的实现。
 
 ## 完成定义
 
 1. 能看原件（软件内嵌 PDF 预览，桌面 + 浏览器双环境兼容）
 2. 能对照（左 PDF 原件 / 右结构化或文本或投票信息双栏）
-3. 能手动重新解析（单文件触发，完成后详情自动刷新）
+3. 能手动重新解析（单文件触发，完成后详情自动刷新，三字段同步更新）
 4. 能定位失败层级（下载 / 提取 / 投票 / 解析 / 落库 5 阶段可视化）
 5. 同一能力在「财报中心」与「股票信息 → 财务报表」两处可用
-6. PDF 详情接口每个解析单元含 `page_start` / `page_end` / `block_kind` 三字段，重新解析后字段刷新（来自 §6 + §9.2）
+6. PDF 详情接口每个解析单元含 `page_start` / `page_end` / `block_kind`，重新解析后字段刷新
 
-## 当前 Stories
+## Stories
 
-### Story V041-S1: 后端 PDF 详情持久化模型 + 解析单元三字段
-- **状态**：DONE
-- **级别**：M
-- **依赖**：无
+### V041-S1: 后端 PDF 详情持久化模型 + 解析单元三字段
+- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`c0d2fb4`
+- 选 LiteDB（与现有 FinancialDbContext 一致），新建 `PdfFileDocument` + `PdfParseUnitBuilder`；page=0 拒收；三字段强校验；PdfProcessingPipeline 接入落库。Worker tests 4→20 全绿，Api.Tests 608/0/0 不变。
+- **风险备注**：V041-DEBT-1 LiteDB BsonMapper.Global 并发 race 已用 [Collection] 串行兜底，建议后续注入私有实例彻底隔离。
+
+### V041-S2: 后端 4 个正式接口 + 阶段日志扩展
+- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`3fd5c4d`
+- 4 接口（list/detail/content/reparse）+ 5 阶段 stageLogs 整体覆盖 + AccessKey SHA256(16)+.pdf；reparse 通过 IHttpClientFactory 代理到 FinancialWorker:5120（5 分钟超时）；content 沙箱化 Path.GetFullPath + StartsWith 校验；6 个 [Fact] 全绿，Api.Tests 614/0/0、FinancialWorker.Tests 20/20，0 回归。
+- **风险备注**：(1) Test Agent NIT — Api `AppRuntimePaths` 多识别 `Database:DataRootPath`，Worker `FinancialWorkerRuntimePaths` 仅看 `SJAI_DATA_ROOT` env，部署时统一前需注意；(2) AccessKey 旧记录在下次写入/reparse 时刷新，无后台批量迁移。
+
+### V041-S3: 前端 FinancialPdfViewer.vue 共享组件
+- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`c0d2fb4`
+- 原生 `<iframe>` 方案（WebView2+Chromium 双端，不引入 pdfjs-dist）；含 loadTimeoutMs 超时兜底、失败下载链接、page 跳转参数；vitest 370→377 全绿，bundle 0 增长。
+- **待接入**：V041-S5 把本组件集成到对照面板。桌面 packaged 真机加载留 V041-S8 验收。
+
+### V041-S4: 前端 FinancialPdfParsePreview + FinancialPdfVotingPanel
+- **状态**：BACKLOG | **级别**：M | **依赖**：V041-S2
 - **验收标准**：
-  - 新建 PDF 详情实体（文件名 / 标题 / 本地路径 / 报告期 / 报告类型 / 提取器 / 投票置信度 / 字段数 / 错误 / 最近解析时间 / 最近重解析时间）+ EF migration
-  - ParseUnit 子模型必含 `page_start` / `page_end` / `block_kind`（枚举 narrative_section / table / figure_caption），PdfPipelineResult 写入并落库
-  - 单元测试覆盖：3 类 block_kind / 跨页区间 / 单页区间 / 缺页降级（page_start=0 拒收）
-- **完成时间**：2026-04-22
-- **commits**：（commit 后回填）
-- **完成说明**：选 LiteDB 作为 PDF 详情持久化（轻量 embedded、无 EF migration 成本），新建 `PdfFileDocument` + `PdfParseUnitBuilder`，三字段 `page_start` / `page_end` / `block_kind` 强校验落库（page=0 拒收），PdfProcessingPipeline 接入；Worker tests 4→20 全绿。
-- **风险/备注**：硬约束来自 §9.1，三字段不允许为空；模型变更涉及现有 `PdfPipelineResult` / `PdfFileResult` 上游兼容性，需同步评估 Worker 写入路径。
+  - `FinancialPdfParsePreview.vue`：按 block_kind 分类渲染解析单元（含 page_start–page_end 锚点），loading/error/空态完整
+  - `FinancialPdfVotingPanel.vue`：展示提取器候选、投票置信度排序、最终采用者
+  - 两组件消费 `GET /pdf-files/{id}` 响应；vitest 覆盖三类 block_kind + 投票排序 + 重解析后 props 刷新
 
-### Story V041-S2: 后端 4 个正式接口 + 阶段日志扩展
-- **状态**：TODO
-- **级别**：M
-- **依赖**：V041-S1
+### V041-S5: 前端 FinancialReportComparePane 双栏对照（财报中心抽屉接入）
+- **状态**：BACKLOG | **级别**：M | **依赖**：V041-S3 + V041-S4
 - **验收标准**：
-  - `GET /api/stocks/financial/pdf-files`（列表，支持 symbol / reportPeriod 过滤分页）
-  - `GET /api/stocks/financial/pdf-files/{id}`（详情，返回模型 + 解析单元数组含三字段）
-  - `GET /api/stocks/financial/pdf-files/{id}/content`（PDF 二进制流，正确 Content-Type 与缓存头）
-  - `POST /api/stocks/financial/pdf-files/{id}/reparse`（同步触发，返回新 detail；阶段日志记录 5 阶段时长与错误）
-  - 单元 + WebApplicationFactory 集成测试覆盖 4 接口的成功 / 不存在 id / 重解析失败路径
-- **风险/备注**：reparse 需要单进程串行保护避免并发重算；PDF content 接口要防 path traversal。
+  - 新建 `FinancialReportComparePane.vue`：左栏 PdfViewer / 右栏可切换三表结构化|文本|投票
+  - `FinancialDetailDrawer.vue` 接入，替换 v0.4.0 PDF 占位区
+  - 「重新解析」按钮触发 reparse，完成后左右两栏自动刷新（page_start/page_end/block_kind 三字段必须更新）
+  - **必须**与「重新采集」按钮在 UI 上明确区分，防混淆
+  - 浏览器 packaged 验收：看原件/切右栏/重解析全流程，console 0 error
 
-### Story V041-S3: 前端 FinancialPdfViewer.vue 共享组件（PDF 内嵌预览）
-- **状态**：DONE
-- **级别**：M
-- **依赖**：V041-S2
+### V041-S6: 前端 股票详情 FinancialReportTab 轻量入口 + 重新解析按钮
+- **状态**：BACKLOG | **级别**：S | **依赖**：V041-S5
 - **验收标准**：
-  - 新建 `FinancialPdfViewer.vue`，封装 PDF 渲染（推荐 pdf.js 或 `<embed>` 兼容评估）
-  - 桌面（WebView2）+ 浏览器双环境验证可加载、翻页、缩放
-  - 暴露 `props: { pdfFileId }` + `emits: ['loaded','error']`，loading / error / 空态完整
-  - vitest 单测覆盖 props 切换 / loading / error；至少一次桌面 packaged 真机加载验证
-- **完成时间**：2026-04-22
-- **commits**：（commit 后回填）
-- **完成说明**：选用原生 `<iframe>` 渲染 PDF（WebView2 + Chromium 内置 PDF viewer 双端可用），不引入 pdfjs-dist 减少 bundle 体积与 packaged 模式 worker 路径风险；props `pdfFileId` + emits `loaded` / `error`，loading / error / 空态完整；vitest 370→377 全绿。桌面 packaged 真机加载留待 V041-S5 接入对照模式时一并验收。
-- **风险/备注**：§7 风险 1 — 桌面与浏览器渲染差异；若选 pdf.js 需评估 bundle 体积与 worker 路径在 packaged 模式下是否可达。
-
-### Story V041-S4: 前端 FinancialPdfParsePreview.vue + FinancialPdfVotingPanel.vue
-- **状态**：BACKLOG
-- **级别**：M
-- **依赖**：V041-S2
-- **验收标准**：
-  - `FinancialPdfParsePreview.vue` 渲染解析单元数组，按 `block_kind` 分类样式（narrative_section / table / figure_caption），显示 `page_start–page_end` 锚点
-  - `FinancialPdfVotingPanel.vue` 展示提取器候选、投票置信度、最终采用者
-  - 两组件能消费 `GET /pdf-files/{id}` 返回结构，loading / error / 空态完整
-  - vitest 覆盖三类 block_kind 渲染 + 投票置信度排序 + 重解析后 props 刷新
-- **风险/备注**：投票面板字段口径需与后端 §5.1 模型对齐，避免前后端字段名漂移。
-
-### Story V041-S5: 前端 FinancialReportComparePane.vue 双栏对照（财报中心抽屉接入）
-- **状态**：BACKLOG
-- **级别**：M
-- **依赖**：V041-S3 + V041-S4
-- **验收标准**：
-  - 新建 `FinancialReportComparePane.vue`，左栏嵌 `FinancialPdfViewer`、右栏切换 结构化三表 / 文本预览 / 投票信息
-  - `FinancialDetailDrawer.vue` 接入对照模式，替换 v0.4.0 「PDF 占位」区
-  - 「重新解析」按钮触发 `POST /pdf-files/{id}/reparse`，完成后自动刷新左右两栏
-  - 浏览器 packaged 验收：财报中心 → 详情抽屉 → 看原件 / 切右栏 / 重解析全流程通跑，console 0 error
-- **风险/备注**：§7 风险 3 — 必须把「重新采集」与「重新解析」按钮在 UI 上明确区分，避免用户混淆是重抓还是重算。
-
-### Story V041-S6: 前端 股票详情 FinancialReportTab 轻量入口 + 重新解析按钮
-- **状态**：BACKLOG
-- **级别**：S
-- **依赖**：V041-S5
-- **验收标准**：
-  - `FinancialReportTab.vue` 在单股票视图新增「查看 PDF 原件 / 对照」入口（轻量版，可调起 ComparePane 或抽屉）
-  - 复用 V041-S5 的对照组件，避免两套实现
-  - 重解析按钮共享 V041-S5 的 reparse 调用与刷新逻辑
+  - `FinancialReportTab.vue` 新增「查看 PDF 原件/对照」入口，调起 ComparePane 或抽屉
+  - 复用 V041-S5 的对照组件和 reparse 调用逻辑，不重复实现
   - vitest 覆盖入口可见性、点击跳转、重解析成功/失败回写
-- **风险/备注**：保持轻量，不要把财报中心的所有筛选/分页搬进股票详情。
 
-### Story V041-S7: 前端 阶段级失败可视化（5 阶段 timeline）
-- **状态**：BACKLOG
-- **级别**：S
-- **依赖**：V041-S2
+### V041-S7: 前端 阶段级失败可视化（5 阶段 timeline）
+- **状态**：BACKLOG | **级别**：S | **依赖**：V041-S2
 - **验收标准**：
-  - 在 ComparePane 或详情抽屉补一条 5 阶段 timeline：下载 / 提取 / 投票 / 解析 / 落库
-  - 每个阶段显示状态（成功 / 失败 / 跳过 / 进行中）+ 耗时 + 失败错误摘要
-  - 数据源对接 V041-S2 阶段日志扩展输出
-  - vitest 覆盖 5 阶段全成功 / 中段失败 / 全失败 3 种快照
-- **风险/备注**：阶段口径要与 Worker 现有日志层对齐，避免 UI 出现「未知阶段」。
+  - 5 阶段 timeline（download/extract/vote/parse/persist），每阶段显示状态+耗时+错误摘要
+  - 数据源对接 V041-S2 stageLogs 字段
+  - vitest 覆盖：5 阶段全成功 / 中段失败 / 全失败 3 种快照
 
-### Story V041-S8: v0.4.1 全链路验收
-- **状态**：BACKLOG
-- **级别**：M
-- **依赖**：V041-S5 + V041-S6 + V041-S7
+### V041-S8: v0.4.1 全链路验收
+- **状态**：BACKLOG | **级别**：M | **依赖**：V041-S5 + V041-S6 + V041-S7
 - **验收标准**：
-  - Test Agent 跑通后端 dotnet test + 前端 vitest 全绿
-  - UI Designer Agent 走查 ComparePane / 阶段 timeline / 股票详情入口
-  - User Representative Agent 模拟交易员视角验收 6 项完成定义
-  - **页码锚点刷新验证**：触发重新解析 → 详情接口返回的解析单元 `page_start` / `page_end` / `block_kind` 全部刷新且非空（§9.2 硬条件）
-  - 桌面 packaged + 浏览器双环境验证 PDF 内嵌预览（§7 风险 1）
-  - 写 v0.4.1 完成报告 + 更新 README.UserAgentTest.md + tasks.json
-- **风险/备注**：若桌面 WebView2 与浏览器 PDF 渲染存在不可调和差异，须在本 Story 内决策是回退方案还是降级支持环境。
+  - Test Agent：dotnet test + vitest 全绿
+  - UI Designer：走查 ComparePane / timeline / 股票详情入口
+  - User Rep：模拟交易员验收 6 项完成定义
+  - **§9.2 页码锚点硬验证**：触发重解析 → 详情接口 parseUnits 的 page_start/page_end/block_kind 全部刷新且非空
+  - 桌面 packaged + 浏览器双环境验证 PDF 内嵌预览
+  - 更新 README.UserAgentTest.md + tasks.json + 写 v0.4.1 完成报告
 
-# v0.4.0 Sprint（已完成 2026-04-22 归档）
+---
 
-## Sprint 目标
+# v0.4.0 Sprint（已完成 2026-04-22）
 
-**v0.4.0 财报中心基础落地**：把现有的财务数据测试工具升级为正式业务页面 `财报中心`，实现采集结果透明化与本地财报数据表格化。是 v0.4.x 路线的第一阶段。
+## 交付摘要
 
-参考路线图：[docs/GOAL-v040-financial-report-roadmap.md](../docs/GOAL-v040-financial-report-roadmap.md)
-参考详细计划：[docs/GOAL-v040-financial-center-foundation.md](../docs/GOAL-v040-financial-center-foundation.md)
+| Story | Commit | 一句话说明 |
+|-------|--------|-----------|
+| V040-S1 | a911e33 | 财报列表分页+详情接口，支持筛选/排序/分页 |
+| V040-S2 | 6f5f1aa/fcefd62/0dddb5b | 采集结果透明化后端，新增 reportPeriod/sourceChannel/fallbackReason 等 6 字段 |
+| V040-S3 | 3597ada/807bdf6/8e17f8b/fce6408 | 财报中心前端骨架，UI Designer 98/100 |
+| V040-S4 | 96d12a6 | 前端接入新字段+渠道Tag着色+筛选区hint文案优化 |
+| V040-S5 | e187f8c | 详情抽屉轻量版，三表概览+重新采集+PDF占位 |
+| V040-S6 | e7f278f | 全链路验收，R1 REJECT→R2 PASS 87/100（B-1字典/B-2keyword/B-3版本号修复）|
+| V040-DEBT-1 | 9aa0230 | 修复 LocalFact 14 个失败用例 |
+| V040-DEBT-2 | b67584b | 修复前端 10 个预存失败用例 |
+| V040-DEBT-3 | aee132c | 引入 WebApplicationFactory 集成测试基础设施 |
+| V040-S6-FU-1 D-1 | 5ae089f | 修复 000001 名称误显示为上证指数 |
 
-## 当前 Stories
+## 版本结论
 
-### Story V040-S1: 后端财报列表分页查询接口
-- **状态**：DONE
-- **级别**：M
-- **验收标准**：
-  - 新增 `GET /api/stocks/financial/reports?symbol=&reportType=&startDate=&endDate=&page=&pageSize=&sort=` 分页接口
-  - 新增 `GET /api/stocks/financial/reports/{id}` 详情接口（返回三表概览 + 元数据）
-  - 排序支持 `reportDate desc/asc`、`updatedAt desc/asc`
-  - 分页响应包含 `total / pageSize / page / items`
-  - 单元测试覆盖：空集 / 单页 / 多页 / 筛选组合 / 不存在的 id
-- **依赖**：无
-- **完成时间**：2026-04-22
-- **commit**：`a911e33`（含 V040-S1 实现 + 12 单元测试）
-- **遗留 NIT（待本 Sprint 内修完）**：
-  - `MapListItem` 用 `default(DateTime)` 序列化为 `0001-01-01`，需改为 nullable 或显式 fallback（已确认在 V040-DEBT-1 阶段同步修复，DTO 已是 DateTime?，MapListItem 走 TryGetDateTime null 兜底，回归测试 ListReports_WhenCollectedAtMissing_ReturnsNull 覆盖）
-  - `ParseSort` 静默降级未识别字段无日志（已修，commit 831c7c8）
-  - 缺 WebApplicationFactory `[AsParameters]` 集成测试（V040-S2 未补，留待 V040-DEBT 或后续 story）。仓库目前未引入 Microsoft.AspNetCore.Mvc.Testing，单独立 V040-DEBT-3 跟踪，本次跳过。
+User Rep PASS 87/100；全产品巡检 CONDITIONAL_PASS 65/100（情绪轮动/推荐模块待修）。v0.4.0 财报中心子模块已发布，产品级 P0/P1 归 v0.4.4 backlog。
 
-### Story V040-DEBT-3: 引入 WebApplicationFactory 集成测试基础设施
-- **状态**：DONE
-- **级别**：S
-- **验收标准**：在 `SimplerJiangAiAgent.Api.Tests` 引入 `Microsoft.AspNetCore.Mvc.Testing` + 1 个 `[AsParameters]` 绑定 case 覆盖 `GET /api/stocks/financial/reports`。
-- **依赖**：无
-- **完成时间**：2026-04-22
-- **commits**：`aee132c`
-- **完成说明**：引入 `Microsoft.AspNetCore.Mvc.Testing 8.0.16`；`Program.cs` 末尾追加 `public partial class Program {}` 以暴露入口；新增 `FinancialReportsEndpointTests.cs` 通过 Stub 替换 `IFinancialDataReadService` 隔离外部依赖；新增 1 个集成测试 `GetFinancialReports_WithFullQuery_BindsParametersAndReturns200`；后端 dotnet test 608/0/0 全绿。
+---
 
-### Story V040-S2: 采集结果透明化（后端）
-- **状态**：DONE（commits: 6f5f1aa / fcefd62 / 0dddb5b）
-- **级别**：S
-- **验收标准**：
-  - `/api/stocks/financial/collect/{symbol}` 响应增加：`reportPeriod / reportTitle / sourceChannel / fallbackReason / pdfSummary`
-  - 同字段落库到 `collection_logs`
-  - 替换"只报数量"的旧响应格式（保持向后兼容字段，但补齐新字段）
-  - 单元测试覆盖：成功 / 降级 / 失败 / PDF 补充触发 4 个路径
-- **依赖**：无
-- **完成说明**：3 cycles 完成，607 + 4 单测全绿；HTTP 响应含 11 原字段 + 6 完整新字段 + 5 友好别名。
+## Backlog（v0.4.1+ 待排）
 
-### Story V040-S3: 财报中心前端页面骨架
-- **状态**：DONE（commits: 3597ada / 807bdf6 / 8e17f8b / fce6408）
-- **级别**：M
-- **验收标准**：
-  - 新增路由 `/financial-center` 与左侧导航入口
-  - 表格列：股票代码 / 名称 / 报告期 / 类型 / 来源渠道 / 采集时间 / 操作
-  - 筛选区：股票多选 / 报告期范围 / 报告类型多选 / 关键词
-  - 分页 + 排序（点击表头切换）
-  - 详情抽屉入口（详情内容由 V040-S5 实现）
-  - 浏览器验收（Browser MCP）：实际筛选/分页/排序操作 + 控制台无错误
-- **依赖**：V040-S1
-- **实现说明**：路由形态为 `?tab=financial-center`（与现有 `App.vue` 体系一致；未引入 vue-router）。
-- **完成说明**：UI Designer 二轮走查 98/100；vitest 52 cases / Browser MCP 8 cases (7 PASS / 1 SKIP 数据不足)；console.error=0；前端 build 0 error；后端无回归。
-- **遗留 backlog**：V040-S3-FU-1（emweb/datacenter/ths 实采样本到位后渠道 tag 抽样校色；「未分类/Unknown」pill 设计待 V040-S6 数据治理决策）。
+- **V040-S6-FU-1**（优先级：高）：财报中心「毛利润」字段缺失。建议方案：(a) 后端补算 `营业总收入 - 营业总成本` 落库字段；(b) 前端 `pickFieldValue` 支持表达式 fallback 临时兜底。ths 渠道已确认无 `*营业总成本` 字段，需后端先补。
+- **V040-S6-FU-2**（优先级：高）：后端 `GET /api/stocks/financial/reports` keyword 参数完全无效，目前前端二次过滤兜底仅限 100 条。需后端实现 symbol/name 模糊匹配，移除前端 pageSize 临时拉到 100 的逻辑。
+- **V040-S3-FU-1**（优先级：中）：渠道 Tag 配色在表格列与采集面板/抽屉不统一（ths 表格绿、面板紫）。建议抽单一 `SOURCE_CHANNEL_STYLE` 作为全局 token，两处复用。至少需 emweb/datacenter/ths/pdf 四渠道真实样本到位后对比定色。
+- **V040-DEBT-4**（候选）：后端 `StockSearchService` 无排序无市场过滤，腾讯 s3 API 返回 sh000001+sz000001 时下游裸消费 data[0] 会踩坑。建议后端补 market 优先级排序：沪深 A > 指数 > 其他。前端 `pickStockMatch` 已做兜底，但其他消费者（股票详情页等）仍有风险。
+- **V041-DEBT-1**（优先级：中）：`FinancialDbContext` 使用 `BsonMapper.Global` 全局单例，并发测试存在 race 风险（当前用 `[Collection]` 串行兜底）。建议注入私有 `BsonMapper` 实例，彻底隔离测试与生产路径。
+- **V041-DEBT-2**（优先级：低）：Api `AppRuntimePaths` 与 FinancialWorker `FinancialWorkerRuntimePaths` 的 DataRoot 解析逻辑不一致（前者多识别 `Database:DataRootPath` 配置项）。当前默认走 LOCALAPPDATA 无影响；若未来部署用配置文件覆盖根目录，可能让 Api 沙箱误判 PDF 路径越权。建议统一到一个 RuntimePaths helper。
 
-### Story V040-S4: 采集结果透明化（前端 UI 接入）
-- **状态**：DONE
-- **级别**：S
-- **验收标准**：
-  - `FinancialDataTestPanel.vue` 与 `FinancialReportTab.vue` 显示新字段
-  - 替换"只报数量"展示
-  - 降级原因用 Tag 着色（emweb/datacenter/ths/pdf 不同色）
-  - 单元测试 + Browser 抽测
-- **依赖**：V040-S2
-- **完成时间**：2026-04-22
-- **commits**：`96d12a6`
-- **完成说明**：3 文件改动 + 1 新建公共 util；vitest 与本 Story 相关用例全绿（sourceChannelTag 10/10、FinancialFilterBar 13/13、FinancialReportTab 20/20）；frontend build 0 error；浏览器验收并入 V040-S6 一起做。同时修复财报中心筛选区 4 处面向开发者的 hint 文案，改为面向用户口吻。
-- **遗留 backlog**：渠道 → Tag 颜色与 V040-S3 表格内 `SOURCE_CHANNEL_STYLE` 不完全一致（ths 在表格走绿、在采集面板走紫），合并到 V040-S3-FU-1 一起处理。
+## v0.4.4 Backlog（产品级 P0/P1，非财报路线图）
 
-### Story V040-S5: 详情抽屉（轻量版，不含 PDF 预览）
-- **状态**：DONE
-- **级别**：S
-- **验收标准**：
-  - 抽屉显示：报告期 / 标题 / 来源 / 采集时间 / 三表概览（前 5 个关键字段）/ 元数据
-  - "重新采集"按钮触发 `POST /api/stocks/financial/collect/{symbol}`
-  - PDF 预览不在本 Story（v0.4.1 实现）
-  - 占位区域写明"PDF 原件预览将在 v0.4.1 提供"
-- **依赖**：V040-S1, V040-S3
-- **完成时间**：2026-04-22
-- **commits**：`e187f8c`
-- **完成说明**：新建 `financialApi.js`（`fetchFinancialReportDetail` / `recollectFinancialReport`，真实路径 `/api/stocks/financial/reports/{id}` 与 `/api/stocks/financial/collect/{symbol}`，spec 中描述的 `/api/financial/reports/{id}` 为历史笔误）；新建 `financialFieldDictionary.js` 三表业务白名单各 5 字段 + 中文 label + fallback 链；重写 `FinancialDetailDrawer.vue`（500 行）覆盖标题 / loading / error / 重试 / 元数据 dl（含 sourceChannelTag）/ 三表概览 / sticky 重新采集 + 关闭 / PDF 占位；vitest 343 / 0 / 2 全绿（新增 30 cases）；frontend build 0 error。
-- **浏览器验收**：延后到 V040-S6
+> 来自 v0.4.0 全产品巡检（CONDITIONAL_PASS 65/100）。待 v0.4.1~v0.4.3 完成后排期。
 
-### Story V040-S6: v0.4.0 全链路验收
-- **状态**：DONE
-- **级别**：M
-- **验收标准**：
-  - Test Agent 跑通后端单元测试 + 前端 vitest
-  - UI Designer Agent 走查财报中心页面与详情抽屉
-  - User Representative Agent 模拟交易员视角验收
-  - 更新 `README.UserAgentTest.md` 增加财报中心验收路径
-  - 更新 `.automation/tasks.json` 记录 v0.4.0 完成
-  - 写 v0.4.0 完成报告到 `.automation/reports/`
-- **依赖**：V040-S1 ~ V040-S5 全部 DONE
-- **完成时间**：2026-04-22
-- **commits**：`e7f278f`
-- **完成说明**：R1 REJECT 35/100（B-1 三表全空、B-2 keyword 失效、B-3 版本号），最小改动闭环 — 前端字典扩中文键 + `*` 前缀剥离、keyword 前端二次过滤（pageSize 临时拉到 100，page 锁 1）、版本号 0.3.4→0.4.0；R2 PASS 87/100；后端测试 608/0/0，前端 vitest 370/0/2，packaged 重打包成功并通过浏览器验收。
-- **遗留 backlog**：
-  - V040-S6-FU-1（毛利润字段，建议后端补 `*营业总成本` 字段或前端用 `revenue - operatingCost` 表达式补算）
-  - V040-S6-FU-2（后端 keyword 全文匹配，超 100 条避免漏）
-  - D-2 渠道 Tag 配色仍归 V040-S3-FU-1
-
-## 技术债 Stories（与 v0.4.0 主线并行）
-
-### Story V040-DEBT-1: 修复 LocalFactAiEnrichmentServiceTests 14 个失败用例
-- **状态**：DONE（commit: 9aa0230）
-- **级别**：S（预估 1.5–2 小时）
-- **背景**：Bug-4 修复 commit `a616fe3` 引入 `ProcessMarketPendingAsync` RequestPath 模式与新排序逻辑，但 6 个测试方法（含 Theory 共 14 案例）的期望值未同步。
-- **失败用例**：
-  - `ShouldKeepFailureExplainability_WhenRepairStillFails`
-  - `ShouldExposeNoProgressStopReason_WhenArchiveSweepAppliesNothing`
-  - `ShouldParseBatchResponseWithTrailingExplanation`
-  - `ShouldBoundSelectionToLiveRequestBudget`
-  - `ShouldEmitParseWarningAndKeepPending_WhenBatchResponseIsInvalid`
-  - `ShouldPrioritizeCurrentCrawlRowsOverOlderBacklog`
-- **验收标准**：
-  - 14 个用例全部 PASS
-  - 不修改生产代码（除非确认是回归 bug）
-  - 单独跑 + 全量跑都 PASS
-- **依赖**：无（独立技术债）
-- **优先级**：在阻塞 V040-S2 复核信号前必须完成
-- **完成说明**：2026-04-22 修复，全量 607 测试 0 失败。
-
-### Story V040-DEBT-2: 修复 10 个预存前端失败用例
-- **状态**：DONE
-- **级别**：S
-- **验收标准**：
-  - 修复 10 个预存前端失败用例（MarketSentimentTab.spec.js 8 个、StockCharts.spec.js 1 个、TradingWorkbench.spec.js 1 个）
-  - 不改生产代码
-- **完成时间**：2026-04-22
-- **commits**：`b67584b`
-- **完成说明**：全部为测试期望未跟上重构的 A 类问题 + 1 处 echarts mock 缺 API 的 C 类问题；vitest 316 passed / 0 failed / 2 skipped；未发现生产代码回归；未引入新依赖。
-- **PM Note**：TradingWorkbench 在 isRunning 状态下保留输入框、把发送按钮换成取消按钮是有意设计，建议 PM 后续在产品文档固化。MarketSentimentTab.spec.js 部分细粒度文案断言因子组件拆分被弱化，可后续补回。
-
-### Story V040-S6-FU-1: 修复 D-1 — 财报中心 000001 名称误显示为上证指数
-- **状态**：DONE
-- **级别**：S
-- **背景**：UI Designer 走查发现 `000001` 在表格名称列显示为「上证指数」（应为「平安银行」）。根因：腾讯 `s3` 搜索 API 同时返回 `sh000001`（指数）与 `sz000001`（平安银行），前端按 `code === sym` 取首条命中指数。
-- **验收标准**：
-  - 新建 `frontend/src/modules/financial/symbolMarketUtil.js`：`inferMarketFromCode` + `pickStockMatch`
-  - `useFinancialCenterQuery.js` 的两处名称解析切换到 `pickStockMatch`，优先级链：完整 symbol 严格 → code+market 一致 → code 兜底 → 首条
-  - 单测 17 cases 覆盖各前缀分支与关键去歧义场景
-  - 浏览器 packaged 验证：000001 → 平安银行 / 600519 → 贵州茅台 / console 0 error
-- **完成时间**：2026-04-22
-- **commits**：（commit 后回填）
-- **完成说明**：仅前端选择逻辑修复，未触碰后端 `/api/stocks/search` 排序问题（影响面更广，留独立 backlog）。vitest 360/0/2，重打包 + packaged 启动 + 浏览器 2 轮回归全部通过。
-- **遗留 backlog**：后端 `StockSearchService` 无排序/无市场过滤，其他消费者（如股票详情页）若直接消费 `data[0]` 仍可能踩坑，建议另立 V040-DEBT-4 跟踪后端搜索排序。
+- **V044-P0-A**：13-Agent 推荐「完成」状态语义错乱。20 条历史唯一「完成」实为失败 694 秒，Agent 反问用户。排查入口：`StockRecommendationHub` session 状态写入逻辑，确认「失败」与「完成」分支是否共用路径。修法：失败绝不标完成，需区分「完成/失败/用户中止」三态。
+- **V044-P0-B**：情绪轮动核心榜单全线「数据不可用」。排查入口：`MarketSentimentSyncService` + `BoardSnapshot` ingestion 链路；先确认 `board_ranking` 集合是否真为空，再看 `MarketSentimentTab` 前端是否有空态短路。至少补最近一次有效快照时间戳作为空态提示。
+- **V044-P1-C**：股票详情基本面 3 字段空（流通市值/股东户数/所属板块）。核对腾讯/东财字段名与单位换算，缺失走 `--` 兜底。
+- **V044-P1-D**：主力净流入跨页数值矛盾（-69.22 亿 vs -0.0 亿）。疑单位换算 bug，建议抽 `formatMoneyYi(value, sourceUnit)` 统一路径后排查。
+- **V044-P1-E**：Worker 运行中但日志面板 0 条。核查 Serilog sink → SignalR/SSE → 前端订阅链路，确认 sink 未被环境变量禁用。
+- **V044-P1-F**：失败态按钮文案「重新连接」改为「重新推荐」或「再试一次」，语义对用户透明。
+- **V044-NIT**：N-1 财报样本仅 ths 单渠道 / N-2 财报字段单位混乱（万/亿/元无标识）/ N-3 资讯卡英文未译 / N-4「市场数据加载中」常驻。批量小修。
 
 ## 历史归档
 
 - v0.3.2 散户热度反向指标 → `/memories/repo/sprints/v0.3.2-retail-heat-contrarian.md`
 - v0.3.2 S7 市场数据不可用恢复（开发完成，盘中验收 4/21–4/23 独立跟踪）
 - `tasks.json` 自 2026-04-22 起仅作 append-only 历史事件流，不再用作活跃任务管理
-
-## Backlog（v0.4.1+ 待排）
-
-- **V040-S6-FU-1**：财报中心详情抽屉「毛利润」字段缺失。后端 ths 渠道未返回 `grossProfit`，也未提供 `*营业总成本`。建议两条路二选一：(a) 后端在采集后补算 `revenue - 营业总成本` 落库；(b) 前端 `pickFieldValue` 支持表达式 fallback。优先级 v0.4.1 高。
-- **V040-S6-FU-2**：财报中心关键词搜索后端不生效，目前由前端二次过滤兜底（关键词模式下 pageSize 临时拉到 100、page 锁 1），匹配总数超过 100 时存在漏。需要后端在 `GET /api/stocks/financial/reports` 支持 `keyword` 模糊匹配 `symbol`/`name`。优先级 v0.4.1 高。
-- **V040-S3-FU-1**：财报中心渠道 Tag 配色在表格列与采集面板/抽屉不统一（`ths` 在表格走绿、在采集面板走紫；`未分类/Unknown` pill 设计未定）。优先级 v0.4.1 中。
-- **V040-DEBT-4**（候选）：后端 `StockSearchService` 无排序无市场过滤，腾讯 `s3` API 同时返回 `sh000001`（指数）+ `sz000001`（平安银行）时下游消费者按 `data[0]` 取首条会踩坑。V040-S6-FU 已在前端 `useFinancialCenterQuery` 加 `pickStockMatch` 兜底，但其他消费者（股票详情页等）仍裸消费。建议 v0.4.1 在后端补 market 过滤或显式排序。
-- **V041-DEBT-1**：`FinancialDbContext` 注入私有 `BsonMapper` 实例隔离测试，避免 LiteDB `BsonMapper.Global` 全局并发 race。当前 V041-S1 实现共享 `BsonMapper.Global`，并发跑 Worker tests 时存在映射注册竞态风险。优先级 v0.4.1 中。
-
-## v0.4.4 Backlog（产品级 P0/P1 修复，非财报路线图）
-
-> 来源：`.automation/reports/v0.4.0-product-walk-2026-04-22.md`（CONDITIONAL_PASS 65/100）。
-> 非 v0.4.x 财报路线图，待 v0.4.1~v0.4.3 完成后排期，不打断现有节奏。
-
-- **V044-P0-A**：13-Agent 推荐「完成」状态语义错乱。20 条历史唯一「完成」实为失败 694 秒，详情页 Agent 反问用户。建议分清「完成 / 失败 / 用户中止」三态，失败绝不可标记完成。影响：用户对推荐模块信任被破坏。
-- **V044-P0-B**：情绪轮动核心榜单全线「数据不可用」。综合强度 0.0、扩散/持续指数空、所有维度榜单空。先排查上游 `BoardSnapshot` 是否真为空，再决定是数据缺失还是前端兜底缺失；至少给空态文案 + 最近一次有效快照时间。
-- **V044-P1-C**：股票详情基本面 3 字段空（流通市值 / 股东户数 / 所属板块）。核对腾讯/东财字段名与单位，缺失走 `--` 兜底。
-- **V044-P1-D**：主力净流入跨页矛盾，股票信息页 -69.22 亿 vs 情绪轮动页 -0.0 亿，疑单位换算 bug。抽统一 `formatMoneyYi(value, sourceUnit)`，跨页强制同路径。
-- **V044-P1-E**：Worker 运行 17 分钟但日志面板 0 条。核对 Serilog sink → SignalR/SSE → 前端订阅链路，确认 sink 没被环境变量关掉。
-- **V044-P1-F**：失败按钮「重新连接」语义不友好（实际语义是「重新生成推荐」），文案改为「重新推荐」或「再试一次」。
-- **V044-NIT**：N-1 财报样本仅 ths 单渠道 / N-2 财报单位混乱（万/亿/元）/ N-3 资讯卡英文未译 / N-4「市场数据加载中」常驻。批量小修。

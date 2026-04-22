@@ -99,4 +99,32 @@ public class PdfFileDocument
 
     /// <summary>解析单元数组（chunk / section / table），含三字段。</summary>
     public List<PdfParseUnit> ParseUnits { get; set; } = new();
+
+    /// <summary>
+    /// 阶段日志（v0.4.1 §5.3）。覆盖 5 阶段：download / extract / vote / parse / persist。
+    /// 每次解析或重新解析会整体覆盖该数组（仅保留最近一次）。
+    /// </summary>
+    public List<PdfStageLog> StageLogs { get; set; } = new();
+}
+
+/// <summary>
+/// PDF 处理管线阶段日志（v0.4.1 §5.3）。
+/// 每条记录某一阶段（download/extract/vote/parse/persist）的执行情况。
+/// </summary>
+public class PdfStageLog
+{
+    /// <summary>阶段名：download / extract / vote / parse / persist。</summary>
+    public string Stage { get; set; } = string.Empty;
+
+    /// <summary>状态：success / failed / skipped。</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>耗时（毫秒）。skipped 阶段为 0。</summary>
+    public long ElapsedMs { get; set; }
+
+    /// <summary>错误摘要（success/skipped 阶段为 null）。</summary>
+    public string? Message { get; set; }
+
+    /// <summary>记录时间（UTC）。</summary>
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 }

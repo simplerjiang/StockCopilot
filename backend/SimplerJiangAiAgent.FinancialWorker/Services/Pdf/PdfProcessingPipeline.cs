@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using LiteDB;
 using SimplerJiangAiAgent.FinancialWorker.Data;
 using SimplerJiangAiAgent.FinancialWorker.Models;
 using Microsoft.Extensions.Logging;
@@ -5,10 +7,21 @@ using Microsoft.Extensions.Logging;
 namespace SimplerJiangAiAgent.FinancialWorker.Services.Pdf;
 
 /// <summary>
-/// PDF 完整处理管线: 下载 → 提取 → 投票 → 解析 → 存储
+/// PDF 完整处理管线: 下载 → 提取 → 投票 → 解析 → 存储。
+/// v0.4.1 §S2：每次处理都会构造 5 阶段（download/extract/vote/parse/persist）<see cref="PdfStageLog"/> 并整体覆盖到 <see cref="PdfFileDocument.StageLogs"/>。
 /// </summary>
 public class PdfProcessingPipeline : IPdfProcessingPipeline
 {
+    private const string StageDownload = "download";
+    private const string StageExtract = "extract";
+    private const string StageVote = "vote";
+    private const string StageParse = "parse";
+    private const string StagePersist = "persist";
+
+    private const string StatusSuccess = "success";
+    private const string StatusFailed = "failed";
+    private const string StatusSkipped = "skipped";
+
     private readonly CninfoClient _cninfoClient;
     private readonly PdfVotingEngine _votingEngine;
     private readonly FinancialTableParser _tableParser;
@@ -35,7 +48,7 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
     public async Task<PdfPipelineResult> ProcessAsync(string symbol, int maxReports = 3, CancellationToken ct = default)
     {
         var result = new PdfPipelineResult { Symbol = symbol };
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
 
         try
         {
@@ -99,93 +112,298 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
         return result;
     }
 
+    /// <inheritdoc />
+    public Task<PdfReparseOutcome> ReparseAsync(string id, CancellationToken ct = default)
+    {
+        var outcome = new PdfReparseOutcome();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            outcome.DocumentFound = false;
+            outcome.Error = "id 不能为空";
+            return Task.FromResult(outcome);
+        }
+
+        ObjectId objectId;
+        try
+        {
+            objectId = new ObjectId(id);
+        }
+        catch
+        {
+            outcome.DocumentFound = false;
+            outcome.Error = "id 不是合法的 LiteDB ObjectId";
+            return Task.FromResult(outcome);
+        }
+
+        var doc = _db.PdfFiles.FindById(objectId);
+        if (doc == null)
+        {
+            outcome.DocumentFound = false;
+            return Task.FromResult(outcome);
+        }
+
+        outcome.DocumentFound = true;
+        outcome.Symbol = doc.Symbol;
+        outcome.FileName = doc.FileName;
+        outcome.LocalPath = doc.LocalPath;
+
+        if (string.IsNullOrWhiteSpace(doc.LocalPath) || !File.Exists(doc.LocalPath))
+        {
+            outcome.PhysicalFileMissing = true;
+            outcome.Success = false;
+            outcome.Error = "PDF 物理文件丢失";
+
+            // 仍然刷新 stageLogs（download=failed），让前端能看到失败原因
+            var now = DateTime.UtcNow;
+            var stageLogs = new List<PdfStageLog>
+            {
+                new() { Stage = StageDownload, Status = StatusFailed, ElapsedMs = 0, Message = "本地 PDF 文件丢失", Timestamp = now },
+                new() { Stage = StageExtract, Status = StatusSkipped, ElapsedMs = 0, Message = null, Timestamp = now },
+                new() { Stage = StageVote, Status = StatusSkipped, ElapsedMs = 0, Message = null, Timestamp = now },
+                new() { Stage = StageParse, Status = StatusSkipped, ElapsedMs = 0, Message = null, Timestamp = now },
+                new() { Stage = StagePersist, Status = StatusSkipped, ElapsedMs = 0, Message = null, Timestamp = now },
+            };
+            doc.LastReparsedAt = now;
+            doc.LastError = outcome.Error;
+            doc.StageLogs = stageLogs;
+            try { _db.PdfFiles.Update(doc); }
+            catch (Exception ex) { _logger.LogError(ex, "[PDF] 物理文件丢失场景下回写 PdfFileDocument 失败: {Id}", id); }
+            return Task.FromResult(outcome);
+        }
+
+        return ReparseInternalAsync(doc, outcome, ct);
+    }
+
+    private async Task<PdfReparseOutcome> ReparseInternalAsync(PdfFileDocument doc, PdfReparseOutcome outcome, CancellationToken ct)
+    {
+        var pdf = new DownloadedPdf
+        {
+            FilePath = doc.LocalPath,
+            Symbol = doc.Symbol,
+            Announcement = new CninfoAnnouncement
+            {
+                Title = doc.Title ?? string.Empty,
+                PublishTime = TryParseReportPeriod(doc.ReportPeriod) ?? DateTime.UtcNow,
+            }
+        };
+
+        try
+        {
+            var fileResult = await ProcessSinglePdfAsync(doc.Symbol, pdf, ct);
+            outcome.Success = fileResult.Success;
+            outcome.Error = fileResult.Error;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // 兜底：ProcessSinglePdfAsync 已经在每阶段 try-catch 不应抛出，但留个保险
+            _logger.LogError(ex, "[PDF] Reparse 主流程异常: {Id}", doc.Id);
+            outcome.Success = false;
+            outcome.Error = ex.Message;
+        }
+
+        return outcome;
+    }
+
+    private static DateTime? TryParseReportPeriod(string? reportPeriod)
+    {
+        if (string.IsNullOrWhiteSpace(reportPeriod)) return null;
+        return DateTime.TryParse(reportPeriod, out var dt) ? dt : null;
+    }
+
     private async Task<PdfFileResult> ProcessSinglePdfAsync(string symbol, DownloadedPdf pdf, CancellationToken ct)
     {
         var fileName = Path.GetFileName(pdf.FilePath);
         _logger.LogDebug("[PDF] 正在处理: {File}", fileName);
 
-        // 三路提取 + 投票
-        var votingResult = await _votingEngine.ExtractAndVoteAsync(pdf.FilePath, ct);
-        if (votingResult.Winner == null)
+        var stageLogs = new List<PdfStageLog>();
+        PdfVotingResult? votingResult = null;
+        ParsedFinancialStatements? parsed = null;
+        List<PdfParseUnit> parseUnits = new();
+        PdfFileResult outcome;
+
+        // ── Stage 1: download ──
+        // 在 ProcessSinglePdfAsync 进入时，PDF 已位于本地（DownloadRecentReportsAsync 或 ReparseAsync 提供）。
+        // 此阶段做存在性校验，并标记 status；缺失则后续阶段 skipped。
+        var downloadOk = TryRunStage(stageLogs, StageDownload, () =>
         {
-            var failure = new PdfFileResult
+            if (string.IsNullOrWhiteSpace(pdf.FilePath) || !File.Exists(pdf.FilePath))
+                throw new FileNotFoundException("PDF 物理文件不存在", pdf.FilePath);
+            return "已存在本地";
+        });
+
+        if (!downloadOk)
+        {
+            AppendSkipped(stageLogs, StageExtract, StageVote, StageParse, StagePersist);
+            outcome = new PdfFileResult
+            {
+                FileName = fileName,
+                Success = false,
+                Error = "PDF 物理文件不存在",
+            };
+            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+            return outcome;
+        }
+
+        // ── Stage 2: extract（含三路提取，时间归到此阶段） ──
+        var extractOk = await TryRunStageAsync(stageLogs, StageExtract, async () =>
+        {
+            votingResult = await _votingEngine.ExtractAndVoteAsync(pdf.FilePath, ct);
+            if (votingResult.Winner == null)
+                throw new InvalidOperationException("三路提取均失败");
+            return $"extractor={votingResult.Winner.ExtractorName}";
+        });
+
+        if (!extractOk || votingResult == null || votingResult.Winner == null)
+        {
+            AppendSkipped(stageLogs, StageVote, StageParse, StagePersist);
+            outcome = new PdfFileResult
             {
                 FileName = fileName,
                 Success = false,
                 Error = "三路提取均失败",
-                VotingConfidence = votingResult.Confidence.ToString()
+                VotingConfidence = votingResult?.Confidence.ToString(),
             };
-            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed: null, parseUnits: new(), failure);
-            return failure;
+            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+            return outcome;
         }
 
-        // 解析财务表格
-        var parsed = _tableParser.Parse(votingResult.Winner);
-        if (!parsed.HasData)
+        // ── Stage 3: vote（投票决策已在 ExtractAndVoteAsync 中完成，这里只记录结果） ──
+        TryRunStage(stageLogs, StageVote, () => $"confidence={votingResult.Confidence}");
+
+        // ── Stage 4: parse ──
+        var parseOk = TryRunStage(stageLogs, StageParse, () =>
         {
-            var failure = new PdfFileResult
+            parsed = _tableParser.Parse(votingResult.Winner!);
+            if (!parsed.HasData)
+                throw new InvalidOperationException("PDF 文本中未找到可解析的财务数据");
+            return $"fields={parsed.BalanceSheet.Count + parsed.IncomeStatement.Count + parsed.CashFlowStatement.Count}";
+        });
+
+        if (!parseOk || parsed == null || !parsed.HasData)
+        {
+            AppendSkipped(stageLogs, StagePersist);
+            outcome = new PdfFileResult
             {
                 FileName = fileName,
                 Success = false,
                 Error = "PDF 文本中未找到可解析的财务数据",
                 VotingConfidence = votingResult.Confidence.ToString(),
-                ExtractorUsed = votingResult.Winner.ExtractorName
+                ExtractorUsed = votingResult.Winner!.ExtractorName,
             };
-            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits: new(), failure);
-            return failure;
+            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+            return outcome;
         }
 
-        // 存储到 LiteDB (priority=0，低于 API 数据)
+        // ── Stage 5: persist（写 financial_reports；pdf_files 在 finally 落） ──
         var reportDate = parsed.ReportDate ?? pdf.Announcement.PublishTime.ToString("yyyy-MM-dd");
-        var report = new FinancialReport
+
+        var persistOk = TryRunStage(stageLogs, StagePersist, () =>
         {
-            Symbol = symbol,
-            ReportDate = reportDate,
-            ReportType = parsed.ReportType,
-            BalanceSheet = parsed.BalanceSheet,
-            IncomeStatement = parsed.IncomeStatement,
-            CashFlow = parsed.CashFlowStatement,
-            SourceChannel = "pdf",
-            CollectedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
+            var report = new FinancialReport
+            {
+                Symbol = symbol,
+                ReportDate = reportDate,
+                ReportType = parsed.ReportType,
+                BalanceSheet = parsed.BalanceSheet,
+                IncomeStatement = parsed.IncomeStatement,
+                CashFlow = parsed.CashFlowStatement,
+                SourceChannel = "pdf",
+                CollectedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            SaveIfNoBetterData(report);
+            return "saved";
+        });
 
-        SaveIfNoBetterData(report);
-
-        var success = new PdfFileResult
+        outcome = new PdfFileResult
         {
             FileName = fileName,
-            Success = true,
+            Success = persistOk,
+            Error = persistOk ? null : "财报数据落库失败",
             ReportDate = reportDate,
             ReportType = parsed.ReportType,
             VotingConfidence = votingResult.Confidence.ToString(),
-            ExtractorUsed = votingResult.Winner.ExtractorName,
+            ExtractorUsed = votingResult.Winner!.ExtractorName,
             FieldCount = parsed.BalanceSheet.Count + parsed.IncomeStatement.Count + parsed.CashFlowStatement.Count
         };
 
         // v0.4.1 §5.1 + §9.1：构造解析单元并落 pdf_files 集合（含 page_start / page_end / block_kind）。
-        var parseUnits = PdfParseUnitBuilder.Build(votingResult.Winner, parsed);
-        UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, success);
+        parseUnits = PdfParseUnitBuilder.Build(votingResult.Winner!, parsed);
+        UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
 
-        return success;
+        return outcome;
+    }
+
+    private bool TryRunStage(List<PdfStageLog> logs, string stage, Func<string?> action)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var msg = action();
+            sw.Stop();
+            logs.Add(new PdfStageLog { Stage = stage, Status = StatusSuccess, ElapsedMs = sw.ElapsedMilliseconds, Message = msg, Timestamp = DateTime.UtcNow });
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            logs.Add(new PdfStageLog { Stage = stage, Status = StatusFailed, ElapsedMs = sw.ElapsedMilliseconds, Message = ex.Message, Timestamp = DateTime.UtcNow });
+            _logger.LogWarning(ex, "[PDF] 阶段 {Stage} 失败", stage);
+            return false;
+        }
+    }
+
+    private async Task<bool> TryRunStageAsync(List<PdfStageLog> logs, string stage, Func<Task<string?>> action)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var msg = await action();
+            sw.Stop();
+            logs.Add(new PdfStageLog { Stage = stage, Status = StatusSuccess, ElapsedMs = sw.ElapsedMilliseconds, Message = msg, Timestamp = DateTime.UtcNow });
+            return true;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            logs.Add(new PdfStageLog { Stage = stage, Status = StatusFailed, ElapsedMs = sw.ElapsedMilliseconds, Message = ex.Message, Timestamp = DateTime.UtcNow });
+            _logger.LogWarning(ex, "[PDF] 阶段 {Stage} 失败", stage);
+            return false;
+        }
+    }
+
+    private static void AppendSkipped(List<PdfStageLog> logs, params string[] stages)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var s in stages)
+        {
+            logs.Add(new PdfStageLog { Stage = s, Status = StatusSkipped, ElapsedMs = 0, Message = null, Timestamp = now });
+        }
     }
 
     /// <summary>
     /// v0.4.1 §5.1：将 PDF 详情持久化到 pdf_files 集合。
     /// 同一份 PDF（按 Symbol + LocalPath 唯一）已存在时刷新 LastReparsedAt 与解析快照。
+    /// AccessKey 始终通过 <see cref="PdfAccessKey.From"/> 重算（v0.4.1 §S2 最小迁移）。
+    /// stageLogs 整体覆盖（不累加历史）。
     /// </summary>
     private void UpsertPdfFileDocument(
         string symbol,
         DownloadedPdf pdf,
-        PdfVotingResult voting,
+        PdfVotingResult? voting,
         ParsedFinancialStatements? parsed,
         List<PdfParseUnit> parseUnits,
-        PdfFileResult outcome)
+        PdfFileResult outcome,
+        List<PdfStageLog> stageLogs)
     {
         try
         {
             var fileName = Path.GetFileName(pdf.FilePath);
             var localPath = pdf.FilePath ?? string.Empty;
+            var accessKey = PdfAccessKey.From(localPath);
             var existing = _db.PdfFiles.FindOne(x => x.Symbol == symbol && x.LocalPath == localPath);
             var now = DateTime.UtcNow;
 
@@ -205,16 +423,17 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                     FileName = fileName,
                     Title = pdf.Announcement.Title ?? string.Empty,
                     LocalPath = localPath,
-                    AccessKey = fileName, // S2 接口层会替换为更稳定的可访问标识
+                    AccessKey = accessKey,
                     ReportPeriod = reportPeriod,
                     ReportType = reportType,
-                    Extractor = outcome.ExtractorUsed ?? voting.Winner?.ExtractorName,
-                    VoteConfidence = outcome.VotingConfidence ?? voting.Confidence.ToString(),
+                    Extractor = outcome.ExtractorUsed ?? voting?.Winner?.ExtractorName,
+                    VoteConfidence = outcome.VotingConfidence ?? voting?.Confidence.ToString(),
                     FieldCount = fieldCount,
                     LastError = outcome.Success ? null : outcome.Error,
                     LastParsedAt = now,
                     LastReparsedAt = null,
                     ParseUnits = parseUnits ?? new List<PdfParseUnit>(),
+                    StageLogs = stageLogs ?? new List<PdfStageLog>(),
                 };
                 _db.PdfFiles.Insert(doc);
             }
@@ -222,15 +441,16 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
             {
                 existing.FileName = fileName;
                 existing.Title = pdf.Announcement.Title ?? existing.Title;
-                existing.AccessKey = string.IsNullOrEmpty(existing.AccessKey) ? fileName : existing.AccessKey;
+                existing.AccessKey = accessKey; // v0.4.1 §S2：每次写入按新算法刷新
                 existing.ReportPeriod = reportPeriod;
                 existing.ReportType = reportType;
-                existing.Extractor = outcome.ExtractorUsed ?? voting.Winner?.ExtractorName ?? existing.Extractor;
-                existing.VoteConfidence = outcome.VotingConfidence ?? voting.Confidence.ToString();
+                existing.Extractor = outcome.ExtractorUsed ?? voting?.Winner?.ExtractorName ?? existing.Extractor;
+                existing.VoteConfidence = outcome.VotingConfidence ?? voting?.Confidence.ToString() ?? existing.VoteConfidence;
                 existing.FieldCount = fieldCount;
                 existing.LastError = outcome.Success ? null : outcome.Error;
                 existing.LastReparsedAt = now;
                 existing.ParseUnits = parseUnits ?? existing.ParseUnits;
+                existing.StageLogs = stageLogs ?? new List<PdfStageLog>(); // 整体覆盖
                 _db.PdfFiles.Update(existing);
             }
         }
