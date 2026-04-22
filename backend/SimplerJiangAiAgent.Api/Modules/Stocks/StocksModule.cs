@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -2530,7 +2531,10 @@ public sealed class StocksModule : IModule
                 }
 
                 var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
-                return Results.Content(responseText, contentType);
+                var bodyToReturn = includeCollectErrorFields
+                    ? AugmentCollectResponseWithFriendlyAliases(responseText)
+                    : responseText;
+                return Results.Content(bodyToReturn, contentType);
             }
 
             return Results.Json(
@@ -2689,6 +2693,82 @@ public sealed class StocksModule : IModule
     {
         var trimmed = value.TrimStart();
         return trimmed.StartsWith('{') || trimmed.StartsWith('[');
+    }
+
+    /// <summary>
+    /// 在 /api/stocks/financial/collect 透传响应上叠加 5 个 camelCase 友好别名字段：
+    /// reportPeriod / reportTitle / sourceChannel / fallbackReason / pdfSummary。
+    /// 不删除/重命名任何已有字段；遇到非对象 JSON 或解析失败时原样返回。
+    /// </summary>
+    internal static string AugmentCollectResponseWithFriendlyAliases(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return json;
+        }
+
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(json);
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+
+        if (node is not JsonObject obj)
+        {
+            return json;
+        }
+
+        if (!obj.ContainsKey("reportPeriod"))
+        {
+            obj["reportPeriod"] = FirstStringOfArray(obj["reportPeriods"]);
+        }
+
+        if (!obj.ContainsKey("reportTitle"))
+        {
+            obj["reportTitle"] = FirstStringOfArray(obj["reportTitles"]);
+        }
+
+        if (!obj.ContainsKey("sourceChannel"))
+        {
+            obj["sourceChannel"] = CloneStringNode(obj["mainSourceChannel"]);
+        }
+
+        if (!obj.ContainsKey("fallbackReason"))
+        {
+            obj["fallbackReason"] = CloneStringNode(obj["degradeReason"]);
+        }
+
+        if (!obj.ContainsKey("pdfSummary"))
+        {
+            obj["pdfSummary"] = CloneStringNode(obj["pdfSummarySupplement"]);
+        }
+
+        return obj.ToJsonString();
+
+        static JsonNode? FirstStringOfArray(JsonNode? source)
+        {
+            if (source is JsonArray arr && arr.Count > 0 && arr[0] is JsonNode first)
+            {
+                if (first is JsonValue value && value.TryGetValue<string>(out var s))
+                {
+                    return JsonValue.Create(s);
+                }
+            }
+            return null;
+        }
+
+        static JsonNode? CloneStringNode(JsonNode? source)
+        {
+            if (source is JsonValue value && value.TryGetValue<string>(out var s))
+            {
+                return JsonValue.Create(s);
+            }
+            return null;
+        }
     }
 
     private static string? ExtractAgentSummary(JsonElement result)
