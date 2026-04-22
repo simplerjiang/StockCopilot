@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   fetchFinancialReportDetail,
   listPdfFiles,
-  recollectFinancialReport
+  recollectFinancialReport,
+  collectPdfFiles
 } from './financialApi.js'
 import FinancialReportComparePane from './FinancialReportComparePane.vue'
 import {
@@ -31,6 +32,11 @@ const error = ref('')
 const recollecting = ref(false)
 const recollectError = ref('')
 const recollectMessage = ref('')
+
+// V041-S8-FU-1: PDF 原件采集（巨潮下载 + 提取 + 投票 + 解析 + 持久化，可能耗时几十秒到几分钟）
+const collectingPdf = ref(false)
+const collectPdfError = ref('')
+const collectPdfMessage = ref('')
 
 // V041-S5: PDF 文件解析（detail 中无 pdfFileId 时回退到 listPdfFiles）
 const resolvedPdfId = ref(null)
@@ -74,7 +80,11 @@ async function loadDetail() {
     return
   }
   const token = ++fetchToken
-  loading.value = true
+  // V041-S8 NIT-4：仅在初次加载时显示骨架屏。reparse/recollect 等场景的「静默刷新」
+  // 不卸载 v-else 内的 PDF/ComparePane 子树，避免 ComparePane 重新挂载导致 internalDetail
+  // 被覆盖（包括刚通过 handleReparse 写入的新 lastReparsedAt）。
+  const silentRefresh = detail.value != null && !error.value
+  if (!silentRefresh) loading.value = true
   error.value = ''
   try {
     const data = await fetchFinancialReportDetail(id)
@@ -100,19 +110,26 @@ function pickPdfIdFromDetail(d) {
 
 async function resolvePdfFileId() {
   const token = ++pdfResolveToken
-  resolvedPdfId.value = null
   resolvePdfError.value = ''
+  // V041-S8 NIT-4 修复：reparse 完成后 ComparePane emit('refresh') → loadDetail() →
+  // 这里被再次调用。如果起手就把 resolvedPdfId 置 null，会触发 ComparePane 的
+  // pdfFileId watch 把 internalDetail 清掉，刚刚通过 handleReparse 写入的新
+  // lastReparsedAt 也一起被冲掉。这里改成「保留旧值、只在结果变化时再赋新值」。
 
   // 先从 detail 字段中找
   const direct = pickPdfIdFromDetail(detail.value)
   if (direct) {
-    resolvedPdfId.value = String(direct)
+    const v = String(direct)
+    if (resolvedPdfId.value !== v) resolvedPdfId.value = v
     return
   }
 
   // 没有则按 symbol + reportType 查 PDF 列表，取最新一份
   const symbol = resolveSymbol()
-  if (!symbol) return
+  if (!symbol) {
+    resolvedPdfId.value = null
+    return
+  }
   const reportType = props.item?.reportType || props.item?.ReportType || detail.value?.reportType || detail.value?.ReportType || null
 
   resolvingPdf.value = true
@@ -131,7 +148,8 @@ async function resolvePdfFileId() {
       pick = items.find(x => (x.reportPeriod || x.ReportPeriod) === reportDate) || null
     }
     if (!pick) pick = items[0]
-    resolvedPdfId.value = String(pick.id || pick.Id || '') || null
+    const newId = String(pick.id || pick.Id || '') || null
+    if (resolvedPdfId.value !== newId) resolvedPdfId.value = newId
   } catch (e) {
     if (token !== pdfResolveToken) return
     resolvePdfError.value = e?.message || '加载 PDF 列表失败'
@@ -157,6 +175,27 @@ async function onRecollect() {
     recollectError.value = e?.message || '重新采集失败'
   } finally {
     recollecting.value = false
+  }
+}
+
+// V041-S8-FU-1：调用 FinancialWorker 的 PDF 采集流水线，成功后重新解析 pdfFileId。
+async function onCollectPdf() {
+  const symbol = resolveSymbol()
+  if (!symbol || collectingPdf.value) return
+  collectingPdf.value = true
+  collectPdfError.value = ''
+  collectPdfMessage.value = ''
+  recollectError.value = ''
+  recollectMessage.value = ''
+  try {
+    await collectPdfFiles(symbol)
+    collectPdfMessage.value = 'PDF 原件采集完成，刷新中...'
+    // 重新解析 PDF 列表（这里不重新拉财报详情，避免不必要的上游调用）
+    await resolvePdfFileId()
+  } catch (e) {
+    collectPdfError.value = e?.message || 'PDF 原件采集失败'
+  } finally {
+    collectingPdf.value = false
   }
 }
 
@@ -355,13 +394,11 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
 
             <section class="fc-drawer-section">
               <h4 class="fc-drawer-section-title">PDF 原件</h4>
+              <!-- V041-S8 NIT-4：只要已有 resolvedPdfId 就保持 ComparePane 挂载，
+                   避免 reparse 后 loadDetail() → resolvePdfFileId() 把 resolvingPdf
+                   置 true 导致 ComparePane 短暂卸载/重新挂载、internalDetail 被冲掉。 -->
               <div
-                v-if="resolvingPdf"
-                class="fc-drawer-pdf-placeholder"
-                data-testid="fc-drawer-pdf-resolving"
-              >正在定位 PDF 原件…</div>
-              <div
-                v-else-if="resolvedPdfId"
+                v-if="resolvedPdfId"
                 class="fc-drawer-pdf-compare"
                 data-testid="fc-drawer-pdf-compare"
               >
@@ -371,11 +408,16 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
                 />
               </div>
               <div
+                v-else-if="resolvingPdf"
+                class="fc-drawer-pdf-placeholder"
+                data-testid="fc-drawer-pdf-resolving"
+              >正在定位 PDF 原件…</div>
+              <div
                 v-else
                 class="fc-drawer-pdf-placeholder"
                 data-testid="fc-drawer-pdf-empty"
               >
-                {{ resolvePdfError || '该报告暂无 PDF 原件，请先触发「重新采集报告」' }}
+                {{ resolvePdfError || '该报告暂无 PDF 原件，请先触发「📥 采集 PDF 原件」' }}
               </div>
             </section>
           </template>
@@ -388,6 +430,15 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
           <div v-else-if="recollectMessage" class="fc-drawer-footer-info">
             {{ recollectMessage }}
           </div>
+          <div v-if="collectPdfError" class="fc-drawer-footer-error" data-testid="fc-drawer-pdf-collect-error" role="alert">
+            {{ collectPdfError }}
+          </div>
+          <div v-else-if="collectPdfMessage" class="fc-drawer-footer-info" data-testid="fc-drawer-pdf-collect-info">
+            {{ collectPdfMessage }}
+          </div>
+          <div v-if="collectingPdf" class="fc-drawer-footer-info" data-testid="fc-drawer-pdf-collect-hint">
+            正在下载并解析 PDF 原件，可能需要几十秒到几分钟…
+          </div>
           <div class="fc-drawer-footer-actions">
             <button
               type="button"
@@ -396,6 +447,16 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
               @click="onRecollect"
             >
               {{ recollecting ? '正在重新采集报告...' : '重新采集报告' }}
+            </button>
+            <button
+              type="button"
+              class="fc-drawer-btn fc-drawer-btn--primary"
+              data-testid="fc-drawer-collect-pdf-btn"
+              :disabled="collectingPdf || !resolveSymbol()"
+              @click="onCollectPdf"
+              title="从巨潮下载 PDF 并入库（耗时几十秒到几分钟）"
+            >
+              {{ collectingPdf ? '正在采集 PDF...' : '📥 采集 PDF 原件' }}
             </button>
             <button
               type="button"

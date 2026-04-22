@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, toRef, watch } from 'vue'
 import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
-import { listPdfFiles } from '../financial/financialApi.js'
+import { listPdfFiles, collectPdfFiles } from '../financial/financialApi.js'
 import FinancialReportComparePane from '../financial/FinancialReportComparePane.vue'
 
 const props = defineProps({
@@ -471,6 +471,11 @@ const pdfViewerError = ref('')
 const pdfViewerFileId = ref(null)
 let pdfResolveToken = 0
 
+// ---- V041-S8-FU-1：「采集 PDF 原件」入口（与「查看 PDF 原件」区分） ----
+const collectingPdf = ref(false)
+const collectPdfMessage = ref('')
+const collectPdfErrorMsg = ref('')
+
 async function openPdfViewer() {
   const symbol = symbolRef.value?.trim() || ''
   if (!symbol || pdfViewerLoading.value) return
@@ -480,17 +485,18 @@ async function openPdfViewer() {
   pdfViewerLoading.value = true
   const token = ++pdfResolveToken
   try {
-    const reportType = summary.value?.periods?.[0]?.reportType
-      || summary.value?.periods?.[0]?.ReportType
-      || null
     const reportDate = summary.value?.periods?.[0]?.reportDate
       || summary.value?.periods?.[0]?.ReportDate
       || null
-    const res = await listPdfFiles({ symbol, reportType, page: 1, pageSize: 5 })
+    // V041-S8 NIT-3 修复：summary 的 reportType（如 Annual/Quarterly）与后端
+    // 按 PDF 标题判定的 reportType（Annual/Q1/Q2/Q3/Unknown）经常不匹配，
+    // 导致带 reportType 过滤后空列表。这里只按 symbol 拉，再用 reportPeriod
+    // 与 reportDate 精确匹配；匹配不上时退化为最新一份（按 LastParsedAt desc）。
+    const res = await listPdfFiles({ symbol, page: 1, pageSize: 10 })
     if (token !== pdfResolveToken) return
     const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
     if (items.length === 0) {
-      pdfViewerError.value = '该报告暂无 PDF 原件，请先触发「刷新数据」重新采集。'
+      pdfViewerError.value = '该报告暂无 PDF 原件，请先触发「📥 采集 PDF 原件」'
       return
     }
     let pick = null
@@ -519,6 +525,25 @@ function closePdfViewer() {
   pdfViewerFileId.value = null
   pdfViewerError.value = ''
   pdfResolveToken++
+}
+
+// V041-S8-FU-1：触发 PDF 原件采集。成功后重置 pdfResolveToken，下次「查看 PDF 原件」重新解析。
+async function onCollectPdf() {
+  const symbol = symbolRef.value?.trim() || ''
+  if (!symbol || collectingPdf.value) return
+  collectingPdf.value = true
+  collectPdfMessage.value = ''
+  collectPdfErrorMsg.value = ''
+  try {
+    await collectPdfFiles(symbol)
+    collectPdfMessage.value = 'PDF 原件采集完成，点击「📄 查看 PDF 原件」查看。'
+    // 如果查看器当前是打开状态且处于错误/空态，重置 token 以避免错误状态残留
+    pdfResolveToken++
+  } catch (e) {
+    collectPdfErrorMsg.value = e?.message || 'PDF 原件采集失败'
+  } finally {
+    collectingPdf.value = false
+  }
 }
 
 function onComparePaneRefresh(detail) {
@@ -555,11 +580,24 @@ function onComparePaneRefresh(detail) {
             @click="openPdfViewer"
             :disabled="pdfViewerLoading"
           >{{ pdfViewerLoading ? '加载中...' : '📄 查看 PDF 原件' }}</button>
+          <button
+            type="button"
+            class="view-pdf-btn"
+            data-testid="collect-pdf-btn"
+            @click="onCollectPdf"
+            :disabled="collectingPdf"
+            title="从巨潮下载 PDF 原件并入库（耗时几十秒到几分钟）"
+          >{{ collectingPdf ? '正在采集 PDF...' : '📥 采集 PDF 原件' }}</button>
           <button class="refresh-btn" @click="collectData" :disabled="collecting">
             {{ collecting ? '刷新中...' : '🔄 刷新数据' }}
           </button>
         </div>
       </div>
+      <p v-if="collectPdfErrorMsg" class="error-msg" data-testid="collect-pdf-error">{{ collectPdfErrorMsg }}</p>
+      <p v-else-if="collectPdfMessage" class="collect-info" data-testid="collect-pdf-info">{{ collectPdfMessage }}</p>
+      <p v-else-if="collectingPdf" class="collect-info" data-testid="collect-pdf-hint">
+        正在下载并解析 PDF 原件，可能需要几十秒到几分钟…
+      </p>
       <p v-if="collectResult && collectResult.success && hasRenderableFinancialData" class="collect-info">
         ✅ 已通过 {{ collectResult.channel }} 获取 {{ collectResult.reportCount }} 期报表，耗时 {{ (collectResult.durationMs / 1000).toFixed(1) }}s
         <span v-if="collectResult.isDegraded && collectResult.degradeReason">（提示：{{ localizeCollectMessage(collectResult.degradeReason) }}）</span>

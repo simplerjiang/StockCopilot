@@ -213,4 +213,33 @@ describe('FinancialReportComparePane - V041-S5', () => {
     expect(wrapper.find('[data-testid="fc-pdf-iframe"]').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  // V041-S8 NIT-4 防回归：reparse 成功 → VotingPanel 的 lastReparsedAt 必须刷新
+  it('reparse 成功 → VotingPanel.detail.lastReparsedAt 同步刷新', async () => {
+    mocks.fetchPdfFileDetail.mockResolvedValueOnce(baseDetail())
+    const wrapper = mountPane({ pdfFileDetail: null })
+    await flushPromises()
+
+    // 切到投票信息 tab
+    await wrapper.find('[data-testid="fc-compare-tab-voting"]').trigger('click')
+    await nextTick()
+
+    const oldStamp = '2026-04-22T08:30:00Z'
+    const newStamp = '2026-04-22T11:45:30Z'
+    let votingPanel = wrapper.findComponent({ name: 'FinancialPdfVotingPanel' })
+    expect(votingPanel.props('detail')?.lastReparsedAt).toBe(oldStamp)
+
+    mocks.reparsePdfFile.mockResolvedValueOnce({
+      success: true,
+      detail: baseDetail({ lastReparsedAt: newStamp })
+    })
+
+    await wrapper.find('[data-testid="fc-pdf-voting-reparse-btn"]').trigger('click')
+    await flushPromises()
+
+    votingPanel = wrapper.findComponent({ name: 'FinancialPdfVotingPanel' })
+    expect(votingPanel.props('detail')?.lastReparsedAt).toBe(newStamp)
+
+    wrapper.unmount()
+  })
 })

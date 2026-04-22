@@ -6,7 +6,8 @@ import {
   listPdfFiles,
   fetchPdfFileDetail,
   buildPdfFileContentUrl,
-  reparsePdfFile
+  reparsePdfFile,
+  collectPdfFiles
 } from '../financialApi.js'
 
 const okJson = (body) => ({
@@ -105,5 +106,27 @@ describe('financialApi - PDF endpoints', () => {
   it('reparsePdfFile 在 !ok 时 throw', async () => {
     globalThis.fetch.mockResolvedValueOnce(errResp(404, { message: '未找到' }))
     await expect(reparsePdfFile('missing')).rejects.toThrow(/未找到|HTTP 404/)
+  })
+
+  // V041-S8-FU-1: 触发 PDF 原件采集
+  it('collectPdfFiles 用 POST 命中 /pdf-files/collect/{symbol}', async () => {
+    globalThis.fetch.mockResolvedValueOnce(okJson({ success: true, processedCount: 2 }))
+    const result = await collectPdfFiles('600519')
+    const [url, init] = globalThis.fetch.mock.calls[0]
+    expect(url).toBe('/api/stocks/financial/pdf-files/collect/600519')
+    expect(init).toEqual({ method: 'POST' })
+    expect(result.success).toBe(true)
+    expect(result.processedCount).toBe(2)
+  })
+
+  it('collectPdfFiles 在 symbol 为空时抛错且不发起请求', async () => {
+    await expect(collectPdfFiles('')).rejects.toThrow(/symbol/)
+    await expect(collectPdfFiles('   ')).rejects.toThrow(/symbol/)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it('collectPdfFiles 在 !ok 时 throw 携带后端错误', async () => {
+    globalThis.fetch.mockResolvedValueOnce(errResp(502, { message: '财务 Worker 不可用' }))
+    await expect(collectPdfFiles('600519')).rejects.toThrow(/财务 Worker 不可用|HTTP 502/)
   })
 })

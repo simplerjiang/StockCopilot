@@ -58,6 +58,29 @@ export async function recollectFinancialReport(symbol) {
   return resp.json().catch(() => ({}))
 }
 
+/**
+ * 触发 PDF 原件采集（巨潮下载 + 提取 + 投票 + 解析 + 持久化）。
+ * 与 recollectFinancialReport 不同：本接口专门用于将 PDF 原件入库，
+ * 完成后前端应重新调用 listPdfFiles 拿到新的 pdfFileId。
+ * 后端代理超时为 5 分钟（V041-S8-FU-1）。
+ * @param {string} symbol 股票代码
+ * @returns {Promise<object>} worker 响应（可能含 success / processedCount / errors 等字段）
+ */
+export async function collectPdfFiles(symbol) {
+  if (!symbol || !String(symbol).trim()) {
+    throw new Error('symbol 不能为空')
+  }
+  const resp = await fetch(
+    `/api/stocks/financial/pdf-files/collect/${encodeURIComponent(String(symbol).trim())}`,
+    { method: 'POST' }
+  )
+  if (!resp.ok) {
+    const msg = await extractMessage(resp)
+    throw new Error(msg ? `${msg} (HTTP ${resp.status})` : `采集 PDF 原件失败 (HTTP ${resp.status})`)
+  }
+  return resp.json().catch(() => ({}))
+}
+
 // ============================================================================
 // V041-S4: PDF 文件相关 API（列表 / 详情 / 内容 URL / 重新解析）
 // ----------------------------------------------------------------------------

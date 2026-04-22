@@ -30,6 +30,8 @@ public sealed class StocksModule : IModule
     private static readonly ConcurrentDictionary<long, CancellationTokenSource> _turnCancellationSources = new();
     private static readonly TimeSpan FinancialWorkerProxyTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FinancialWorkerCollectProxyTimeout = TimeSpan.FromSeconds(60);
+    // V041-S8-FU-1: PDF 采集（下载 + 提取 + 投票 + 解析 + 持久化）耗时较长，单独放宽到 5 分钟。
+    private static readonly TimeSpan FinancialWorkerPdfCollectProxyTimeout = TimeSpan.FromMinutes(5);
 
     public void Register(IServiceCollection services, IConfiguration configuration)
     {
@@ -332,6 +334,31 @@ public sealed class StocksModule : IModule
                 includeCollectErrorFields: true);
         })
         .WithName("CollectStockFinancialData")
+        .WithOpenApi();
+
+        // V041-S8-FU-1: PDF 原件采集代理（独立路径 + 5 分钟超时，不影响结构化采集）
+        financialGroup.MapPost("/pdf-files/collect/{symbol}", async (string symbol, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空", errorMessage = "symbol 不能为空" });
+            }
+
+            var workerSymbol = NormalizeFinancialWorkerSymbol(symbol);
+            if (string.IsNullOrWhiteSpace(workerSymbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空", errorMessage = "symbol 不能为空" });
+            }
+
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Post,
+                $"api/pdf-collect/{Uri.EscapeDataString(workerSymbol)}",
+                configuration,
+                httpClientFactory,
+                httpContext.RequestAborted,
+                includeCollectErrorFields: true);
+        })
+        .WithName("CollectStockFinancialPdfFiles")
         .WithOpenApi();
 
         financialGroup.MapGet("/logs", (string? symbol, int? limit, IFinancialDataReadService financialDataReadService) =>
@@ -2681,6 +2708,10 @@ public sealed class StocksModule : IModule
     internal static TimeSpan ResolveFinancialWorkerProxyTimeout(string relativePath)
     {
         var normalizedRelativePath = relativePath.TrimStart('/');
+        if (normalizedRelativePath.StartsWith("api/pdf-collect/", StringComparison.OrdinalIgnoreCase))
+        {
+            return FinancialWorkerPdfCollectProxyTimeout;
+        }
         return normalizedRelativePath.StartsWith("api/collect/", StringComparison.OrdinalIgnoreCase)
             ? FinancialWorkerCollectProxyTimeout
             : FinancialWorkerProxyTimeout;

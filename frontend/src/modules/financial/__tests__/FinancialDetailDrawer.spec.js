@@ -9,6 +9,7 @@ import { nextTick } from 'vue'
 const mocks = {
   fetchFinancialReportDetail: vi.fn(),
   recollectFinancialReport: vi.fn(),
+  collectPdfFiles: vi.fn(),
   listPdfFiles: vi.fn(),
   fetchPdfFileDetail: vi.fn(),
   reparsePdfFile: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = {
 vi.mock('../financialApi.js', () => ({
   fetchFinancialReportDetail: (...args) => mocks.fetchFinancialReportDetail(...args),
   recollectFinancialReport: (...args) => mocks.recollectFinancialReport(...args),
+  collectPdfFiles: (...args) => mocks.collectPdfFiles(...args),
   listPdfFiles: (...args) => mocks.listPdfFiles(...args),
   fetchPdfFileDetail: (...args) => mocks.fetchPdfFileDetail(...args),
   reparsePdfFile: (...args) => mocks.reparsePdfFile(...args),
@@ -77,6 +79,7 @@ const mountDrawer = (props = {}) => mount(FinancialDetailDrawer, {
 beforeEach(() => {
   mocks.fetchFinancialReportDetail.mockReset()
   mocks.recollectFinancialReport.mockReset()
+  mocks.collectPdfFiles.mockReset()
   mocks.listPdfFiles.mockReset()
   mocks.fetchPdfFileDetail.mockReset()
   mocks.reparsePdfFile.mockReset()
@@ -158,7 +161,7 @@ describe('FinancialDetailDrawer - 加载与渲染', () => {
     const empty = document.querySelector('[data-testid="fc-drawer-pdf-empty"]')
     expect(empty).toBeTruthy()
     expect(empty.textContent).toContain('该报告暂无 PDF 原件')
-    expect(empty.textContent).toContain('重新采集报告')
+    expect(empty.textContent).toContain('采集 PDF 原件')
     wrapper.unmount()
   })
 
@@ -220,6 +223,56 @@ describe('FinancialDetailDrawer - 重新采集', () => {
     expect(document.body.textContent).toContain('采集服务不可用')
     expect(wrapper.emitted('close')).toBeFalsy()
     expect(document.querySelector('.fc-drawer')).toBeTruthy()
+
+    wrapper.unmount()
+  })
+})
+
+describe('FinancialDetailDrawer - V041-S8-FU-1 PDF 原件采集', () => {
+  it('点击「📥 采集 PDF 原件」调用 collectPdfFiles 并在成功后重新解析 PDF', async () => {
+    mocks.fetchFinancialReportDetail.mockResolvedValue(fullDetail())
+    // 第一次解析（mount 时）→ 空；第二次解析（采集后）→ 有 PDF
+    mocks.listPdfFiles
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, pageSize: 5 })
+      .mockResolvedValueOnce({
+        items: [{ id: 'pdf-new', symbol: '600519', reportPeriod: '2024-12-31' }],
+        total: 1,
+        page: 1,
+        pageSize: 5
+      })
+    mocks.collectPdfFiles.mockResolvedValueOnce({ success: true, processedCount: 1 })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    const collectBtn = document.querySelector('[data-testid="fc-drawer-collect-pdf-btn"]')
+    expect(collectBtn).toBeTruthy()
+    collectBtn.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(mocks.collectPdfFiles).toHaveBeenCalledWith('600519')
+    expect(mocks.listPdfFiles).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('PDF 原件采集完成')
+
+    wrapper.unmount()
+  })
+
+  it('collectPdfFiles 失败时显示错误条幅且不关闭抽屉', async () => {
+    mocks.fetchFinancialReportDetail.mockResolvedValue(fullDetail())
+    mocks.collectPdfFiles.mockRejectedValueOnce(new Error('PDF 服务不可用 (HTTP 502)'))
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    const collectBtn = document.querySelector('[data-testid="fc-drawer-collect-pdf-btn"]')
+    expect(collectBtn).toBeTruthy()
+    collectBtn.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+
+    const err = document.querySelector('[data-testid="fc-drawer-pdf-collect-error"]')
+    expect(err).toBeTruthy()
+    expect(err.textContent).toContain('PDF 服务不可用')
+    expect(wrapper.emitted('close')).toBeFalsy()
 
     wrapper.unmount()
   })
@@ -327,6 +380,62 @@ describe('FinancialDetailDrawer - V041-S5 PDF 对照接入', () => {
     expect(document.querySelector('[data-testid="fc-compare-pane"]')).toBeFalsy()
     expect(mocks.fetchPdfFileDetail).not.toHaveBeenCalled()
 
+    wrapper.unmount()
+  })
+
+  // V041-S8 NIT-4 防回归：reparse → @refresh="loadDetail" → resolvePdfFileId
+  // 不能因为「先把 resolvedPdfId 置 null 再赋值」导致 ComparePane 重新拉一次 PDF 详情
+  // （会冲掉 handleReparse 刚刚写入的 internalDetail，包括新的 lastReparsedAt）。
+  it('reparse 后 resolvePdfFileId 命中相同 id 时不重复触发 fetchPdfFileDetail', async () => {
+    mocks.fetchFinancialReportDetail.mockResolvedValue(fullDetail())
+    mocks.listPdfFiles.mockResolvedValue({
+      items: [
+        {
+          id: 'pdf-abc',
+          symbol: '600519',
+          reportPeriod: '2024-12-31',
+          reportType: 'annual',
+          fileName: '600519-2024-annual.pdf'
+        }
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 5
+    })
+    mocks.fetchPdfFileDetail.mockResolvedValue({
+      id: 'pdf-abc',
+      fileName: '600519-2024-annual.pdf',
+      reportPeriod: '2024-12-31',
+      lastReparsedAt: '2026-04-22T08:00:00Z',
+      parseUnits: []
+    })
+    mocks.reparsePdfFile.mockResolvedValueOnce({
+      success: true,
+      detail: {
+        id: 'pdf-abc',
+        fileName: '600519-2024-annual.pdf',
+        reportPeriod: '2024-12-31',
+        lastReparsedAt: '2026-04-22T12:00:00Z',
+        parseUnits: []
+      }
+    })
+
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await flushPromises()
+    expect(mocks.fetchPdfFileDetail).toHaveBeenCalledTimes(1)
+
+    // 模拟用户从 ComparePane 触发 reparse → emit('refresh', detail) → loadDetail
+    // 通过组件 API 直接触发以绕过 PDF iframe 与 jsdom 的兼容问题
+    const pane = wrapper.findComponent({ name: 'FinancialReportComparePane' })
+    expect(pane.exists()).toBe(true)
+    await pane.vm.$emit('refresh', { id: 'pdf-abc' })
+    // loadDetail → fetchFinancialReportDetail 异步 → resolvePdfFileId 异步
+    await flushPromises()
+    await flushPromises()
+
+    // 关键断言：resolvedPdfId 没有被中间态 null 抖动，导致 ComparePane 重新挂载/拉取详情
+    expect(mocks.fetchPdfFileDetail).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
 })

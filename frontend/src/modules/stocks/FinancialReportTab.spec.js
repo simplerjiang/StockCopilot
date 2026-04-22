@@ -600,4 +600,40 @@ describe('FinancialReportTab', () => {
     wrapper.unmount()
     document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
   })
+
+  // ============================================================================
+  // V041-S8-FU-1: 「📥 采集 PDF 原件」入口
+  // ============================================================================
+  it('V041-S8-FU-1 点击「📥 采集 PDF 原件」调用 collect 接口，成功后显示完成提示', async () => {
+    mockFetch.mockImplementation((url, init) => {
+      if (typeof url === 'string' && url.includes('/pdf-files/collect/')) {
+        return Promise.resolve(createJsonResponse({ success: true, processedCount: 1 }))
+      }
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+
+    const btn = wrapper.find('[data-testid="collect-pdf-btn"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('采集 PDF 原件')
+
+    await btn.trigger('click')
+    await flushPromises()
+
+    const collectCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/pdf-files/collect/'))
+    expect(collectCall).toBeTruthy()
+    expect(String(collectCall[0])).toContain('600519')
+    expect(collectCall[1]).toEqual({ method: 'POST' })
+
+    expect(wrapper.find('[data-testid="collect-pdf-info"]').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
 })

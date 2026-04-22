@@ -25,6 +25,7 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
         // 默认重置 stub，避免互相污染
         _factory.QueryStub = new StubPdfFileQueryService();
         _factory.GatewayStub = new StubPdfReparseGateway();
+        _factory.FinancialWorkerHandler = null;
     }
 
     [Fact]
@@ -214,6 +215,59 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
         Assert.Equal(new[] { "download", "extract", "vote", "parse", "persist" }, stages);
     }
 
+    // V041-S8-FU-1: 触发 PDF 原件采集（代理到 FinancialWorker 的 /api/pdf-collect/{symbol}）
+    [Fact]
+    public async Task CollectPdfFiles_ProxiesToFinancialWorker_Returns200()
+    {
+        HttpRequestMessage? captured = null;
+        _factory.FinancialWorkerHandler = req =>
+        {
+            captured = req;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"success\":true,\"processedCount\":2}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        };
+
+        var client = _factory.CreateClient();
+        var response = await client.PostAsync("/api/stocks/financial/pdf-files/collect/sh603099", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("success").GetBoolean());
+        Assert.Equal(2, body.GetProperty("processedCount").GetInt32());
+
+        Assert.NotNull(captured);
+        Assert.Equal(HttpMethod.Post, captured!.Method);
+        Assert.Contains("/api/pdf-collect/", captured.RequestUri!.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        // sh/sz 前缀应被剥掉，只剩 6 位数字
+        Assert.EndsWith("/603099", captured.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task CollectPdfFiles_OnWorkerFailure_PropagatesStatusCode()
+    {
+        _factory.FinancialWorkerHandler = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent(
+                "{\"error\":\"PDF 下载失败\",\"errorMessage\":\"PDF 下载失败\"}",
+                Encoding.UTF8,
+                "application/json")
+        };
+
+        var client = _factory.CreateClient();
+        var response = await client.PostAsync("/api/stocks/financial/pdf-files/collect/600519", content: null);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.GetProperty("success").GetBoolean());
+        Assert.Equal("PDF 下载失败", body.GetProperty("error").GetString());
+        Assert.Equal("PDF 下载失败", body.GetProperty("errorMessage").GetString());
+    }
+
     // ── helpers ──
 
     private static PdfFileListItem MakeListItem(string id, string symbol, string title)
@@ -271,6 +325,8 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
     {
         public StubPdfFileQueryService QueryStub { get; set; } = new();
         public StubPdfReparseGateway GatewayStub { get; set; } = new();
+        // V041-S8-FU-1: 用于拦截 ProxyFinancialWorkerAsync 出去的 HTTP 调用
+        public Func<HttpRequestMessage, HttpResponseMessage>? FinancialWorkerHandler { get; set; }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -287,8 +343,45 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
                 }
                 services.AddScoped<IPdfFileQueryService>(_ => QueryStub);
                 services.AddSingleton<IPdfReparseGateway>(_ => GatewayStub);
+
+                // 拦截 IHttpClientFactory 以便测试 ProxyFinancialWorkerAsync 行为（V041-S8-FU-1）
+                foreach (var d in services.Where(s => s.ServiceType == typeof(IHttpClientFactory)).ToList())
+                {
+                    services.Remove(d);
+                }
+                services.AddSingleton<IHttpClientFactory>(_ => new StubHttpClientFactory(this));
             });
         }
+    }
+
+    private sealed class StubHttpClientFactory : IHttpClientFactory
+    {
+        private readonly Factory _factory;
+        public StubHttpClientFactory(Factory factory) { _factory = factory; }
+        public HttpClient CreateClient(string name)
+        {
+            var handler = new StubHttpMessageHandler(req =>
+            {
+                var fn = _factory.FinancialWorkerHandler;
+                if (fn is null)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.NotImplemented)
+                    {
+                        Content = new StringContent("{\"error\":\"no handler set\"}")
+                    };
+                }
+                return fn(req);
+            });
+            return new HttpClient(handler, disposeHandler: false);
+        }
+    }
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _factory;
+        public StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> factory) { _factory = factory; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_factory(request));
     }
 
     public sealed class StubPdfFileQueryService : IPdfFileQueryService
