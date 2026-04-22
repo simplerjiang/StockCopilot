@@ -57,3 +57,82 @@ export async function recollectFinancialReport(symbol) {
   }
   return resp.json().catch(() => ({}))
 }
+
+// ============================================================================
+// V041-S4: PDF 文件相关 API（列表 / 详情 / 内容 URL / 重新解析）
+// ----------------------------------------------------------------------------
+// 与上方 fetchFinancialReportDetail 共享 extractMessage + ok 检查风格。
+// ============================================================================
+
+/**
+ * 拉取 PDF 文件列表
+ * @param {object} params
+ * @param {string=} params.symbol 股票代码（可选）
+ * @param {string=} params.reportType 报告类型（可选）
+ * @param {number=} params.page 页码（默认 1）
+ * @param {number=} params.pageSize 每页大小（默认 20）
+ * @returns {Promise<object>}
+ */
+export async function listPdfFiles({ symbol, reportType, page = 1, pageSize = 20 } = {}) {
+  const query = new URLSearchParams()
+  if (symbol != null && String(symbol).trim() !== '') {
+    query.set('symbol', String(symbol).trim())
+  }
+  if (reportType != null && String(reportType).trim() !== '') {
+    query.set('reportType', String(reportType).trim())
+  }
+  query.set('page', String(page))
+  query.set('pageSize', String(pageSize))
+  const resp = await fetch(`/api/stocks/financial/pdf-files?${query.toString()}`)
+  if (!resp.ok) {
+    const msg = await extractMessage(resp)
+    throw new Error(msg ? `${msg} (HTTP ${resp.status})` : `加载 PDF 列表失败 (HTTP ${resp.status})`)
+  }
+  return resp.json()
+}
+
+/**
+ * 拉取 PDF 文件详情（含 ParseUnits）
+ * @param {string|number} id PDF 文件 ID
+ * @returns {Promise<object>}
+ */
+export async function fetchPdfFileDetail(id) {
+  if (id === undefined || id === null || id === '') {
+    throw new Error('id 不能为空')
+  }
+  const resp = await fetch(`/api/stocks/financial/pdf-files/${encodeURIComponent(String(id))}`)
+  if (!resp.ok) {
+    const msg = await extractMessage(resp)
+    throw new Error(msg ? `${msg} (HTTP ${resp.status})` : `加载 PDF 详情失败 (HTTP ${resp.status})`)
+  }
+  return resp.json()
+}
+
+/**
+ * 构造 PDF 内容 URL（给 iframe.src 用）。不发起请求。
+ * @param {string|number} id PDF 文件 ID
+ * @returns {string}
+ */
+export function buildPdfFileContentUrl(id) {
+  return `/api/stocks/financial/pdf-files/${encodeURIComponent(String(id ?? ''))}/content`
+}
+
+/**
+ * 触发 PDF 重新解析
+ * @param {string|number} id PDF 文件 ID
+ * @returns {Promise<{success: boolean, error?: string|null, detail?: object|null}>}
+ */
+export async function reparsePdfFile(id) {
+  if (id === undefined || id === null || id === '') {
+    throw new Error('id 不能为空')
+  }
+  const resp = await fetch(
+    `/api/stocks/financial/pdf-files/${encodeURIComponent(String(id))}/reparse`,
+    { method: 'POST' }
+  )
+  if (!resp.ok) {
+    const msg = await extractMessage(resp)
+    throw new Error(msg ? `${msg} (HTTP ${resp.status})` : `重新解析失败 (HTTP ${resp.status})`)
+  }
+  return resp.json().catch(() => ({ success: false, error: '响应解析失败', detail: null }))
+}
