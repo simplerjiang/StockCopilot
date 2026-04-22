@@ -394,8 +394,11 @@ describe('TradingWorkbenchComposer', () => {
     const wrapper = mount(TradingWorkbenchComposer, {
       props: { session: { id: 1 }, isRunning: true, symbol: 'sz000001' }
     })
-    expect(wrapper.find('.wb-input').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.wb-send-btn').attributes('disabled')).toBeDefined()
+    // While running, the send button is replaced by a cancel button so user
+    // cannot submit a new prompt; placeholder text reflects the running state.
+    expect(wrapper.find('.wb-send-btn').exists()).toBe(false)
+    expect(wrapper.find('.wb-cancel-btn').exists()).toBe(true)
+    expect(wrapper.find('.wb-input').attributes('placeholder')).toContain('分析进行中')
   })
 
   it('does not emit on empty prompt', async () => {

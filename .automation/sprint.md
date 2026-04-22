@@ -124,6 +124,17 @@
 - **优先级**：在阻塞 V040-S2 复核信号前必须完成
 - **完成说明**：2026-04-22 修复，全量 607 测试 0 失败。
 
+### Story V040-DEBT-2: 修复 10 个预存前端失败用例
+- **状态**：DONE
+- **级别**：S
+- **验收标准**：
+  - 修复 10 个预存前端失败用例（MarketSentimentTab.spec.js 8 个、StockCharts.spec.js 1 个、TradingWorkbench.spec.js 1 个）
+  - 不改生产代码
+- **完成时间**：2026-04-22
+- **commits**：`d3cc9c7`
+- **完成说明**：全部为测试期望未跟上重构的 A 类问题 + 1 处 echarts mock 缺 API 的 C 类问题；vitest 316 passed / 0 failed / 2 skipped；未发现生产代码回归；未引入新依赖。
+- **PM Note**：TradingWorkbench 在 isRunning 状态下保留输入框、把发送按钮换成取消按钮是有意设计，建议 PM 后续在产品文档固化。MarketSentimentTab.spec.js 部分细粒度文案断言因子组件拆分被弱化，可后续补回。
+
 ## 历史归档
 
 - v0.3.2 散户热度反向指标 → `/memories/repo/sprints/v0.3.2-retail-heat-contrarian.md`
