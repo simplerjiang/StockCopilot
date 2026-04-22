@@ -49,7 +49,7 @@
 - **待接入**：V041-S5 把本组件集成到对照面板。桌面 packaged 真机加载留 V041-S8 验收。
 
 ### V041-S4: 前端 FinancialPdfParsePreview + FinancialPdfVotingPanel
-- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`37df200`
+- **状态**：DONE | **级别**：M | **完成时间**：2026-04-22 | **commits**：`345d59c`
 - 两个共享组件 + blockKindTag 工具 + financialApi 4 个 PDF 函数封装；ParsePreview 按 table/narrative_section/figure_caption/unknown 分组渲染含页码锚点 emit jump-to-page；VotingPanel 解耦 emit reparse 不直调 API；21 新用例（6+6+9）vitest 398/2，0 回归。
 - **风险备注**：voting candidates 数组当前后端未暴露，VotingPanel 用「候选提取器排序与投票明细将在后续版本暴露」灰色脚注诚实标注；后端补 `candidates: [{extractor, score, vote}]` 后再扩展面板（追到 V041-DEBT-3）。
 
