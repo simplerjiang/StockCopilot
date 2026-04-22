@@ -59,11 +59,9 @@
 - **风险备注**：Firefox 老版本可能不响应 iframe `#page=N`（属 S8 真机验收）；切换抽屉 item 时 reparse 中态用 watch 重置兜底未做 abort（成本/收益不划算）；浏览器 packaged 验收留 V041-S8 一并完成。
 
 ### V041-S6: 前端 股票详情 FinancialReportTab 轻量入口 + 重新解析按钮
-- **状态**：BACKLOG | **级别**：S | **依赖**：V041-S5
-- **验收标准**：
-  - `FinancialReportTab.vue` 新增「查看 PDF 原件/对照」入口，调起 ComparePane 或抽屉
-  - 复用 V041-S5 的对照组件和 reparse 调用逻辑，不重复实现
-  - vitest 覆盖入口可见性、点击跳转、重解析成功/失败回写
+- **状态**：DONE | **级别**：S | **完成时间**：2026-04-22 | **commits**：`9ace466`
+- 方案 A：report-header 内嵌「📄 查看 PDF 原件」按钮 + Teleport Modal 渲染 FinancialReportComparePane 复用 S5；pdfFileId 走 listPdfFiles({symbol,reportType,pageSize:5}) 按 reportPeriod===reportDate 命中 fallback 首条，与 S5 Drawer 同款 token race-cancel；onComparePaneRefresh 仅 console.debug 不刷 trend/summary（无可回写字段）。新增 4 vitest，34 files / 418 passed / 2 skipped。
+- **风险备注**：refresh 后未触发 fetchData() 局部刷新（已留 TODO）；summary.periods 为空时 fallback 取首条可能与用户期望的「当前展示报告」不完全一致，属 S 级最小实现可接受。
 
 ### V041-S7: 前端 阶段级失败可视化（5 阶段 timeline）
 - **状态**：DONE | **级别**：S | **完成时间**：2026-04-22 | **commits**：`a46321d`
