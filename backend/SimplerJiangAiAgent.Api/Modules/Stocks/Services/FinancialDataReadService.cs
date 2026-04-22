@@ -1,5 +1,6 @@
 using LiteDB;
 using SimplerJiangAiAgent.Api.Infrastructure.Storage;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Contracts;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -13,6 +14,8 @@ public interface IFinancialDataReadService : IDisposable
     Dictionary<string, object?>? GetConfig();
     FinancialReportSummary? GetReportSummary(string symbol, int periods = 4);
     FinancialTrendSummary? GetTrendSummary(string symbol, int periods = 8);
+    PagedResult<FinancialReportListItem> ListReports(FinancialReportListQuery query);
+    FinancialReportDetail? GetReportById(string id);
 }
 
 public class FinancialDataReadService : IFinancialDataReadService
@@ -21,7 +24,7 @@ public class FinancialDataReadService : IFinancialDataReadService
     private readonly ILogger<FinancialDataReadService> _logger;
     private readonly bool _available;
 
-    public FinancialDataReadService(AppRuntimePaths runtimePaths, ILogger<FinancialDataReadService> logger)
+    public FinancialDataReadService(AppRuntimePaths runtimePaths, ILogger<FinancialDataReadService> logger, bool readOnly = true)
     {
         _logger = logger;
         var dbPath = Path.Combine(runtimePaths.AppDataPath, "financial-data.db");
@@ -35,9 +38,12 @@ public class FinancialDataReadService : IFinancialDataReadService
 
         try
         {
-            _db = new LiteDatabase($"Filename={dbPath};Connection=shared;ReadOnly=true");
+            var connStr = readOnly
+                ? $"Filename={dbPath};Connection=shared;ReadOnly=true"
+                : $"Filename={dbPath};Connection=shared";
+            _db = new LiteDatabase(connStr);
             _available = true;
-            _logger.LogInformation("Financial LiteDB opened (read-only): {Path}", dbPath);
+            _logger.LogInformation("Financial LiteDB opened ({Mode}): {Path}", readOnly ? "read-only" : "read-write", dbPath);
         }
         catch (Exception ex)
         {
@@ -241,6 +247,153 @@ public class FinancialDataReadService : IFinancialDataReadService
         }
 
         return trend;
+    }
+
+    public PagedResult<FinancialReportListItem> ListReports(FinancialReportListQuery query)
+    {
+        var page = Math.Max(1, query.Page);
+        var pageSize = Math.Clamp(query.PageSize <= 0 ? 20 : query.PageSize, 1, 100);
+
+        if (!_available)
+        {
+            return new PagedResult<FinancialReportListItem>(Array.Empty<FinancialReportListItem>(), 0, page, pageSize);
+        }
+
+        var col = _db!.GetCollection("financial_reports");
+
+        var parts = new List<string>();
+        var pars = new BsonDocument();
+        var idx = 0;
+
+        var symbols = ParseCsv(query.Symbol);
+        if (symbols.Count > 0)
+        {
+            pars[$"p{idx}"] = new BsonArray(symbols.Select(s => (BsonValue)s));
+            parts.Add($"$.Symbol IN @p{idx}");
+            idx++;
+        }
+
+        var reportTypes = ParseCsv(query.ReportType);
+        if (reportTypes.Count > 0)
+        {
+            pars[$"p{idx}"] = new BsonArray(reportTypes.Select(s => (BsonValue)s));
+            parts.Add($"$.ReportType IN @p{idx}");
+            idx++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.StartDate))
+        {
+            pars[$"p{idx}"] = query.StartDate;
+            parts.Add($"$.ReportDate >= @p{idx}");
+            idx++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.EndDate))
+        {
+            pars[$"p{idx}"] = query.EndDate;
+            parts.Add($"$.ReportDate <= @p{idx}");
+            idx++;
+        }
+
+        BsonExpression? predicate = parts.Count == 0
+            ? null
+            : BsonExpression.Create(string.Join(" AND ", parts), pars);
+
+        var (sortField, sortOrder) = ParseSort(query.Sort);
+
+        var queryable = col.Query();
+        if (predicate is not null)
+        {
+            queryable = queryable.Where(predicate);
+        }
+
+        var ordered = queryable.OrderBy(BsonExpression.Create(sortField), sortOrder);
+
+        var total = predicate is null ? col.Count() : col.Count(predicate);
+        var docs = ordered.Skip((page - 1) * pageSize).Limit(pageSize).ToList();
+
+        var items = docs.Select(MapListItem).ToList();
+        return new PagedResult<FinancialReportListItem>(items, total, page, pageSize);
+    }
+
+    public FinancialReportDetail? GetReportById(string id)
+    {
+        if (!_available || string.IsNullOrWhiteSpace(id)) return null;
+
+        ObjectId objId;
+        try
+        {
+            objId = new ObjectId(id.Trim());
+        }
+        catch
+        {
+            return null;
+        }
+
+        var col = _db!.GetCollection("financial_reports");
+        var doc = col.FindById(objId);
+        if (doc is null) return null;
+
+        return new FinancialReportDetail(
+            objId.ToString(),
+            SafeString(doc, "Symbol"),
+            SafeString(doc, "ReportDate"),
+            SafeString(doc, "ReportType"),
+            SafeInt32(doc, "CompanyType"),
+            SafeNullableString(doc, "SourceChannel"),
+            SafeDateTime(doc, "CollectedAt") ?? default,
+            SafeDateTime(doc, "UpdatedAt") ?? default,
+            BsonDocToDict(SafeDoc(doc, "BalanceSheet")),
+            BsonDocToDict(SafeDoc(doc, "IncomeStatement")),
+            BsonDocToDict(SafeDoc(doc, "CashFlow")));
+    }
+
+    private static FinancialReportListItem MapListItem(BsonDocument doc)
+    {
+        return new FinancialReportListItem(
+            SafeId(doc) ?? string.Empty,
+            SafeString(doc, "Symbol"),
+            SafeString(doc, "ReportDate"),
+            SafeString(doc, "ReportType"),
+            SafeNullableString(doc, "SourceChannel"),
+            SafeDateTime(doc, "CollectedAt") ?? default,
+            SafeDateTime(doc, "UpdatedAt") ?? default);
+    }
+
+    private static Dictionary<string, object?> BsonDocToDict(BsonDocument doc)
+    {
+        var dict = new Dictionary<string, object?>();
+        foreach (var key in doc.Keys)
+        {
+            dict[key] = BsonToObject(doc[key]);
+        }
+        return dict;
+    }
+
+    private static List<string> ParseCsv(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return new List<string>();
+        return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static (string Field, int Order) ParseSort(string? sort)
+    {
+        var raw = string.IsNullOrWhiteSpace(sort) ? "reportDate:desc" : sort.Trim();
+        var parts = raw.Split(':', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var key = parts.Length > 0 ? parts[0].ToLowerInvariant() : "reportdate";
+        var dir = parts.Length > 1 ? parts[1].ToLowerInvariant() : "desc";
+
+        var field = key switch
+        {
+            "updatedat" => "$.UpdatedAt",
+            "collectedat" => "$.CollectedAt",
+            _ => "$.ReportDate",
+        };
+        var order = dir == "asc" ? Query.Ascending : Query.Descending;
+        return (field, order);
     }
 
     public void Dispose()

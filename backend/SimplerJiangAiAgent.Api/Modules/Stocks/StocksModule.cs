@@ -12,6 +12,7 @@ using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Contracts;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
@@ -187,6 +188,28 @@ public sealed class StocksModule : IModule
             return Results.Ok(result);
         })
         .WithName("GetStockFinancialSummary")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/reports", (
+            [AsParameters] FinancialReportListQuery query,
+            IFinancialDataReadService financialDataReadService) =>
+        {
+            return Results.Ok(financialDataReadService.ListReports(query));
+        })
+        .WithName("ListStockFinancialReports")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/reports/{id}", (string id, IFinancialDataReadService financialDataReadService) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+
+            var detail = financialDataReadService.GetReportById(id.Trim());
+            return detail is null ? Results.NotFound() : Results.Ok(detail);
+        })
+        .WithName("GetStockFinancialReportById")
         .WithOpenApi();
 
         financialGroup.MapPost("/collect/{symbol}", async (string symbol, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
