@@ -385,6 +385,49 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
     }
 
     /// <summary>
+    /// v0.4.2 N2：按 PDF 文件名 / 公告标题里的中文关键词推断 ReportType。
+    /// 比依赖 parsed.ReportDate 的 InferReportType 更可靠，因为年报正文里
+    /// 经常出现 Q1 比较列日期会污染日期推断。返回 null 表示无关键词命中，
+    /// 让上层回退到 outcome / parsed / "Unknown"。
+    /// </summary>
+    public static string? InferReportTypeFromFileName(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return null;
+        var name = fileName;
+        // 注意顺序：先匹配更长更具体的关键词。
+        // 「半年度报告」字面包含「年度报告」、「半年报」字面包含「年报」，
+        // 所以必须先判 Semi 再判 Annual，否则半年报会被误判为 Annual。
+        // 季度同理放在 Annual 之前，避免「年度报告」误命中季度文件名。
+        if (name.Contains("半年度报告", StringComparison.Ordinal)
+            || name.Contains("半年报", StringComparison.Ordinal)
+            || name.Contains("中期报告", StringComparison.Ordinal)
+            || name.Contains("Semi-Annual", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Half-Year", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Semi";
+        }
+        if (name.Contains("第三季度", StringComparison.Ordinal)
+            || name.Contains("三季度报告", StringComparison.Ordinal)
+            || name.Contains("三季报", StringComparison.Ordinal))
+        {
+            return "Q3";
+        }
+        if (name.Contains("第一季度", StringComparison.Ordinal)
+            || name.Contains("一季度报告", StringComparison.Ordinal)
+            || name.Contains("一季报", StringComparison.Ordinal))
+        {
+            return "Q1";
+        }
+        if (name.Contains("年度报告", StringComparison.Ordinal)
+            || name.Contains("年报", StringComparison.Ordinal)
+            || name.IndexOf("Annual", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "Annual";
+        }
+        return null;
+    }
+
+    /// <summary>
     /// v0.4.1 §5.1：将 PDF 详情持久化到 pdf_files 集合。
     /// 同一份 PDF（按 Symbol + LocalPath 唯一）已存在时刷新 LastReparsedAt 与解析快照。
     /// AccessKey 始终通过 <see cref="PdfAccessKey.From"/> 重算（v0.4.1 §S2 最小迁移）。
@@ -411,7 +454,13 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
             var reportPeriod = outcome.ReportDate
                 ?? parsed?.ReportDate
                 ?? pdf.Announcement.PublishTime.ToString("yyyy-MM-dd");
-            var reportType = outcome.ReportType
+            // v0.4.2 N2 修复：parsed.ReportType 依赖 PDF 文本中第一个匹配的日期，
+            // 年报里出现 Q1 比较列时会被错判为 "Q1"。文件名里的「年度报告/年报/半年报/
+            // 三季报/一季报」是更可靠的信号，作为最高优先级覆盖。
+            var fileNameType = InferReportTypeFromFileName(fileName)
+                ?? InferReportTypeFromFileName(pdf.Announcement.Title);
+            var reportType = fileNameType
+                ?? outcome.ReportType
                 ?? parsed?.ReportType
                 ?? "Unknown";
 

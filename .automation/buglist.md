@@ -1,84 +1,89 @@
-# 2026-04-09 未解决 Bug 清单
+# 20260423 人工测试 Bug 清单
 
-- 说明：本文件只保留当前仍未完全解决、仍需继续验证或继续跟踪的 Bug。
-- 已解决项归档：见 `.automation/buglist-resolved-20260323.md`。
-- 当前开放项数量：5（Bug 4 已关闭，新增 Bug 9）
+> 状态：已分析根因，等待 v0.4.2 完成后排期修复。
 
-## 当前开放项（2026-04-05 人工补录，2026-04-06 结构化整理）
+---
 
-### Bug 1: 全量资讯库批量清洗待处理不完整 
+## BUG-1: "采集PDF原件"提示成功但实际无PDF
 
-- Bug ID：BUG-20260405-01
-- 来源：2026-04-05 人工补录
-- 严重级别：高
-- 当前状态：2026-04-06 本轮代码修复已完成，待 Test Agent 与 User Representative Agent 验证
-- 复现摘要：进入“全量资讯库”点击“批量清洗待处理”后，界面很快提示完成，但库内仍有大量 `IsAiProcessed = false` 的本地事实记录残留；已确认旧接口只调用 `ProcessMarketPendingAsync()`，且单次只扫一部分 market 数据。
-- 验收说明：按钮触发后必须覆盖 market、sector、stock 三类 pending 本地事实；只有在返回 `remaining = 0` 时才能提示“完成”，否则必须展示剩余数量或明确停止原因。
+**现象**：点击"采集PDF原件"后提示成功，但卡片仍显示无PDF原件。过程无进度反馈。
 
-### Bug 2: 4月5日LLM日志与MCP失效排查
+**根因**：
+1. **前端不检查返回值**：`FinancialReportTab.vue:L584` 和 `FinancialDetailDrawer.vue:L280` 的 `onCollectPdf()` 完全忽略返回值（`processedCount`/`downloadedCount`），只要不抛异常就显示"采集完成"。
+2. **后端静默返回空结果**：`PdfProcessingPipeline.cs:L63-68` cninfo 返回 0 个公告时只在 `result.Notes` 记录原因，前端不展示。
+3. **无阶段进度**：5 阶段管线全程同步，前端仅有 spinner。
 
-- Bug ID：BUG-20260405-02
-- 来源：2026-04-05 人工补录
-- 严重级别：高
-- 当前状态：2026-04-08 source mode 已关闭；根因锁定为 Ollama keep_alive 与本地模型 JSON 契约问题，live-gate 与 recommendation 复测通过，剩余 latency / degraded 风险待单独跟踪
-- 复现摘要：需要读取 4 月 5 日 LLM 日志，逐项检查近期 MCP 是否存在失效、退化或不可用情况，并形成明确问题清单。
-- 验收说明：完成日志排查、逐个 MCP 可用性验证，并输出失效原因、修复建议与复测结果。
+**涉及文件**：
+- 前端：`frontend/src/modules/stocks/FinancialReportTab.vue`（onCollectPdf）
+- 前端：`frontend/src/modules/financial/FinancialDetailDrawer.vue`（onCollectPdf）
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Services/Pdf/PdfProcessingPipeline.cs`（ProcessAsync）
 
-### Bug 4: 本地模型完整AI分析卡住
+**修复方案**：前端检查 `processedCount`，为 0 时展示具体原因；增加采集结果摘要。
+**严重度**：中 | **级别**：M
 
-- Bug ID：BUG-20260405-04
-- 来源：2026-04-05 人工补录
-- 严重级别：高
-- 当前状态：2026-04-09 已关闭（v0.3.0）
-- 复现摘要：使用本地模型执行完整 AI 分析时流程卡住，怀疑与上下文过长或夹带垃圾上下文有关，需要结合 LLM 日志核对实际入参。
-- 验收说明：定位卡住点并收敛根因；若为上下文过长，需补长度治理或垃圾上下文过滤，并验证完整分析可稳定完成。
+---
 
+## BUG-2: 金额单位不一致（⚠️ 高危）
 
-### Bug 7: 情绪轮动数据不更新/快照过旧
+**现象**：财报数字单位不合理，不同报告金额差异过大。
 
-- Bug ID：BUG-20260405-07
-- 来源：2026-04-05 人工补录
-- 严重级别：高
-- 当前状态：2026-04-07 source mode 已关闭；最新快照与 degraded/榜单回退口径修复完成，Test Agent、UI Designer Agent、User Representative Agent（scoped verdict）通过
-- 复现摘要：“情绪轮动”右侧“分歧”长期不更新，“综合强度榜单”缺少时效信息，“快照”时间停留在 4 月 2 日。
-- 验收说明：恢复右侧指标与榜单快照刷新，补清晰时效展示，并验证页面可反映最新数据时间戳。
+**根因**：
+1. **多通道单位不统一**：emweb/datacenter 存储单位是**元**；ths 经 `ParseChineseNumber()` 转换后存储单位是**万元**（"3.5亿"→35000万）。
+2. **数据库无单位标记**：`FinancialReport` 模型无 `DataUnit` 字段。
+3. **前端假设统一**：`formatLargeNumber()` 按元处理（÷1e8→亿），降级到 ths 通道时**金额差 10000 倍**。
 
-### Bug 9: AI 分析反复强调缺少数据支撑
+**涉及文件**：
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Services/FinanceClientHelper.cs:L64`（ParseChineseNumber，万元基准）
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Services/ThsFinanceClient.cs:L185`
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Services/EastmoneyFinanceClient.cs`（原始值=元）
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Models/FinancialReport.cs`（无 DataUnit）
 
-- Bug ID：BUG-20260409-09
-- 来源：2026-04-09 人工发现
-- 严重级别：中
-- 当前状态：开放
-- 复现摘要：使用本地模型执行完整 AI 分析时，分析报告中多处出现"缺乏具体的财务数据""缺少足够数据支撑"等表述，即使相关 MCP 工具（FinancialReportMcp、FinancialTrendMcp 等）已被成功调用并返回数据。怀疑模型未能有效利用工具返回的上下文，或 Prompt 未强调应基于已获取数据进行分析。
-- 验收说明：分析报告应基于已采集的数据给出实质性分析结论，不应在数据已获取的前提下仍反复声明"数据不足"；如确实缺少关键数据，应明确指出缺少哪些具体字段而非笼统声明。
+**修复方案**：ths 通道统一转为元（万元值 ×10000），所有通道存储单位一致。
+**严重度**：高 | **级别**：S（数据正确性）
 
-## 历史备注
+---
 
-- 2026-04-09 Bug 4 已关闭：根因确认为 Ollama NumPredict 默认值 256 token 导致研究角色结构化 JSON 输出截断→级联解析失败→分析流程无限期卡住。后端修复：NumPredict 256→2048、Research 场景 MaxOutputTokens=4096 + ResponseFormat=Json + 180s 单次调用超时保护；前端修复：轮询使用独立 AbortController + pollInFlight guard 消除取消风暴；数据层：Research 实体文本字段配置 Unicode 支持 CJK。Test Agent 验证 544 测试通过，source-mode 完整 AI 分析约 6 分钟完成（0 Failed / 122 Completed），User Representative Agent 确认前端自动同步完成状态。剩余的报告 JSON 原始字符串泄漏仍有个别边缘场景，另行跟踪。
+## BUG-3: "重新采集报告"无过程反馈
 
-- 2026-04-08 Bug 2 已关闭：4 月 5 日日志复盘确认并非 MCP 整体失效，fresh source-mode 下 direct MCP 端点可正常返回；实际根因是 Ollama `keep_alive` 不兼容叠加本地模型下 live-gate / recommendation JSON 协议破裂。后端已补 `keep_alive` 规范化、JSON response-format 强制、live-gate bounded repair、recommendation bounded invalid-response 出口，并精简 live-gate prompt。Test Agent 在 `http://localhost:5128` 两轮复测通过：`/api/stocks/copilot/live-gate` 成功完成并执行工具，direct MCP samples 正常，`股票推荐` 不再卡在 `recommend_chart_validator`；剩余 latency / degraded 风险另行跟踪，不作为本 Bug 保持开放的理由。
+**现象**：点击后无进度，只有最终成功/失败提示。
 
-- 2026-04-07 Bug 3 已关闭：`ResearchRoleExecutor` 已对 `MarketContextMcp` 单独放宽 timeout budget，其他工具保持默认预算；Test Agent 在 source mode 下复测 research-workbench 未再出现旧的 `MarketContextMcp` 重试风暴，日志已记录多次成功完成，包含 4000ms 完成样本，且未再出现 `Retrying MarketContextMcp` 模式。Round 2 暴露的是独立的 source-mode research-session 运行时不稳定问题，应另行跟踪，不作为本 Bug 保持开放的理由。
+**根因**：
+1. **返回值被忽略**：`onRecollect()` 丢弃 `CollectionResult`（含 channel、reportCount、fallbackReason、durationMs）。
+2. **同步长请求**：串行 3 数据源，Api 代理超时仅 60 秒，易超时。
 
-- 2026-04-07 Bug 8 已关闭：latest packaged validation 已确认 `财务数据测试` 管理页裸六码输入在 `600519`、`000858` 等样本上可成功采集，日志正确更新、worker 持续健康且无 frontend/page error；其余个别标的失败表现为显式上游耗尽或 `cninfo` 无可下载 PDF，不再视为本 Bug 未修复，后续如需扩覆盖率应单独跟踪。
+**涉及文件**：
+- 前端：`frontend/src/modules/financial/FinancialDetailDrawer.vue`（onRecollect）
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Services/FinancialDataOrchestrator.cs`（CollectAsync）
+- 后端：`backend/SimplerJiangAiAgent.Api/Modules/Stocks/StocksModule.cs`（代理超时 60s）
 
-- 2026-04-07 Bug 5 已关闭：后端 route/DI/symbol 修复、worker proxy timeout split、管理员日志契约修复、股票页 sparse-data 状态修复已在 fresh packaged rebuild 后完成复核；Test Agent packaged validation、UI Designer Agent 与 User Representative Agent 均通过。`财务数据测试` 裸码 `600519` -> `股票信息` 规范化 `sh600519` 回显链路已验证；对仅有稀疏 PDF 数据的样本，`财务报表` 明确显示“已通过/已获取 ... 期报表，但当前暂无可展示的结构化财务指标”视为通过。
+**修复方案**：展示采集结果摘要（通道、报告数、耗时、降级原因）。
+**严重度**：中 | **级别**：M
 
-- 2026-04-07 Bug 7 已关闭：`/api/market/sentiment/latest` fresh source-mode 复核已确认不再回退到 April-2 旧快照；上游不完整时页面进入 fresh degraded `同步不完整` 口径，`综合强度榜单` 不再回退旧 snapshot，而是明确显示榜单待补齐/暂不展示历史榜单；Test Agent、UI Designer Agent、User Representative Agent（scoped verdict）通过。`股票信息 -> 新建计划` 缺少市场上下文区块已确认是独立预存问题，不作为 Bug 7 保持开放的理由。
+---
 
-- 2026-03-24 归档备注：当时无开放项。Bug 6、Bug 7、Bug 8 已归档到 `.automation/buglist-resolved-20260323.md`。
-	- 2026-03-22 本轮在 `sh600000` 的 `盘中消息带` 与右侧 `资讯影响` 中未再看到原记录里的错字/失真标题样例。
-	- 当前样本下暂未复现，但仅覆盖了 `sh600000` 单一标的，建议后续在 `全量资讯库` 再抽样复核，不在本轮直接关闭。
+## BUG-4: 选择2023年仍只显示2025数据
 
-## Bug 模板
+**现象**：选择 2023 年无法获取历史数据。
 
-### Bug X: 标题
+**根因**：
+1. **采集器只拉最新数据**：Eastmoney API `endDate` 默认空，只返最近 4-5 期（2024~2025），本地无 2023 数据。
+2. **选年份不触发采集**：前端筛选只在本地 LiteDB 过滤，不自动触发历史采集。
+3. **无空态提示**。
 
-- 严重级别：高 / 中 / 低
-- 当前状态：开放 / 处理中 / 已修复待验证 / 已关闭
-- 复现摘要：明确入口、操作、现象与已知根因
-- 验收说明：明确完成标准、保留条件与复测口径
+**涉及文件**：
+- 后端：`backend/SimplerJiangAiAgent.FinancialWorker/Services/EastmoneyFinanceClient.cs:L64-72`
+- 后端：`backend/SimplerJiangAiAgent.Api/Modules/Stocks/Services/FinancialDataReadService.cs:L284-294`
 
+**修复方案**：后端支持按年份范围采集；前端空态引导采集历史数据。
+**严重度**：高 | **级别**：M
 
-人工发现的bug:
-- "财务报表" 功能前端报错："加载失败: Unexpected token '<', "<!doctype "... is not valid JSON"
+---
+
+## 优先级排序
+
+1. **BUG-2**（S级紧急）→ V043-P0-A
+2. **BUG-4**（M级）→ V043-P1-B
+3. **BUG-1**（M级）→ V043-P1-C
+4. **BUG-3**（M级）→ V043-P1-D
+
+> 计划在 v0.4.2 完成后，作为 v0.4.3 排期修复。

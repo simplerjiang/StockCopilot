@@ -469,6 +469,7 @@ const pdfViewerOpen = ref(false)
 const pdfViewerLoading = ref(false)
 const pdfViewerError = ref('')
 const pdfViewerFileId = ref(null)
+const pdfViewerFileList = ref([])  // V042-P0-A: 候选列表，传给 ComparePane 渲染 picker
 let pdfResolveToken = 0
 
 // ---- V041-S8-FU-1：「采集 PDF 原件」入口（与「查看 PDF 原件」区分） ----
@@ -476,9 +477,19 @@ const collectingPdf = ref(false)
 const collectPdfMessage = ref('')
 const collectPdfErrorMsg = ref('')
 
+// V042-P0-C (B3) 修复：后端 pdf_files 集合的 Symbol 字段统一存为 6 位数字（如
+// "600519"），而本 Tab 的 props.symbol 经常带市场前缀（如 "sh600519" / "SZ000001"），
+// 直接用 raw 值查询会被精确匹配过滤掉，回到 items.length === 0 的空态分支，
+// 表现就是「Modal 打开后只有『该报告暂无 PDF 原件』alert」。这里统一抽出数字部分。
+function normalizeSymbolForPdf(raw) {
+  if (raw == null) return ''
+  const digits = String(raw).replace(/\D+/g, '')
+  return digits
+}
+
 async function openPdfViewer() {
-  const symbol = symbolRef.value?.trim() || ''
-  if (!symbol || pdfViewerLoading.value) return
+  const rawSymbol = symbolRef.value?.trim() || ''
+  if (!rawSymbol || pdfViewerLoading.value) return
   pdfViewerOpen.value = true
   pdfViewerError.value = ''
   pdfViewerFileId.value = null
@@ -488,22 +499,54 @@ async function openPdfViewer() {
     const reportDate = summary.value?.periods?.[0]?.reportDate
       || summary.value?.periods?.[0]?.ReportDate
       || null
-    // V041-S8 NIT-3 修复：summary 的 reportType（如 Annual/Quarterly）与后端
-    // 按 PDF 标题判定的 reportType（Annual/Q1/Q2/Q3/Unknown）经常不匹配，
-    // 导致带 reportType 过滤后空列表。这里只按 symbol 拉，再用 reportPeriod
-    // 与 reportDate 精确匹配；匹配不上时退化为最新一份（按 LastParsedAt desc）。
-    const res = await listPdfFiles({ symbol, page: 1, pageSize: 10 })
+    // V041-S8 NIT-3 / V042-P0-C (B3) 修复：
+    // 1) summary 的 reportType（Annual/Quarterly）与后端按 PDF 标题判定的
+    //    reportType（Annual/Q1/Q2/Q3/Unknown）经常不匹配，所以只按 symbol 拉。
+    // 2) symbol 必须用数字形式（"600519"），不能带 sh/sz 前缀，否则后端
+    //    LiteDB `$.Symbol = @p0` 精确匹配返回 0 条。
+    // 3) reportPeriod 命中则用之；否则不再退化到「items[0]」（受 LastParsedAt
+    //    desc 排序影响，可能选到 fieldCount=0 的摘要 PDF），改为挑 fieldCount
+    //    最大那条（更可能是主报告，与 ComparePane B1 切换器策略一致）。
+    const symbolForApi = normalizeSymbolForPdf(rawSymbol) || rawSymbol
+    // V042-R3 N4 修复：把 pageSize 从 10 抬到 20，保证主报告 / 摘要 / 英文版三件套
+    // 都能进入候选列表，避免后端按 LastParsedAt desc 排序时主报告被挤出去。
+    const res = await listPdfFiles({ symbol: symbolForApi, page: 1, pageSize: 20 })
     if (token !== pdfResolveToken) return
     const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    pdfViewerFileList.value = items
     if (items.length === 0) {
       pdfViewerError.value = '该报告暂无 PDF 原件，请先触发「📥 采集 PDF 原件」'
       return
     }
     let pick = null
-    if (reportDate) {
-      pick = items.find(x => (x.reportPeriod || x.ReportPeriod) === reportDate) || null
+    // V042-R3 N4 + B1 二阶段：reportDate 命中可能匹配「摘要 PDF」，造成默认选中
+    // fieldCount=0 的摘要而非主报告。改成 reportDate 命中后再按 fieldCount/摘要降权
+    // 二次筛选，与 ComparePane.smartPickPdfId 策略一致。
+    const SUMMARY_PATTERN = /(摘要|summary|英文|english)/i
+    const fcOf = (it) => Number(it?.fieldCount ?? it?.FieldCount ?? 0) || 0
+    const isSummary = (it) => SUMMARY_PATTERN.test(String(it?.fileName ?? it?.FileName ?? ''))
+    const smartPick = (pool) => {
+      if (!Array.isArray(pool) || pool.length === 0) return null
+      return [...pool].sort((a, b) => {
+        const fa = fcOf(a), fb = fcOf(b)
+        const hasA = fa > 0 ? 1 : 0, hasB = fb > 0 ? 1 : 0
+        if (hasA !== hasB) return hasB - hasA
+        const sa = isSummary(a) ? 1 : 0, sb = isSummary(b) ? 1 : 0
+        if (sa !== sb) return sa - sb
+        if (fa !== fb) return fb - fa
+        return 0
+      })[0] || null
     }
-    if (!pick) pick = items[0]
+    if (reportDate) {
+      const matched = items.filter(x => (x.reportPeriod || x.ReportPeriod) === reportDate)
+      if (matched.length > 0) {
+        pick = smartPick(matched)
+      }
+    }
+    if (!pick) {
+      // 全集兜底：fieldCount 最大且非摘要/英文
+      pick = smartPick(items) || items[0]
+    }
     const id = pick?.id ?? pick?.Id ?? null
     if (!id) {
       pdfViewerError.value = '该报告暂无可用 PDF 文件 ID。'
@@ -523,8 +566,18 @@ async function openPdfViewer() {
 function closePdfViewer() {
   pdfViewerOpen.value = false
   pdfViewerFileId.value = null
+  pdfViewerFileList.value = []
   pdfViewerError.value = ''
   pdfResolveToken++
+}
+
+// V042-P0-A：用户在 ComparePane picker 中切换 PDF
+function onPdfViewerPicked(id) {
+  if (!id) return
+  const v = String(id)
+  if (pdfViewerFileId.value !== v) {
+    pdfViewerFileId.value = v
+  }
 }
 
 // V041-S8-FU-1：触发 PDF 原件采集。成功后重置 pdfResolveToken，下次「查看 PDF 原件」重新解析。
@@ -547,10 +600,55 @@ async function onCollectPdf() {
 }
 
 function onComparePaneRefresh(detail) {
-  // S 级最小处理：仅日志记录；列表元数据回写留待后续 Story（本 Tab 数据来自 trend/summary 聚合，无逐报告字段）。
-  // TODO(V041-Sx): 若未来 trend/summary 暴露 reparse 元信息，可在此触发 fetchData() 局部刷新。
+  // V042-P0-C (B4)：ComparePane 触发 reparse 后，结构化趋势/摘要也应该跟着刷新，
+  // 否则用户看到 PDF 解析换了新版本但 Tab 上方表格还停留在旧值。这里重新拉
+  // trend + summary，但保留采集结果横幅（preserveCollectState=true），避免把
+  // 用户刚看到的「✅ 已通过 emweb 获取 X 期报表」给清掉。
   // eslint-disable-next-line no-console
   console.debug('[FinancialReportTab] ComparePane refresh', detail)
+  // 失败不抛（避免 ComparePane 内部 emit 链路冒泡）。
+  Promise.resolve(fetchData({ preserveCollectState: true })).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[FinancialReportTab] ComparePane refresh -> fetchData 失败', err)
+  })
+
+  // V042-R3 B4 二阶段：reparse 后还要刷 picker 候选列表里的 fieldCount /
+  // lastReparsedAt，否则用户切回别的 PDF 再切回来时 picker 文案是旧的。
+  refreshPdfViewerFileList(detail).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[FinancialReportTab] refreshPdfViewerFileList 失败', err)
+  })
+}
+
+// V042-R3 B4 二阶段：reparse 后让 picker 候选列表跟上最新 fieldCount / lastReparsedAt。
+// 优先把刚拿到的 detail 直接合并进列表（即时反馈），再异步重拉一次 listPdfFiles 兜底。
+async function refreshPdfViewerFileList(detail) {
+  const rawSymbol = symbolRef.value?.trim() || ''
+  if (!rawSymbol) return
+  const symbolForApi = normalizeSymbolForPdf(rawSymbol) || rawSymbol
+
+  // 先用 detail 即时打补丁，避免等待 HTTP
+  if (detail && (detail.id || detail.Id)) {
+    const id = String(detail.id ?? detail.Id)
+    const idx = pdfViewerFileList.value.findIndex((it) => String(it.id ?? it.Id) === id)
+    if (idx >= 0) {
+      const merged = { ...pdfViewerFileList.value[idx], ...detail }
+      const next = pdfViewerFileList.value.slice()
+      next[idx] = merged
+      pdfViewerFileList.value = next
+    }
+  }
+
+  try {
+    const res = await listPdfFiles({ symbol: symbolForApi, page: 1, pageSize: 20 })
+    const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    if (items.length > 0) {
+      pdfViewerFileList.value = items
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[FinancialReportTab] listPdfFiles 重拉失败', e)
+  }
 }
 </script>
 
@@ -753,7 +851,9 @@ function onComparePaneRefresh(detail) {
             <FinancialReportComparePane
               v-else-if="pdfViewerFileId"
               :pdf-file-id="pdfViewerFileId"
+              :pdf-files="pdfViewerFileList"
               @refresh="onComparePaneRefresh"
+              @pdf-change="onPdfViewerPicked"
               @close="closePdfViewer"
             />
           </div>

@@ -72,10 +72,17 @@ const onReparseClick = () => {
       <button
         type="button"
         class="fc-pdf-voting-btn"
+        :class="{ 'fc-pdf-voting-btn--loading': reparsing }"
         data-testid="fc-pdf-voting-reparse-btn"
         :disabled="reparsing"
         @click="onReparseClick"
       >
+        <span
+          v-if="reparsing"
+          class="fc-pdf-voting-spinner"
+          aria-hidden="true"
+          data-testid="fc-pdf-voting-reparse-spinner"
+        ></span>
         {{ reparsing ? '解析中…' : '重新解析' }}
       </button>
     </header>
@@ -153,6 +160,24 @@ const onReparseClick = () => {
 .fc-pdf-voting-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.fc-pdf-voting-btn--loading {
+  cursor: progress !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fc-pdf-voting-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(37, 99, 235, 0.25);
+  border-top-color: var(--color-primary, #2563eb);
+  border-radius: 50%;
+  animation: fc-pdf-voting-spin 0.8s linear infinite;
+}
+@keyframes fc-pdf-voting-spin {
+  to { transform: rotate(360deg); }
 }
 .fc-pdf-voting-grid {
   display: grid;

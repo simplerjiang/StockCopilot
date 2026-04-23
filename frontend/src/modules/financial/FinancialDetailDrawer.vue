@@ -40,6 +40,7 @@ const collectPdfMessage = ref('')
 
 // V041-S5: PDF 文件解析（detail 中无 pdfFileId 时回退到 listPdfFiles）
 const resolvedPdfId = ref(null)
+const pdfFileList = ref([])  // V042-P0-A: 完整候选列表，传给 ComparePane 渲染 picker
 const resolvingPdf = ref(false)
 const resolvePdfError = ref('')
 let pdfResolveToken = 0
@@ -71,7 +72,8 @@ const resolveSymbol = () => {
 
 let fetchToken = 0
 
-async function loadDetail() {
+async function loadDetail(options = {}) {
+  const { resolvePdf = true } = options
   const id = resolveId()
   if (!id) {
     detail.value = null
@@ -100,7 +102,10 @@ async function loadDetail() {
     }
   }
   // detail 加载完成后解析对应 PDF（独立 token，避免互相阻塞）
-  resolvePdfFileId()
+  // V042-R3 BLOCKER1：reparse 后调用方需要保留用户当前选中的 PDF（resolvedPdfId），
+  // 此时通过 resolvePdf=false 跳过 smartPick，避免把用户选中的「年度报告摘要」
+  // 切回主报告，让 lastReparsedAt 看似「倒退」。
+  if (resolvePdf) resolvePdfFileId()
 }
 
 function pickPdfIdFromDetail(d) {
@@ -124,10 +129,11 @@ async function resolvePdfFileId() {
     return
   }
 
-  // 没有则按 symbol + reportType 查 PDF 列表，取最新一份
+  // 没有则按 symbol + reportType 查 PDF 列表，按智能策略选
   const symbol = resolveSymbol()
   if (!symbol) {
     resolvedPdfId.value = null
+    pdfFileList.value = []
     return
   }
   const reportType = props.item?.reportType || props.item?.ReportType || detail.value?.reportType || detail.value?.ReportType || null
@@ -137,28 +143,120 @@ async function resolvePdfFileId() {
     const res = await listPdfFiles({ symbol, reportType, page: 1, pageSize: 5 })
     if (token !== pdfResolveToken) return
     const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    pdfFileList.value = items
     if (items.length === 0) {
       resolvedPdfId.value = null
       return
     }
-    // 优先匹配 reportPeriod === reportDate；不匹配则取第一条（后端按 LastParsedAt desc 排序）
+    // V042-P0-A 智能默认：
+    //   1) 报告期严格匹配 → 同期内再按 fieldCount 智能选（兼顾「年报正本」vs「年报摘要」）
+    //   2) 无报告期匹配 → 在所有候选中按 fieldCount > 0 优先 + 摘要降权 + lastParsedAt desc
     const reportDate = props.item?.reportDate || props.item?.ReportDate || detail.value?.reportDate || detail.value?.ReportDate || null
-    let pick = null
-    if (reportDate) {
-      pick = items.find(x => (x.reportPeriod || x.ReportPeriod) === reportDate) || null
-    }
-    if (!pick) pick = items[0]
+    const matched = reportDate
+      ? items.filter(x => (x.reportPeriod || x.ReportPeriod) === reportDate)
+      : []
+    const pool = matched.length > 0 ? matched : items
+    const pick = smartPickPdf(pool) || pool[0]
     const newId = String(pick.id || pick.Id || '') || null
     if (resolvedPdfId.value !== newId) resolvedPdfId.value = newId
   } catch (e) {
     if (token !== pdfResolveToken) return
     resolvePdfError.value = e?.message || '加载 PDF 列表失败'
     resolvedPdfId.value = null
+    pdfFileList.value = []
   } finally {
     if (token === pdfResolveToken) {
       resolvingPdf.value = false
     }
   }
+}
+
+// V042-P0-A: 智能选 PDF —— 字段量优先 / 摘要降权 / lastParsedAt desc
+const SUMMARY_PATTERN = /(摘要|summary|英文|english)/i
+function smartPickPdf(items) {
+  if (!Array.isArray(items) || items.length === 0) return null
+  const sorted = [...items].sort((a, b) => {
+    const fa = Number(a?.fieldCount ?? a?.FieldCount ?? 0) || 0
+    const fb = Number(b?.fieldCount ?? b?.FieldCount ?? 0) || 0
+    const hasA = fa > 0 ? 1 : 0
+    const hasB = fb > 0 ? 1 : 0
+    if (hasA !== hasB) return hasB - hasA
+    const sumA = SUMMARY_PATTERN.test(String(a?.fileName ?? a?.FileName ?? '')) ? 1 : 0
+    const sumB = SUMMARY_PATTERN.test(String(b?.fileName ?? b?.FileName ?? '')) ? 1 : 0
+    if (sumA !== sumB) return sumA - sumB
+    if (fa !== fb) return fb - fa
+    const ta = a?.lastParsedAt ? new Date(a.lastParsedAt).getTime() || 0 : 0
+    const tb = b?.lastParsedAt ? new Date(b.lastParsedAt).getTime() || 0 : 0
+    return tb - ta
+  })
+  return sorted[0] || null
+}
+
+// V042-P0-A：用户在 ComparePane picker 中切换 PDF 时同步给 drawer
+function onPdfPicked(id) {
+  if (!id) return
+  const v = String(id)
+  if (resolvedPdfId.value !== v) {
+    resolvedPdfId.value = v
+  }
+}
+
+// V042-R3 N3：抽屉宽度 ~470px，PDF iframe 列只剩 ~270px，Chrome PDF viewer 在
+// 此宽度下不渲染。改成「在 Modal 中查看 PDF」—— 抽屉里只保留入口按钮 +
+// PDF 元数据简介，深度对照走全屏 Modal（与股票详情入口体验一致）。
+const pdfModalOpen = ref(false)
+function openPdfModal() {
+  if (!resolvedPdfId.value) return
+  pdfModalOpen.value = true
+}
+function closePdfModal() {
+  pdfModalOpen.value = false
+}
+function onPdfModalRefresh(detailFromModal) {
+  // 重解析后刷新 detail（financial_reports 的字段可能变）+ 重拉 PDF 列表（picker 候选）。
+  // V042-R3 BLOCKER1：reparse 必须保留用户当前选中的 PDF。loadDetail 走 resolvePdf=false
+  // 跳过 smartPick；listPdfFiles 重拉只更新数组数据，不改 resolvedPdfId。
+  loadDetail({ resolvePdf: false })
+  // 优先用 modal 透传过来的 detail 即时打补丁，避免等待 HTTP 时 picker 文案陈旧
+  if (detailFromModal && (detailFromModal.id || detailFromModal.Id)) {
+    const id = String(detailFromModal.id ?? detailFromModal.Id)
+    const idx = pdfFileList.value.findIndex((it) => String(it.id ?? it.Id) === id)
+    if (idx >= 0) {
+      const merged = { ...pdfFileList.value[idx], ...detailFromModal }
+      const next = pdfFileList.value.slice()
+      next[idx] = merged
+      pdfFileList.value = next
+    }
+  }
+  // 单独重拉 listPdfFiles 以让 pdfFileList 反映新 fieldCount / lastReparsedAt
+  refreshPdfFileList().catch(() => {})
+}
+async function refreshPdfFileList() {
+  const symbol = resolveSymbol()
+  if (!symbol) return
+  const reportType = props.item?.reportType || props.item?.ReportType || detail.value?.reportType || detail.value?.ReportType || null
+  try {
+    const res = await listPdfFiles({ symbol, reportType, page: 1, pageSize: 20 })
+    const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    if (items.length > 0) pdfFileList.value = items
+  } catch (e) {
+    // ignore - picker 显示旧值无伤大雅
+  }
+}
+
+// 当前选中 PDF 的元数据快照（抽屉里展示，让用户在打开 Modal 前先看到关键信息）
+const currentPdfMeta = computed(() => {
+  const id = resolvedPdfId.value
+  if (!id) return null
+  const found = pdfFileList.value.find(it => String(it.id ?? it.Id) === String(id))
+  return found || null
+})
+
+const formatDateTimeShort = (raw) => {
+  if (!raw) return '—'
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return String(raw)
+  return d.toLocaleString()
 }
 
 async function onRecollect() {
@@ -394,18 +492,38 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
 
             <section class="fc-drawer-section">
               <h4 class="fc-drawer-section-title">PDF 原件</h4>
-              <!-- V041-S8 NIT-4：只要已有 resolvedPdfId 就保持 ComparePane 挂载，
-                   避免 reparse 后 loadDetail() → resolvePdfFileId() 把 resolvingPdf
-                   置 true 导致 ComparePane 短暂卸载/重新挂载、internalDetail 被冲掉。 -->
+              <!-- V042-R3 N3：抽屉宽度太窄会让 Chrome PDF viewer 不渲染（~270px 列宽）。
+                   改成「打开 PDF 对照 Modal」—— 抽屉里只展示候选数 + 当前选择 + 入口按钮，
+                   深度对照在全屏 Modal 里完成。 -->
               <div
                 v-if="resolvedPdfId"
-                class="fc-drawer-pdf-compare"
-                data-testid="fc-drawer-pdf-compare"
+                class="fc-drawer-pdf-summary"
+                data-testid="fc-drawer-pdf-summary"
               >
-                <FinancialReportComparePane
-                  :pdf-file-id="resolvedPdfId"
-                  @refresh="loadDetail"
-                />
+                <dl class="fc-drawer-pdf-meta">
+                  <div class="fc-drawer-pdf-meta-row">
+                    <dt>当前 PDF</dt>
+                    <dd data-testid="fc-drawer-pdf-current-name">{{ currentPdfMeta?.fileName || currentPdfMeta?.FileName || '—' }}</dd>
+                  </div>
+                  <div class="fc-drawer-pdf-meta-row">
+                    <dt>字段数</dt>
+                    <dd>{{ currentPdfMeta?.fieldCount ?? currentPdfMeta?.FieldCount ?? '—' }}</dd>
+                  </div>
+                  <div class="fc-drawer-pdf-meta-row">
+                    <dt>候选数</dt>
+                    <dd>{{ pdfFileList.length }}</dd>
+                  </div>
+                  <div class="fc-drawer-pdf-meta-row">
+                    <dt>最近重解析</dt>
+                    <dd>{{ formatDateTimeShort(currentPdfMeta?.lastReparsedAt || currentPdfMeta?.LastReparsedAt) }}</dd>
+                  </div>
+                </dl>
+                <button
+                  type="button"
+                  class="fc-drawer-pdf-open-btn"
+                  data-testid="fc-drawer-pdf-open-btn"
+                  @click="openPdfModal"
+                >📄 在 Modal 中查看 / 重新解析 PDF</button>
               </div>
               <div
                 v-else-if="resolvingPdf"
@@ -466,6 +584,44 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
           </div>
         </footer>
       </aside>
+    </div>
+  </Teleport>
+
+  <!-- V042-R3 N3：PDF 对照独立 Modal（teleport 到 body，绕过抽屉宽度限制） -->
+  <Teleport to="body">
+    <div
+      v-if="pdfModalOpen"
+      class="fc-drawer-pdf-modal-overlay"
+      data-testid="fc-drawer-pdf-modal"
+      @click.self="closePdfModal"
+    >
+      <div
+        class="fc-drawer-pdf-modal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="PDF 原件对照"
+      >
+        <header class="fc-drawer-pdf-modal-header">
+          <h3 class="fc-drawer-pdf-modal-title">PDF 原件 / 对照</h3>
+          <button
+            type="button"
+            class="fc-drawer-pdf-modal-close"
+            data-testid="fc-drawer-pdf-modal-close"
+            @click="closePdfModal"
+            title="关闭"
+          >✕</button>
+        </header>
+        <div class="fc-drawer-pdf-modal-body">
+          <FinancialReportComparePane
+            v-if="resolvedPdfId"
+            :pdf-file-id="resolvedPdfId"
+            :pdf-files="pdfFileList"
+            @refresh="onPdfModalRefresh"
+            @pdf-change="onPdfPicked"
+            @close="closePdfModal"
+          />
+        </div>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -646,6 +802,106 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
   color: var(--color-text-muted);
   font-size: var(--text-sm);
   background: var(--color-bg-surface-alt);
+}
+
+/* V042-R3 N3：抽屉里 PDF 元数据简介 + 入口按钮 */
+.fc-drawer-pdf-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface-alt);
+}
+.fc-drawer-pdf-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+.fc-drawer-pdf-meta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fc-drawer-pdf-meta-row dt {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+.fc-drawer-pdf-meta-row dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+.fc-drawer-pdf-open-btn {
+  appearance: none;
+  border: 1px solid var(--color-primary, #2563eb);
+  background: var(--color-primary, #2563eb);
+  color: #fff;
+  font-size: var(--text-sm);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  align-self: flex-start;
+}
+.fc-drawer-pdf-open-btn:hover {
+  filter: brightness(1.05);
+}
+
+/* V042-R3 N3：PDF 对照 Modal（独立全屏） */
+.fc-drawer-pdf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.fc-drawer-pdf-modal-dialog {
+  width: min(1280px, calc(100vw - 48px));
+  height: min(880px, calc(100vh - 48px));
+  background: var(--color-bg-surface, #fff);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+}
+.fc-drawer-pdf-modal-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-light, #e5e7eb);
+}
+.fc-drawer-pdf-modal-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.fc-drawer-pdf-modal-close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.fc-drawer-pdf-modal-close:hover {
+  background: var(--color-bg-surface-alt, #f3f4f6);
+}
+.fc-drawer-pdf-modal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px 16px;
+  overflow: hidden;
 }
 
 .fc-drawer-footer {

@@ -259,6 +259,12 @@ public sealed class StocksModule : IModule
                 case "found":
                     var safeName = string.IsNullOrWhiteSpace(resolution.AccessKey) ? "document.pdf" : resolution.AccessKey;
                     httpContext.Response.Headers["Content-Disposition"] = $"inline; filename=\"{safeName}\"";
+                    // V042-P0-B (B2)：在 packaged WebView2 内 iframe 渲染 PDF 时整块灰白。
+                    // 显式声明响应可被同源 iframe 嵌入（移除任何中间件可能加上的
+                    // X-Frame-Options: DENY），并禁用 sniff，避免 Chromium 把响应误判为
+                    // application/octet-stream 触发下载。
+                    httpContext.Response.Headers.Remove("X-Frame-Options");
+                    httpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
                     return Results.File(
                         resolution.FullPath!,
                         contentType: "application/pdf",

@@ -327,7 +327,7 @@ describe('FinancialDetailDrawer - 关闭交互', () => {
 })
 
 describe('FinancialDetailDrawer - V041-S5 PDF 对照接入', () => {
-  it('listPdfFiles 返回 items 时渲染 ComparePane', async () => {
+  it('listPdfFiles 返回 items 时渲染 PDF 入口（点击后挂载 ComparePane Modal）', async () => {
     mocks.fetchFinancialReportDetail.mockResolvedValueOnce(fullDetail())
     mocks.listPdfFiles.mockResolvedValueOnce({
       items: [
@@ -360,10 +360,20 @@ describe('FinancialDetailDrawer - V041-S5 PDF 对照接入', () => {
       page: 1,
       pageSize: 5
     })
-    const compare = document.querySelector('[data-testid="fc-drawer-pdf-compare"]')
-    expect(compare).toBeTruthy()
-    expect(document.querySelector('[data-testid="fc-compare-pane"]')).toBeTruthy()
+    // V042-R3 N3：抽屉里现在只渲染入口按钮 + meta 摘要（不内嵌 ComparePane）
+    const summary = document.querySelector('[data-testid="fc-drawer-pdf-summary"]')
+    expect(summary).toBeTruthy()
+    expect(document.querySelector('[data-testid="fc-drawer-pdf-open-btn"]')).toBeTruthy()
     expect(document.querySelector('[data-testid="fc-drawer-pdf-empty"]')).toBeFalsy()
+    // 没点击之前 ComparePane 不挂载（Modal 关闭）
+    expect(document.querySelector('[data-testid="fc-compare-pane"]')).toBeFalsy()
+
+    // 点击入口按钮 → Modal 弹出 → ComparePane 挂载
+    const btn = document.querySelector('[data-testid="fc-drawer-pdf-open-btn"]')
+    btn.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+    expect(document.querySelector('[data-testid="fc-drawer-pdf-modal"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="fc-compare-pane"]')).toBeTruthy()
 
     wrapper.unmount()
   })
@@ -377,6 +387,8 @@ describe('FinancialDetailDrawer - V041-S5 PDF 对照接入', () => {
     await flushPromises()
 
     expect(document.querySelector('[data-testid="fc-drawer-pdf-empty"]')).toBeTruthy()
+    // 没有 PDF 时连入口按钮都不渲染
+    expect(document.querySelector('[data-testid="fc-drawer-pdf-open-btn"]')).toBeFalsy()
     expect(document.querySelector('[data-testid="fc-compare-pane"]')).toBeFalsy()
     expect(mocks.fetchPdfFileDetail).not.toHaveBeenCalled()
 
@@ -423,14 +435,22 @@ describe('FinancialDetailDrawer - V041-S5 PDF 对照接入', () => {
     const wrapper = mountDrawer()
     await flushPromises()
     await flushPromises()
+    expect(mocks.fetchPdfFileDetail).not.toHaveBeenCalled()  // V042-R3 N3：抽屉里不再内嵌 ComparePane，需要点开 Modal 才会拉 detail
+
+    // 点开 PDF Modal 才挂载 ComparePane（drawer 现在只是入口）
+    const openBtn = document.querySelector('[data-testid="fc-drawer-pdf-open-btn"]')
+    expect(openBtn).toBeTruthy()
+    openBtn.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
     expect(mocks.fetchPdfFileDetail).toHaveBeenCalledTimes(1)
 
-    // 模拟用户从 ComparePane 触发 reparse → emit('refresh', detail) → loadDetail
+    // 模拟用户从 ComparePane 触发 reparse → emit('refresh', detail) → onPdfModalRefresh
     // 通过组件 API 直接触发以绕过 PDF iframe 与 jsdom 的兼容问题
     const pane = wrapper.findComponent({ name: 'FinancialReportComparePane' })
     expect(pane.exists()).toBe(true)
     await pane.vm.$emit('refresh', { id: 'pdf-abc' })
-    // loadDetail → fetchFinancialReportDetail 异步 → resolvePdfFileId 异步
+    // onPdfModalRefresh → loadDetail → resolvePdfFileId 异步
     await flushPromises()
     await flushPromises()
 
