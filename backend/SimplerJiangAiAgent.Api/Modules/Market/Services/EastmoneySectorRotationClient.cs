@@ -35,6 +35,24 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
                 .ToList();
 
             var merged = MergeBoardRows(rankedByChange, rankedByMainFlow, take);
+            if (merged.Count == 0)
+            {
+                try
+                {
+                    var push2Result = await GetBoardRankingsViaPush2Async(boardType, take, cancellationToken);
+                    if (push2Result.Count > 0)
+                    {
+                        DataSourceTracker.RecordSourceSuccess(sourceKey, stopwatch.Elapsed.TotalMilliseconds);
+                        DataSourceTracker.RecordSourceSuccess(mergedSourceKey, stopwatch.Elapsed.TotalMilliseconds);
+                        return push2Result;
+                    }
+                }
+                catch
+                {
+                    // push2 fallback failed — continue to return empty
+                }
+            }
+
             DataSourceTracker.RecordSourceSuccess(sourceKey, stopwatch.Elapsed.TotalMilliseconds);
             DataSourceTracker.RecordSourceSuccess(mergedSourceKey, stopwatch.Elapsed.TotalMilliseconds);
             return merged;
@@ -215,6 +233,51 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
         return JsonDocument.Parse(payload);
     }
 
+    private async Task<IReadOnlyList<EastmoneySectorBoardRow>> GetBoardRankingsViaPush2Async(
+        string boardType, int topN, CancellationToken ct)
+    {
+        var fsFilter = boardType switch
+        {
+            SectorBoardTypes.Industry => "m:90+t:2",
+            SectorBoardTypes.Concept => "m:90+t:3",
+            SectorBoardTypes.Style => "m:90+t:1",
+            _ => "m:90+t:3"
+        };
+
+        var url = $"https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz={Math.Clamp(topN, 1, 200)}&po=1&np=1" +
+                  $"&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs={fsFilter}" +
+                  $"&fields=f2,f3,f4,f6,f12,f14,f62,f66,f72,f78,f84,f184";
+
+        using var document = await GetDocumentAsync(url, ct);
+        var diffItems = GetDiffRows(document);
+
+        var rows = new List<EastmoneySectorBoardRow>();
+        int rank = 1;
+        foreach (var item in diffItems)
+        {
+            var name = GetString(item, "f14");
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var mainNetInflow = GetDecimal(item, "f62");
+            rows.Add(new EastmoneySectorBoardRow(
+                BoardType: boardType,
+                SectorCode: GetString(item, "f12"),
+                SectorName: name,
+                ChangePercent: GetDecimal(item, "f3") / 100m,
+                MainNetInflow: mainNetInflow,
+                SuperLargeNetInflow: GetDecimal(item, "f66"),
+                LargeNetInflow: GetDecimal(item, "f72"),
+                MediumNetInflow: GetDecimal(item, "f78"),
+                SmallNetInflow: GetDecimal(item, "f84"),
+                TurnoverAmount: GetDecimal(item, "f6"),
+                TurnoverShare: 0m,
+                RankNo: rank++,
+                RawJson: item.GetRawText()));
+        }
+
+        return rows;
+    }
+
     internal static string NormalizeBoardFilter(string boardType)
     {
         return boardType switch
@@ -273,9 +336,19 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
 
         if (document.RootElement.ValueKind == JsonValueKind.Object)
         {
-            if (document.RootElement.TryGetProperty("data", out var data) && TryGetArray(data, out var dataArray))
+            if (document.RootElement.TryGetProperty("data", out var data))
             {
-                return dataArray.EnumerateArray().ToArray();
+                if (TryGetArray(data, out var dataArray))
+                {
+                    return dataArray.EnumerateArray().ToArray();
+                }
+
+                // data.diff path (bkzj format: { data: { total: N, diff: [...] } })
+                if (data.ValueKind == JsonValueKind.Object
+                    && data.TryGetProperty("diff", out var diff) && diff.ValueKind == JsonValueKind.Array)
+                {
+                    return diff.EnumerateArray().ToArray();
+                }
             }
 
             if (document.RootElement.TryGetProperty("result", out var result) && TryGetArray(result, out var resultArray))
@@ -334,7 +407,7 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
             boardType,
             GetString(item, "f12"),
             GetString(item, "f14"),
-            GetDecimal(item, "f3"),
+            GetDecimal(item, "f3") / 100m,
             mainFlow,
             0m,
             0m,
