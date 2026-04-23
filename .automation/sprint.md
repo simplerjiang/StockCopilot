@@ -18,6 +18,7 @@
 | v0.4.2 必修 | 2026-04-23 | 7/7 | User Rep 95/100 | BLOCKER 修复：smartPickPdfId / X-Frame-Options / publish 脚本 |
 | v0.4.2N PDF 管线重构 | 2026-04-24 | 8/8 | 1126 tests, 0 fail | 全文持久化 / 价格缩写 / 投票透明化 / cninfo 修复 |
 | v0.4.2 财报 RAG Lite | 2026-04-24 | 8/8 | 1147 tests, 0 fail | SQLite FTS5 / jieba 分词 / 三层切块 / BM25 检索 / REST API |
+| v0.4.3 | 2026-04-24 | S0–S9 全部 DONE | — | Hybrid Retrieval + AI 集成 |
 
 ---
 
@@ -33,86 +34,22 @@
 
 ---
 
-## v0.4.3 Sprint（Hybrid Retrieval 与 AI 集成增强）
+## v0.4.4 Sprint（产品质量修复）
 
 ### Sprint 目标
-**在 Lite RAG 基础上增加向量检索（Ollama embedding + sqlite-vec），实现 BM25+向量混合召回 + Citation 引用链路 + AI 路径集成。**
+**修复 P0/P1 产品 Bug + 高优技术债清理，提升产品可用性和数据准确性。**
 
-### 核心约束（GOAL-v043 §7）
-- Embedding：本地 Ollama HTTP（默认 bge-m3），不引入 ONNX / 云端 API
-- 向量存储：sqlite-vec 扩展（financial-rag.db 内新增 chunk_embeddings 表）
-- 混合检索：BM25 + 向量 + RRF（Reciprocal Rank Fusion），不引入独立 reranker
-- 沿用 v0.4.2 三接口（IChunker / IRetriever / IEmbedder），不引入 SK / KM
-- 前置门禁：v0.4.2.1 评估集 nDCG@5 baseline，Hybrid 须比 Lite RAG 提升 ≥15%
-
-### Stories
-
-#### V043-S0: v0.4.2.1 评估集（前置门禁）
-- **状态**：DONE | **级别**：M
-- **描述**：人工标注 30 条财报 Q&A（经营情况 10 / 风险 5 / 募资 5 / 会计政策 5 / 分红 5），每条标注 1-3 个正确 chunk 作为 ground truth。提供 CLI 评估脚本 `tools/RagEval`，输出 nDCG@5 / Recall@10 / MRR 报告。
-- **验收**：评估集 JSON 存在；BM25 baseline 报告已生成；nDCG@5 有数值。
-
-#### V043-S1: sqlite-vec 扩展 + chunk_embeddings 表
-- **状态**：DONE | **级别**：M
-- **描述**：在 `financial-rag.db` 中启用 sqlite-vec 扩展，新增 `chunk_embeddings` 虚表（chunk_id, embedding FLOAT[dim]）。dim 从配置读取（默认 1024）。
-- **验收**：Worker 启动时加载 sqlite-vec 并创建虚表；dotnet test 验证插入/查询向量。
-
-#### V043-S2: OllamaEmbedder 实现
-- **状态**：DONE | **级别**：M
-- **描述**：实现 `IEmbedder` → Ollama HTTP API（`http://localhost:11434/api/embeddings`）。默认模型 bge-m3。检测 Ollama 是否在线，不可用时 `IsAvailable=false` 并 fallback 到纯 BM25。
-- **验收**：Ollama 在线时生成向量；离线时优雅降级不崩溃。
-
-#### V043-S3: Embedding Pipeline 集成
-- **状态**：DONE | **级别**：M | **依赖**：S1, S2
-- **描述**：chunk 入库后异步调用 `IEmbedder`，将向量写入 `chunk_embeddings`。支持批量 embedding。Ollama 不可用时跳过 embedding，仅保留 BM25 索引。
-- **验收**：PDF 解析后 chunk_embeddings 有记录；Ollama 离线时 chunks 仍正常入库。
-
-#### V043-S4: HybridRetriever（BM25 + 向量 + RRF）
-- **状态**：DONE | **级别**：M | **依赖**：S1, S2, S3
-- **描述**：扩展 `IRetriever`，内部组合 BM25（FTS5）+ 向量（sqlite-vec knn）+ RRF 合并排序。Embedding 不可用时自动降级为纯 BM25。
-- **验收**：Hybrid 模式 nDCG@5 比 BM25 baseline 提升 ≥15%；降级后行为与 v0.4.2 一致。
-
-#### V043-S5: Search Mode 扩展
-- **状态**：DONE | **级别**：S | **依赖**：S4
-- **描述**：`POST /api/rag/search` 增加 `mode` 参数（bm25 / vector / hybrid，默认 hybrid）。返回中增加 `mode` 字段标识实际使用的检索模式（含降级场景）。
-- **验收**：3 种 mode 可切换；降级时返回实际 mode。
-
-#### V043-S6: Citation DTO + AI 路径注入
-- **状态**：DONE | **级别**：M | **依赖**：S4
-- **描述**：定义 Citation DTO（chunk_id / text / section / page_start / page_end / score / source_file）。在股票信息页 AI 分析、Research、Recommend 调用 LLM 前注入 hybrid 检索结果，响应中保留 citation 数组。
-- **验收**：AI 分析结果含 citations；citation 包含页码和来源。
-
-#### V043-S7: 前端 Citation Chip
-- **状态**：DONE | **级别**：M | **依赖**：S6
-- **描述**：AI 分析结果中的 citation 显示为可点击 chip（[报告名 P.xx]），点击后打开 PDF Viewer 并定位到 `page_start`。缺 page 字段的旧数据显示"原文页码不可用"。
-- **验收**：citation chip 可点击跳转；旧数据降级提示。
-
-#### V043-S8: Embedding Model 管理 UI
-- **状态**：DONE | **级别**：M | **依赖**：S2
-- **描述**：LLM 设置页面新增 Embedding 模型管理子面板：检测 Ollama 在线状态、列出已安装 embedding 模型、一键 `ollama pull <model>` 安装、切换模型时提示重建索引。
-- **验收**：UI 可检测 Ollama / 安装模型 / 切换模型；切换时触发重建提示。
-
-#### V043-S9: v0.4.3 全链路验收
-- **状态**：DONE | **级别**：M | **依赖**：S0~S8
-- **验收标准**：
-  - dotnet test + vitest 全绿
-  - nDCG@5 评估报告：Hybrid ≥ BM25 baseline × 1.15
-  - POST /api/rag/search?mode=hybrid 可调用
-  - AI 分析结果含 citation 并可跳转 PDF
-  - Ollama 离线时全链路降级为 BM25 不崩溃
-  - 更新 README.UserAgentTest.md
-
----
-
-## v0.4.4 Backlog（产品级 P0/P1，非财报路线图）
-
-- **V044-P0-A**：Agent 推荐「完成」状态语义错乱（失败标完成）
-- **V044-P0-B**：情绪轮动核心榜单全线「数据不可用」
-- **V044-P1-C**：股票详情基本面 3 字段空
-- **V044-P1-D**：主力净流入跨页数值矛盾
-- **V044-P1-E**：Worker 运行中但日志面板 0 条
-- **V044-P1-F**：失败态按钮文案「重新连接」→「再试一次」
-- **V044-NIT**：财报单渠道 / 单位混乱 / 资讯英文未译 / 加载中常驻
+| Story | 来源 | 标题 | 分级 | 验收标准 | 状态 |
+|---|---|---|---|---|---|
+| S0 | V044-P0-A | Agent 推荐状态语义修复 | S | 失败/异常的推荐任务不标记为「完成」，显示正确的失败状态 | TODO |
+| S1 | V044-P0-B | 情绪轮动数据恢复 | M | 情绪轮动核心榜单有数据展示，不显示「数据不可用」 | TODO |
+| S2 | V044-P1-C | 股票详情基本面字段补全 | S | 股票详情页 3 个空字段有值显示 | TODO |
+| S3 | V044-P1-D | 主力净流入跨页数值一致性 | M | 列表页与详情页主力净流入数值一致 | TODO |
+| S4 | V044-P1-E | Worker 日志面板修复 | S | Worker 运行中时日志面板显示日志条目 | TODO |
+| S5 | V044-P1-F+NIT | UX 文案与样式统一 | S | 失败态按钮「再试一次」；渠道 Tag 统一；单位格式化；资讯英文翻译；加载态收敛 | TODO |
+| S6 | V040-S6-FU-1 | 财报毛利润补算 | S | 财报中心「毛利润」= 营业总收入 - 营业总成本，有值展示 | TODO |
+| S7 | V040-S6-FU-2 | 财报 keyword 搜索 | M | 搜索框按代码/名称模糊匹配，返回正确结果 | TODO |
+| S8 | — | 全链路验收 | S | dotnet test + vitest 全绿；浏览器验收关键页面 | TODO |
 
 ---
 
