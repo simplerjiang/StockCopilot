@@ -69,6 +69,12 @@ const truncateSnippet = (snippet) => {
   return `${text.slice(0, SNIPPET_MAX)}…`
 }
 
+const formatFieldVal = (val) => {
+  if (val == null) return '—'
+  if (typeof val === 'number') return val.toLocaleString('zh-CN')
+  return String(val)
+}
+
 const onPageClick = (unit) => {
   const start = Number(unit?.pageStart)
   if (!Number.isFinite(start)) return
@@ -146,8 +152,33 @@ const tagStyle = (meta) => {
               </span>
               <span class="fc-pdf-parse-fields">字段 {{ entry.unit?.fieldCount ?? 0 }}</span>
             </div>
+
+            <!-- v0.4.2 NS4: extracted text (collapsible) -->
+            <details
+              v-if="entry.unit?.extractedText"
+              class="fc-pdf-parse-extracted-details"
+            >
+              <summary>提取文本</summary>
+              <div class="fc-parse-extracted-text" data-testid="fc-parse-extracted-text">{{ entry.unit.extractedText }}</div>
+            </details>
+
+            <!-- v0.4.2 NS4: parsed fields table -->
+            <details
+              v-if="entry.unit?.parsedFields && Object.keys(entry.unit.parsedFields).length > 0"
+              class="fc-pdf-parse-fields-details"
+            >
+              <summary>解析字段 ({{ Object.keys(entry.unit.parsedFields).length }})</summary>
+              <table class="fc-parse-fields-table" data-testid="fc-parse-fields-table">
+                <tr v-for="(val, key) in entry.unit.parsedFields" :key="key">
+                  <td class="fc-parse-field-key">{{ key }}</td>
+                  <td class="fc-parse-field-val">{{ formatFieldVal(val) }}</td>
+                </tr>
+              </table>
+            </details>
+
+            <!-- snippet fallback when no extractedText -->
             <p
-              v-if="entry.unit?.snippet"
+              v-if="!entry.unit?.extractedText && entry.unit?.snippet"
               class="fc-pdf-parse-snippet"
               :title="entry.unit.snippet"
             >
@@ -243,5 +274,44 @@ const tagStyle = (meta) => {
   color: var(--color-text-muted, #4b5563);
   line-height: 1.5;
   word-break: break-all;
+}
+.fc-pdf-parse-extracted-details,
+.fc-pdf-parse-fields-details {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.fc-pdf-parse-extracted-details summary,
+.fc-pdf-parse-fields-details summary {
+  cursor: pointer;
+  color: var(--color-text-muted, #6b7280);
+  user-select: none;
+}
+.fc-parse-extracted-text {
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: var(--vp-c-bg-soft, #f6f6f7);
+  padding: 8px;
+  border-radius: 4px;
+  margin: 4px 0;
+}
+.fc-parse-fields-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 4px 0;
+}
+.fc-parse-fields-table td {
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--vp-c-divider, #eee);
+}
+.fc-parse-field-key {
+  color: var(--vp-c-text-2, #666);
+  white-space: nowrap;
+}
+.fc-parse-field-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 </style>

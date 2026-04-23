@@ -41,7 +41,6 @@ describe('FinancialPdfVotingPanel', () => {
     expect(wrapper.find('[data-testid="fc-pdf-voting-confidence"]').text()).toBe('high')
     expect(wrapper.find('[data-testid="fc-pdf-voting-field-count"]').text()).toBe('42')
     expect(wrapper.text()).toContain('解析投票')
-    expect(wrapper.text()).toContain('候选提取器排序与投票明细将在后续版本暴露')
   })
 
   it('extractor / voteConfidence 缺失时回退「未知」', () => {
@@ -83,5 +82,71 @@ describe('FinancialPdfVotingPanel', () => {
     expect(btn.text()).toBe('解析中…')
     await btn.trigger('click')
     expect(wrapper.emitted('reparse')).toBeFalsy()
+  })
+
+  it('renders candidates when votingCandidates are present', () => {
+    const detail = {
+      ...baseDetail,
+      votingCandidates: [
+        { extractor: 'PdfPig', success: true, pageCount: 120, sampleText: '示例文本', isWinner: true },
+        { extractor: 'iText7', success: true, pageCount: 120, sampleText: '示例文本2', isWinner: false },
+        { extractor: 'Docnet', success: false, pageCount: 0, sampleText: null, isWinner: false }
+      ]
+    }
+    const wrapper = mount(FinancialPdfVotingPanel, { props: { detail } })
+    const candidateEls = wrapper.findAll('[data-testid="fc-voting-candidate"]')
+    expect(candidateEls.length).toBe(3)
+    expect(wrapper.find('[data-testid="fc-voting-candidates"]').exists()).toBe(true)
+  })
+
+  it('shows winner badge for isWinner candidate', () => {
+    const detail = {
+      ...baseDetail,
+      votingCandidates: [
+        { extractor: 'PdfPig', success: true, pageCount: 120, sampleText: null, isWinner: true },
+        { extractor: 'iText7', success: true, pageCount: 120, sampleText: null, isWinner: false }
+      ]
+    }
+    const wrapper = mount(FinancialPdfVotingPanel, { props: { detail } })
+    expect(wrapper.find('[data-testid="fc-voting-winner-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fc-voting-winner-badge"]').text()).toContain('胜出')
+  })
+
+  it('shows failed badge for !success candidate', () => {
+    const detail = {
+      ...baseDetail,
+      votingCandidates: [
+        { extractor: 'PdfPig', success: true, pageCount: 120, sampleText: null, isWinner: true },
+        { extractor: 'Docnet', success: false, pageCount: 0, sampleText: null, isWinner: false }
+      ]
+    }
+    const wrapper = mount(FinancialPdfVotingPanel, { props: { detail } })
+    expect(wrapper.find('[data-testid="fc-voting-failed-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fc-voting-failed-badge"]').text()).toContain('失败')
+  })
+
+  it('shows voting notes when present', () => {
+    const detail = {
+      ...baseDetail,
+      votingNotes: 'PdfPig and iText7 agree on page count'
+    }
+    const wrapper = mount(FinancialPdfVotingPanel, { props: { detail } })
+    expect(wrapper.find('[data-testid="fc-voting-notes"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('PdfPig and iText7 agree on page count')
+  })
+
+  it('renders textLength quality indicator for candidates', () => {
+    const detail = {
+      ...baseDetail,
+      votingCandidates: [
+        { extractor: 'PdfPig', success: true, pageCount: 120, textLength: 45000, sampleText: null, isWinner: true },
+        { extractor: 'iText7', success: true, pageCount: 120, textLength: 800, sampleText: null, isWinner: false },
+        { extractor: 'Docnet', success: false, pageCount: 0, textLength: 0, sampleText: null, isWinner: false }
+      ]
+    }
+    const wrapper = mount(FinancialPdfVotingPanel, { props: { detail } })
+    const text = wrapper.text()
+    expect(text).toContain('4.5万字符')
+    expect(text).toContain('800字符')
   })
 })

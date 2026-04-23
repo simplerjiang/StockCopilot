@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SimplerJiangAiAgent.FinancialWorker.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Docnet.Core" Version="2.6.0" />
     <PackageReference Include="itext7" Version="8.0.5" />
     <PackageReference Include="LiteDB" Version="5.0.21" />

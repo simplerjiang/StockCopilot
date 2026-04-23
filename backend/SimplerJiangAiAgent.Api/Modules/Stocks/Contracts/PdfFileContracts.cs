@@ -35,7 +35,17 @@ public sealed record PdfFileDetail(
     string? LastError,
     string AccessKey,
     IReadOnlyList<PdfParseUnitDto> ParseUnits,
-    IReadOnlyList<PdfStageLogDto> StageLogs);
+    IReadOnlyList<PdfStageLogDto> StageLogs)
+{
+    /// <summary>v0.4.2 NS1：每页全文文本，供 RAG/LLM 使用。</summary>
+    public IReadOnlyList<PdfPageTextDto> FullTextPages { get; init; } = Array.Empty<PdfPageTextDto>();
+
+    /// <summary>v0.4.2 NS5：投票候选提取器列表。</summary>
+    public List<VotingCandidateDto> VotingCandidates { get; init; } = new();
+
+    /// <summary>v0.4.2 NS5：投票说明。</summary>
+    public string? VotingNotes { get; init; }
+}
 
 /// <summary>
 /// v0.4.1 §9.1 硬约束：PageStart / PageEnd / BlockKind 三字段必须非空。
@@ -46,14 +56,30 @@ public sealed record PdfParseUnitDto(
     int PageEnd,
     string? SectionName,
     int FieldCount,
-    string? Snippet);
+    string? Snippet,
+    string? ExtractedText,
+    Dictionary<string, object?>? ParsedFields);
 
 public sealed record PdfStageLogDto(
     string Stage,
     string Status,
     long ElapsedMs,
     string? Message,
-    DateTime Timestamp);
+    DateTime Timestamp,
+    Dictionary<string, string>? Details = null);
+
+/// <summary>v0.4.2 NS5：投票候选提取器 DTO。</summary>
+public sealed record VotingCandidateDto(
+    string Extractor,
+    bool Success,
+    int PageCount,
+    int TextLength,
+    string? SampleText,
+    bool IsWinner
+);
+
+/// <summary>v0.4.2 NS1：PDF 页面全文文本 DTO。</summary>
+public sealed record PdfPageTextDto(int PageNumber, string Text);
 
 public sealed record PdfFileListQuery(
     string? Symbol,

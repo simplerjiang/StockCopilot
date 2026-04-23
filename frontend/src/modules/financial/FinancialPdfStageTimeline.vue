@@ -83,6 +83,7 @@ const nodes = computed(() =>
       statusLabel: STATUS_LABELS[status],
       durationText: entry ? formatDuration(entry.durationMs) : PLACEHOLDER,
       message: entry ? truncateMessage(entry.message) : '',
+      details: entry ? (entry.details || entry.Details || null) : null,
       hasEntry: !!entry
     }
   })
@@ -158,8 +159,8 @@ const lastFailedStageLabel = computed(() => {
           <span class="fc-pdf-stage-dot"></span>
           <span v-if="index < nodes.length - 1" class="fc-pdf-stage-line"></span>
         </div>
-        <div class="fc-pdf-stage-body">
-          <div class="fc-pdf-stage-headline">
+        <details class="fc-pdf-stage-body" :data-testid="`fc-pdf-stage-details-${node.stage}`">
+          <summary class="fc-pdf-stage-headline">
             <span class="fc-pdf-stage-label">{{ node.label }}</span>
             <span
               class="fc-pdf-stage-badge"
@@ -170,19 +171,24 @@ const lastFailedStageLabel = computed(() => {
               class="fc-pdf-stage-duration"
               :data-testid="`fc-pdf-stage-duration-${node.stage}`"
             >{{ node.durationText }}</span>
+          </summary>
+          <div class="fc-pdf-stage-expanded">
+            <p
+              v-if="node.message"
+              class="fc-pdf-stage-message"
+              :data-testid="`fc-pdf-stage-message-${node.stage}`"
+            >{{ node.message }}</p>
+            <dl v-if="node.details && Object.keys(node.details).length > 0" class="fc-pdf-stage-detail-list" :data-testid="`fc-pdf-stage-detail-list-${node.stage}`">
+              <template v-for="(val, key) in node.details" :key="key">
+                <dt>{{ key }}</dt>
+                <dd>{{ val }}</dd>
+              </template>
+            </dl>
+            <p v-if="!node.message && (!node.details || Object.keys(node.details).length === 0)" class="fc-pdf-stage-no-details">
+              暂无详细信息
+            </p>
           </div>
-          <p
-            v-if="node.status === 'failed' && node.message && !compact"
-            class="fc-pdf-stage-message"
-            :data-testid="`fc-pdf-stage-message-${node.stage}`"
-          >{{ node.message }}</p>
-          <p
-            v-else-if="node.status === 'failed' && node.message && compact"
-            class="fc-pdf-stage-message-tooltip"
-            :title="node.message"
-            :data-testid="`fc-pdf-stage-message-${node.stage}`"
-          >错误详情</p>
-        </div>
+        </details>
       </li>
     </ol>
   </section>
@@ -290,6 +296,12 @@ const lastFailedStageLabel = computed(() => {
   border: 1px solid transparent;
 }
 
+summary.fc-pdf-stage-headline {
+  cursor: pointer;
+  list-style: none;
+}
+summary.fc-pdf-stage-headline::-webkit-details-marker { display: none; }
+
 .fc-pdf-stage-item.is-failed .fc-pdf-stage-body {
   border-color: var(--stage-failed);
   background: rgba(220, 38, 38, 0.06);
@@ -350,14 +362,12 @@ const lastFailedStageLabel = computed(() => {
   color: var(--stage-failed);
   word-break: break-all;
 }
-.fc-pdf-stage-message-tooltip {
-  margin: 0;
-  font-size: 11px;
-  color: var(--stage-failed);
-  cursor: help;
-  text-decoration: underline dotted;
-  width: fit-content;
-}
+
+.fc-pdf-stage-expanded { padding: 8px 0 4px 0; font-size: 12px; }
+.fc-pdf-stage-detail-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 4px 0; }
+.fc-pdf-stage-detail-list dt { color: var(--color-text-secondary, #666); white-space: nowrap; }
+.fc-pdf-stage-detail-list dd { margin: 0; word-break: break-all; }
+.fc-pdf-stage-no-details { color: var(--color-text-muted, #999); font-style: italic; margin: 0; }
 
 .fc-pdf-stage-list.is-compact .fc-pdf-stage-item {
   padding: 2px 0;

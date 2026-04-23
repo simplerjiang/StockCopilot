@@ -12,7 +12,8 @@ import {
   INCOME_STATEMENT_FIELDS,
   CASH_FLOW_FIELDS,
   pickFieldValue,
-  formatFieldValue
+  formatFieldValue,
+  formatMoneyDisplay
 } from './financialFieldDictionary.js'
 import { REPORT_TYPE_LABEL } from './financialCenterConstants.js'
 import { getSourceChannelTag, sourceChannelTagStyle } from './sourceChannelTag.js'
@@ -259,6 +260,29 @@ const formatDateTimeShort = (raw) => {
   return d.toLocaleString()
 }
 
+function buildRecollectSummary(result) {
+  if (!result || typeof result !== 'object') return '已重新采集，刷新中...'
+  const channel = result.channel || '未知'
+  const count = result.reportCount ?? 0
+  const ms = result.durationMs
+  const duration = ms != null ? `${(ms / 1000).toFixed(1)}s` : ''
+
+  let msg = ''
+  if (result.isDegraded && result.degradeReason) {
+    msg = `采集完成（降级至 ${channel} 通道，原因：${result.degradeReason}，获取 ${count} 期报告`
+  } else {
+    msg = `采集完成（通道：${channel}，获取 ${count} 期报告`
+  }
+  if (duration) msg += `，耗时 ${duration}`
+  msg += '）'
+
+  const warns = result.warnings
+  if (Array.isArray(warns) && warns.length) {
+    msg += `\n⚠ ${warns.join('；')}`
+  }
+  return msg + '\n刷新中...'
+}
+
 async function onRecollect() {
   const symbol = resolveSymbol()
   if (!symbol || recollecting.value) return
@@ -266,8 +290,8 @@ async function onRecollect() {
   recollectError.value = ''
   recollectMessage.value = ''
   try {
-    await recollectFinancialReport(symbol)
-    recollectMessage.value = '已重新采集，刷新中...'
+    const result = await recollectFinancialReport(symbol)
+    recollectMessage.value = buildRecollectSummary(result)
     await loadDetail()
   } catch (e) {
     recollectError.value = e?.message || '重新采集失败'
@@ -286,10 +310,16 @@ async function onCollectPdf() {
   recollectError.value = ''
   recollectMessage.value = ''
   try {
-    await collectPdfFiles(symbol)
-    collectPdfMessage.value = 'PDF 原件采集完成，刷新中...'
-    // 重新解析 PDF 列表（这里不重新拉财报详情，避免不必要的上游调用）
-    await resolvePdfFileId()
+    const result = await collectPdfFiles(symbol)
+    const downloaded = result?.downloadedCount ?? 0
+    const parsed = result?.parsedCount ?? 0
+    if (downloaded > 0 || parsed > 0) {
+      collectPdfMessage.value = `PDF 原件采集完成（下载 ${downloaded} 个，解析 ${parsed} 个），刷新中...`
+      // 重新解析 PDF 列表（这里不重新拉财报详情，避免不必要的上游调用）
+      await resolvePdfFileId()
+    } else {
+      collectPdfError.value = result?.notes || 'cninfo 未找到可下载的 PDF 公告'
+    }
   } catch (e) {
     collectPdfError.value = e?.message || 'PDF 原件采集失败'
   } finally {
@@ -377,11 +407,14 @@ const buildRows = (dictKeyLower, fields) => {
     const upper = dictKeyLower.charAt(0).toUpperCase() + dictKeyLower.slice(1)
     dict = v[dictKeyLower] || v[upper] || null
   }
-  return fields.map(f => ({
-    key: f.key,
-    label: f.label,
-    display: formatFieldValue(pickFieldValue(dict, f))
-  }))
+  return fields.map(f => {
+    const raw = pickFieldValue(dict, f)
+    if (f.key === 'epsBasic') {
+      return { key: f.key, label: f.label, display: formatFieldValue(raw), fullValue: '' }
+    }
+    const money = formatMoneyDisplay(raw)
+    return { key: f.key, label: f.label, display: money.display, fullValue: money.full }
+  })
 }
 
 const balanceRows = computed(() => buildRows('balanceSheet', BALANCE_SHEET_FIELDS))
@@ -465,7 +498,7 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
               <dl class="fc-drawer-list">
                 <div v-for="row in balanceRows" :key="row.key" class="fc-drawer-row">
                   <dt>{{ row.label }}</dt>
-                  <dd class="fc-drawer-num">{{ row.display }}</dd>
+                  <dd class="fc-drawer-num" :title="row.fullValue">{{ row.display }}</dd>
                 </div>
               </dl>
             </section>
@@ -475,7 +508,7 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
               <dl class="fc-drawer-list">
                 <div v-for="row in incomeRows" :key="row.key" class="fc-drawer-row">
                   <dt>{{ row.label }}</dt>
-                  <dd class="fc-drawer-num">{{ row.display }}</dd>
+                  <dd class="fc-drawer-num" :title="row.fullValue">{{ row.display }}</dd>
                 </div>
               </dl>
             </section>
@@ -485,7 +518,7 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
               <dl class="fc-drawer-list">
                 <div v-for="row in cashRows" :key="row.key" class="fc-drawer-row">
                   <dt>{{ row.label }}</dt>
-                  <dd class="fc-drawer-num">{{ row.display }}</dd>
+                  <dd class="fc-drawer-num" :title="row.fullValue">{{ row.display }}</dd>
                 </div>
               </dl>
             </section>

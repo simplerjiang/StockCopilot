@@ -232,7 +232,12 @@ public class PdfFileQueryService : IPdfFileQueryService
             LastError: SafeNullableString(doc, "LastError"),
             AccessKey: SafeString(doc, "AccessKey"),
             ParseUnits: ReadParseUnits(doc),
-            StageLogs: ReadStageLogs(doc));
+            StageLogs: ReadStageLogs(doc))
+        {
+            FullTextPages = ReadFullTextPages(doc),
+            VotingCandidates = ReadVotingCandidates(doc),
+            VotingNotes = SafeNullableString(doc, "VotingNotes"),
+        };
     }
 
     private static IReadOnlyList<PdfParseUnitDto> ReadParseUnits(BsonDocument doc)
@@ -252,7 +257,9 @@ public class PdfFileQueryService : IPdfFileQueryService
                 PageEnd: SafeInt(d, "PageEnd"),
                 SectionName: SafeNullableString(d, "SectionName"),
                 FieldCount: SafeInt(d, "FieldCount"),
-                Snippet: SafeNullableString(d, "Snippet")));
+                Snippet: SafeNullableString(d, "Snippet"),
+                ExtractedText: SafeNullableString(d, "ExtractedText"),
+                ParsedFields: ReadParsedFields(d)));
         }
         return list;
     }
@@ -268,14 +275,80 @@ public class PdfFileQueryService : IPdfFileQueryService
         {
             if (!v.IsDocument) continue;
             var d = v.AsDocument;
+            Dictionary<string, string>? details = null;
+            if (d.ContainsKey("Details") && d["Details"].IsDocument)
+            {
+                details = new Dictionary<string, string>();
+                foreach (var kv in d["Details"].AsDocument)
+                    details[kv.Key] = kv.Value?.AsString ?? "";
+            }
             list.Add(new PdfStageLogDto(
                 Stage: SafeString(d, "Stage"),
                 Status: SafeString(d, "Status"),
                 ElapsedMs: SafeLong(d, "ElapsedMs"),
                 Message: SafeNullableString(d, "Message"),
-                Timestamp: SafeNullableDateTime(d, "Timestamp") ?? DateTime.MinValue));
+                Timestamp: SafeNullableDateTime(d, "Timestamp") ?? DateTime.MinValue,
+                Details: details));
         }
         return list;
+    }
+
+    private static IReadOnlyList<PdfPageTextDto> ReadFullTextPages(BsonDocument doc)
+    {
+        if (!doc.ContainsKey("FullTextPages") || doc["FullTextPages"].IsNull) return Array.Empty<PdfPageTextDto>();
+        var arr = doc["FullTextPages"].AsArray;
+        if (arr == null) return Array.Empty<PdfPageTextDto>();
+
+        var list = new List<PdfPageTextDto>(arr.Count);
+        foreach (var v in arr)
+        {
+            if (!v.IsDocument) continue;
+            var d = v.AsDocument;
+            list.Add(new PdfPageTextDto(
+                PageNumber: SafeInt(d, "PageNumber"),
+                Text: SafeString(d, "Text")));
+        }
+        return list;
+    }
+
+    private static List<VotingCandidateDto> ReadVotingCandidates(BsonDocument doc)
+    {
+        if (!doc.ContainsKey("VotingCandidates") || doc["VotingCandidates"].IsNull) return new();
+        var arr = doc["VotingCandidates"].AsArray;
+        if (arr == null) return new();
+
+        var list = new List<VotingCandidateDto>(arr.Count);
+        foreach (var v in arr)
+        {
+            if (!v.IsDocument) continue;
+            var d = v.AsDocument;
+            list.Add(new VotingCandidateDto(
+                Extractor: SafeString(d, "Extractor"),
+                Success: d.ContainsKey("Success") && d["Success"].AsBoolean,
+                PageCount: SafeInt(d, "PageCount"),
+                TextLength: SafeInt(d, "TextLength"),
+                SampleText: SafeNullableString(d, "SampleText"),
+                IsWinner: d.ContainsKey("IsWinner") && d["IsWinner"].AsBoolean));
+        }
+        return list;
+    }
+
+    private static Dictionary<string, object?>? ReadParsedFields(BsonDocument d)
+    {
+        if (!d.ContainsKey("ParsedFields") || d["ParsedFields"].IsNull) return null;
+        var sub = d["ParsedFields"];
+        if (!sub.IsDocument) return null;
+        var doc = sub.AsDocument;
+        var dict = new Dictionary<string, object?>(doc.Count);
+        foreach (var key in doc.Keys)
+        {
+            var val = doc[key];
+            dict[key] = val.IsNull ? null
+                : val.IsNumber ? (object)val.AsDouble
+                : val.IsString ? val.AsString
+                : val.ToString();
+        }
+        return dict;
     }
 
     private static string MapBlockKind(BsonDocument d)

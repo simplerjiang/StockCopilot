@@ -63,6 +63,26 @@ const onReparseClick = () => {
   if (props.reparsing) return
   emit('reparse')
 }
+
+const candidates = computed(() => {
+  const d = props.detail
+  if (!d) return []
+  return d.votingCandidates || d.VotingCandidates || []
+})
+
+const votingNotes = computed(() => {
+  const d = props.detail
+  if (!d) return null
+  return d.votingNotes || d.VotingNotes || null
+})
+
+const textLen = (c) => c.textLength || c.TextLength || 0
+
+const formatTextLen = (len) => {
+  if (len >= 10000) return `${(len / 10000).toFixed(1)}万字符`
+  if (len >= 1000) return `${(len / 1000).toFixed(1)}k字符`
+  return `${len}字符`
+}
 </script>
 
 <template>
@@ -120,9 +140,35 @@ const onReparseClick = () => {
       <span>{{ lastError }}</span>
     </div>
 
-    <p class="fc-pdf-voting-footnote">
-      * 候选提取器排序与投票明细将在后续版本暴露
-    </p>
+    <!-- v0.4.2 NS5: Voting candidates display -->
+    <div v-if="candidates.length > 0" class="fc-voting-candidates" data-testid="fc-voting-candidates">
+      <h4 class="fc-voting-section-title">提取器对比</h4>
+      <div
+        v-for="c in candidates" :key="c.extractor || c.Extractor"
+        class="fc-voting-candidate"
+        :class="{ 'fc-voting-candidate--winner': c.isWinner || c.IsWinner }"
+        data-testid="fc-voting-candidate"
+      >
+        <div class="fc-voting-candidate-header">
+          <span class="fc-voting-candidate-name">{{ c.extractor || c.Extractor }}</span>
+          <span v-if="c.isWinner || c.IsWinner" class="fc-voting-winner-badge" data-testid="fc-voting-winner-badge">✓ 胜出</span>
+          <span v-else-if="!(c.success ?? c.Success ?? true)" class="fc-voting-failed-badge" data-testid="fc-voting-failed-badge">✗ 失败</span>
+        </div>
+        <div v-if="c.success ?? c.Success" class="fc-voting-candidate-meta">
+          <span>{{ c.pageCount || c.PageCount }} 页</span>
+          <span v-if="textLen(c) > 0">{{ formatTextLen(textLen(c)) }}</span>
+        </div>
+        <div v-if="c.sampleText || c.SampleText" class="fc-voting-candidate-sample">
+          {{ c.sampleText || c.SampleText }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Voting notes -->
+    <div v-if="votingNotes" class="fc-voting-notes" data-testid="fc-voting-notes">
+      <h4 class="fc-voting-section-title">投票说明</h4>
+      <p class="fc-voting-notes-text">{{ votingNotes }}</p>
+    </div>
   </section>
 </template>
 
@@ -215,4 +261,16 @@ const onReparseClick = () => {
   font-size: 11px;
   color: var(--color-text-muted, #9ca3af);
 }
+.fc-voting-candidates { margin-top: 12px; }
+.fc-voting-section-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--color-text, #111827); }
+.fc-voting-candidate { padding: 8px 12px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 6px; margin-bottom: 6px; }
+.fc-voting-candidate--winner { border-color: var(--color-primary, #3b82f6); background: rgba(59, 130, 246, 0.06); }
+.fc-voting-candidate-header { display: flex; align-items: center; gap: 8px; }
+.fc-voting-candidate-name { font-weight: 500; font-size: 13px; }
+.fc-voting-winner-badge { font-size: 11px; color: var(--color-primary, #3b82f6); font-weight: 600; }
+.fc-voting-failed-badge { font-size: 11px; color: #ef4444; }
+.fc-voting-candidate-meta { font-size: 12px; color: var(--color-text-muted, #666); margin-top: 4px; }
+.fc-voting-candidate-sample { font-size: 11px; color: var(--color-text-muted, #999); margin-top: 4px; max-height: 60px; overflow: hidden; white-space: pre-wrap; word-break: break-all; }
+.fc-voting-notes { margin-top: 12px; }
+.fc-voting-notes-text { font-size: 12px; color: var(--color-text-muted, #666); white-space: pre-wrap; }
 </style>

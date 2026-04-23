@@ -245,6 +245,7 @@ const showEmpty = computed(() => !props.loading && !props.error && props.items.l
       <div v-if="showEmpty" class="fc-empty">
         <template v-if="hasFilter">
           <p class="fc-empty-text">当前筛选下没有匹配的财报</p>
+          <p class="fc-empty-hint">历史年份数据可能尚未采集，可前往采集面板获取更多数据</p>
           <button type="button" class="fc-btn fc-btn--ghost" @click="emit('reset')">重置筛选</button>
         </template>
         <template v-else>

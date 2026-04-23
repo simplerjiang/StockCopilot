@@ -47,6 +47,43 @@ public class FinancialDataOrchestrator
 
     // ─── 单 symbol 采集 ────────────────────────────────────────────
 
+    /// <summary>
+    /// 多轮拉取 emweb 报表以覆盖更多历史年份。每轮返回最近 ~5 期，
+    /// 取最早日期作为下一轮 endDate 向前追溯，默认 3 轮可覆盖 ~4 年。
+    /// </summary>
+    private async Task<List<FinancialReport>> FetchEmwebMultiRoundAsync(
+        string symbol, int companyType, int maxRounds = 3, CancellationToken ct = default)
+    {
+        var allReports = new Dictionary<string, FinancialReport>(); // keyed by ReportDate
+        string? endDate = null;
+
+        for (var round = 0; round < maxRounds; round++)
+        {
+            var reports = await _emweb.FetchFinancialReportsAsync(symbol, companyType, endDate, ct);
+            if (reports.Count == 0) break;
+
+            var newCount = 0;
+            foreach (var r in reports)
+            {
+                if (allReports.TryAdd(r.ReportDate, r))
+                    newCount++;
+            }
+
+            // 没有新数据，说明已到尽头
+            if (newCount == 0) break;
+
+            // 用本轮最早日期作为下一轮的 endDate 向前追溯
+            endDate = reports.Min(r => r.ReportDate);
+
+            // 礼貌延迟，避免被反爬
+            if (round < maxRounds - 1)
+                await Task.Delay(500, ct);
+        }
+
+        _logger.LogInformation("emweb multi-round fetched {Count} reports for {Symbol}", allReports.Count, symbol);
+        return allReports.Values.ToList();
+    }
+
     public async Task<CollectionResult> CollectAsync(string symbol, CancellationToken ct = default)
     {
         CurrentActivity = $"采集中:{symbol}";
@@ -57,7 +94,7 @@ public class FinancialDataOrchestrator
         try
         {
             var companyType = await _emweb.DetectCompanyTypeAsync(symbol, ct);
-            var reports = await _emweb.FetchFinancialReportsAsync(symbol, companyType, ct: ct);
+            var reports = await FetchEmwebMultiRoundAsync(symbol, companyType, ct: ct);
 
             if (reports.Count > 0)
             {

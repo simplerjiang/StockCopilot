@@ -111,6 +111,44 @@ public class PdfFileDocumentTests : IDisposable
     }
 
     [Fact]
+    public void PdfFileDocument_FullTextPages_RoundTripsThroughLiteDb()
+    {
+        var doc = new PdfFileDocument
+        {
+            Symbol = "000001",
+            FileName = "000001_2024_annual.pdf",
+            Title = "平安银行2024年年度报告",
+            LocalPath = @"C:\App_Data\financial-reports\000001\000001_2024_annual.pdf",
+            AccessKey = "000001_2024_annual.pdf",
+            ReportPeriod = "2024-12-31",
+            ReportType = "Annual",
+            FullTextPages = new List<PdfPageText>
+            {
+                new() { PageNumber = 1, Text = "第一页内容" },
+                new() { PageNumber = 2, Text = "第二页内容" },
+                new() { PageNumber = 3, Text = "第三页内容" },
+            },
+        };
+
+        _db.PdfFiles.Insert(doc);
+
+        var loaded = _db.PdfFiles.FindOne(x => x.Symbol == "000001");
+        Assert.NotNull(loaded);
+        Assert.Equal(3, loaded.FullTextPages.Count);
+
+        // 1-based sequential page numbers
+        for (int i = 0; i < loaded.FullTextPages.Count; i++)
+        {
+            Assert.Equal(i + 1, loaded.FullTextPages[i].PageNumber);
+            Assert.False(string.IsNullOrEmpty(loaded.FullTextPages[i].Text));
+        }
+
+        Assert.Equal("第一页内容", loaded.FullTextPages[0].Text);
+        Assert.Equal("第二页内容", loaded.FullTextPages[1].Text);
+        Assert.Equal("第三页内容", loaded.FullTextPages[2].Text);
+    }
+
+    [Fact]
     public void PdfFileDocument_UpsertUniqueIndex_OnSymbolAndLocalPath()
     {
         var doc1 = new PdfFileDocument
@@ -134,5 +172,106 @@ public class PdfFileDocumentTests : IDisposable
         };
 
         Assert.Throws<LiteException>(() => _db.PdfFiles.Insert(doc2));
+    }
+
+    [Fact]
+    public void PdfParseUnit_ExtractedTextAndParsedFields_RoundTripThroughLiteDb()
+    {
+        var doc = new PdfFileDocument
+        {
+            Symbol = "300750",
+            FileName = "300750_2024_annual.pdf",
+            Title = "宁德时代2024年年度报告",
+            LocalPath = @"C:\App_Data\financial-reports\300750\300750_2024_annual.pdf",
+            AccessKey = "300750_2024_annual.pdf",
+            ReportPeriod = "2024-12-31",
+            ReportType = "Annual",
+            ParseUnits = new List<PdfParseUnit>
+            {
+                new()
+                {
+                    BlockKind = PdfBlockKind.NarrativeSection,
+                    PageStart = 5,
+                    PageEnd = 8,
+                    SectionName = "BalanceSheet",
+                    FieldCount = 3,
+                    ExtractedText = "合并资产负债表\n货币资金 1000\n应收账款 500",
+                    ParsedFields = new Dictionary<string, object?>
+                    {
+                        ["TotalAssets"] = 100000.0,
+                        ["CashAndEquivalents"] = 1000.0,
+                        ["NullField"] = null,
+                    }
+                },
+                new()
+                {
+                    BlockKind = PdfBlockKind.Table,
+                    PageStart = 12,
+                    PageEnd = 12,
+                    SectionName = "明细表",
+                    FieldCount = 2,
+                    // No ExtractedText/ParsedFields — backward compat
+                },
+            },
+        };
+
+        _db.PdfFiles.Insert(doc);
+
+        var loaded = _db.PdfFiles.FindOne(x => x.Symbol == "300750");
+        Assert.NotNull(loaded);
+        Assert.Equal(2, loaded.ParseUnits.Count);
+
+        var bs = loaded.ParseUnits.First(u => u.SectionName == "BalanceSheet");
+        Assert.Equal("合并资产负债表\n货币资金 1000\n应收账款 500", bs.ExtractedText);
+        Assert.NotNull(bs.ParsedFields);
+        Assert.Equal(3, bs.ParsedFields!.Count);
+        Assert.Equal(100000.0, Convert.ToDouble(bs.ParsedFields["TotalAssets"]));
+        Assert.Equal(1000.0, Convert.ToDouble(bs.ParsedFields["CashAndEquivalents"]));
+
+        // Unit without the new fields should have null (backward compat)
+        var table = loaded.ParseUnits.First(u => u.SectionName == "明细表");
+        Assert.Null(table.ExtractedText);
+        Assert.Null(table.ParsedFields);
+    }
+
+    [Fact]
+    public void PdfFileDocument_VotingCandidates_RoundTripsThroughLiteDb()
+    {
+        var doc = new PdfFileDocument
+        {
+            Symbol = "601318",
+            FileName = "601318_2024_annual.pdf",
+            Title = "中国平安2024年年度报告",
+            LocalPath = @"C:\App_Data\financial-reports\601318\601318_2024_annual.pdf",
+            AccessKey = "601318_2024_annual.pdf",
+            ReportPeriod = "2024-12-31",
+            ReportType = "Annual",
+            VotingNotes = "PdfPig and iText7 agree, Docnet failed",
+            VotingCandidates = new List<VotingCandidate>
+            {
+                new() { Extractor = "PdfPig", Success = true, PageCount = 120, SampleText = "中国平安保险（集团）", IsWinner = true },
+                new() { Extractor = "iText7", Success = true, PageCount = 120, SampleText = "中国平安保险（集团）", IsWinner = false },
+                new() { Extractor = "Docnet", Success = false, PageCount = 0, SampleText = null, IsWinner = false },
+            },
+        };
+
+        _db.PdfFiles.Insert(doc);
+
+        var loaded = _db.PdfFiles.FindOne(x => x.Symbol == "601318");
+        Assert.NotNull(loaded);
+        Assert.Equal("PdfPig and iText7 agree, Docnet failed", loaded.VotingNotes);
+        Assert.Equal(3, loaded.VotingCandidates.Count);
+
+        var winner = loaded.VotingCandidates.Single(c => c.IsWinner);
+        Assert.Equal("PdfPig", winner.Extractor);
+        Assert.True(winner.Success);
+        Assert.Equal(120, winner.PageCount);
+        Assert.Equal("中国平安保险（集团）", winner.SampleText);
+
+        var failed = loaded.VotingCandidates.Single(c => c.Extractor == "Docnet");
+        Assert.False(failed.Success);
+        Assert.Equal(0, failed.PageCount);
+        Assert.Null(failed.SampleText);
+        Assert.False(failed.IsWinner);
     }
 }

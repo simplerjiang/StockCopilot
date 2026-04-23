@@ -93,4 +93,55 @@ describe('FinancialPdfParsePreview', () => {
     expect(snippet.text().endsWith('…')).toBe(true)
     expect(snippet.text().length).toBeLessThanOrEqual(121)
   })
+
+  it('展示 extractedText 并隐藏 snippet（v0.4.2 NS4）', () => {
+    const wrapper = mount(FinancialPdfParsePreview, {
+      props: {
+        parseUnits: [mk({
+          extractedText: '货币资金 1000\n应收账款 500',
+          snippet: '应被隐藏的 snippet'
+        })]
+      }
+    })
+    expect(wrapper.find('[data-testid="fc-parse-extracted-text"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fc-parse-extracted-text"]').text()).toContain('货币资金 1000')
+    // snippet should NOT render when extractedText is present
+    expect(wrapper.find('.fc-pdf-parse-snippet').exists()).toBe(false)
+  })
+
+  it('展示 parsedFields 键值对表格（v0.4.2 NS4）', () => {
+    const wrapper = mount(FinancialPdfParsePreview, {
+      props: {
+        parseUnits: [mk({
+          parsedFields: { TotalAssets: 100000, Revenue: 50000 }
+        })]
+      }
+    })
+    const table = wrapper.find('[data-testid="fc-parse-fields-table"]')
+    expect(table.exists()).toBe(true)
+    const rows = table.findAll('tr')
+    expect(rows).toHaveLength(2)
+    expect(table.text()).toContain('TotalAssets')
+    expect(table.text()).toContain('100,000')
+  })
+
+  it('无 extractedText 时回退显示 snippet（向后兼容）', () => {
+    const wrapper = mount(FinancialPdfParsePreview, {
+      props: {
+        parseUnits: [mk({ snippet: '旧记录的 snippet 文本' })]
+      }
+    })
+    expect(wrapper.find('.fc-pdf-parse-snippet').exists()).toBe(true)
+    expect(wrapper.find('.fc-pdf-parse-snippet').text()).toContain('旧记录的 snippet 文本')
+    expect(wrapper.find('[data-testid="fc-parse-extracted-text"]').exists()).toBe(false)
+  })
+
+  it('parsedFields 为空对象时不渲染字段表格', () => {
+    const wrapper = mount(FinancialPdfParsePreview, {
+      props: {
+        parseUnits: [mk({ parsedFields: {} })]
+      }
+    })
+    expect(wrapper.find('[data-testid="fc-parse-fields-table"]').exists()).toBe(false)
+  })
 })

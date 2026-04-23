@@ -607,7 +607,7 @@ describe('FinancialReportTab', () => {
   it('V041-S8-FU-1 点击「📥 采集 PDF 原件」调用 collect 接口，成功后显示完成提示', async () => {
     mockFetch.mockImplementation((url, init) => {
       if (typeof url === 'string' && url.includes('/pdf-files/collect/')) {
-        return Promise.resolve(createJsonResponse({ success: true, processedCount: 1 }))
+        return Promise.resolve(createJsonResponse({ success: true, downloadedCount: 1, parsedCount: 1 }))
       }
       if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
       if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))

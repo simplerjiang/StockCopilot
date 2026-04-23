@@ -42,11 +42,40 @@ public class PdfParseUnit
     /// <summary>该单元的简短文本片段（用于前端预览，可选）。</summary>
     public string? Snippet { get; set; }
 
+    /// <summary>该单元页范围内的完整提取文本（v0.4.2 NS4）。</summary>
+    public string? ExtractedText { get; set; }
+
+    /// <summary>解析出的字段键值对（v0.4.2 NS4，仅三主表区段）。</summary>
+    public Dictionary<string, object?>? ParsedFields { get; set; }
+
     /// <summary>校验三字段是否合法。</summary>
     public bool IsValid =>
         PageStart >= 1 &&
         PageEnd >= PageStart &&
         Enum.IsDefined(typeof(PdfBlockKind), BlockKind);
+}
+
+/// <summary>
+/// PDF 页面全文文本（v0.4.2 NS1）。
+/// 每条对应一页，供后续 RAG/LLM 使用。
+/// </summary>
+public class PdfPageText
+{
+    public int PageNumber { get; set; }  // 1-based
+    public string Text { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 投票候选提取器结果（v0.4.2 NS5）。
+/// </summary>
+public class VotingCandidate
+{
+    public string Extractor { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public int PageCount { get; set; }
+    public int TextLength { get; set; }
+    public string? SampleText { get; set; }
+    public bool IsWinner { get; set; }
 }
 
 /// <summary>
@@ -101,10 +130,21 @@ public class PdfFileDocument
     public List<PdfParseUnit> ParseUnits { get; set; } = new();
 
     /// <summary>
+    /// 每页全文文本（v0.4.2 NS1），供后续 RAG/LLM 使用。
+    /// </summary>
+    public List<PdfPageText> FullTextPages { get; set; } = new();
+
+    /// <summary>
     /// 阶段日志（v0.4.1 §5.3）。覆盖 5 阶段：download / extract / vote / parse / persist。
     /// 每次解析或重新解析会整体覆盖该数组（仅保留最近一次）。
     /// </summary>
     public List<PdfStageLog> StageLogs { get; set; } = new();
+
+    /// <summary>投票候选提取器列表（v0.4.2 NS5）。</summary>
+    public List<VotingCandidate> VotingCandidates { get; set; } = new();
+
+    /// <summary>投票说明（v0.4.2 NS5）。</summary>
+    public string? VotingNotes { get; set; }
 }
 
 /// <summary>
@@ -124,6 +164,9 @@ public class PdfStageLog
 
     /// <summary>错误摘要（success/skipped 阶段为 null）。</summary>
     public string? Message { get; set; }
+
+    /// <summary>阶段明细（key-value pairs for stage-specific details）。</summary>
+    public Dictionary<string, string>? Details { get; set; }
 
     /// <summary>记录时间（UTC）。</summary>
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;

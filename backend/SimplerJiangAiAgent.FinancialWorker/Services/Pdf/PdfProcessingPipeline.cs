@@ -211,7 +211,7 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
         return DateTime.TryParse(reportPeriod, out var dt) ? dt : null;
     }
 
-    private async Task<PdfFileResult> ProcessSinglePdfAsync(string symbol, DownloadedPdf pdf, CancellationToken ct)
+    internal async Task<PdfFileResult> ProcessSinglePdfAsync(string symbol, DownloadedPdf pdf, CancellationToken ct)
     {
         var fileName = Path.GetFileName(pdf.FilePath);
         _logger.LogDebug("[PDF] 正在处理: {File}", fileName);
@@ -220,6 +220,7 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
         PdfVotingResult? votingResult = null;
         ParsedFinancialStatements? parsed = null;
         List<PdfParseUnit> parseUnits = new();
+        List<PdfPageText> fullTextPages = new();
         PdfFileResult outcome;
 
         // ── Stage 1: download ──
@@ -232,6 +233,15 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
             return "已存在本地";
         });
 
+        if (downloadOk)
+        {
+            AddStageDetails(stageLogs, StageDownload, new Dictionary<string, string>
+            {
+                ["filePath"] = pdf.FilePath ?? "",
+                ["fileSize"] = File.Exists(pdf.FilePath) ? new FileInfo(pdf.FilePath!).Length.ToString() : "0"
+            });
+        }
+
         if (!downloadOk)
         {
             AppendSkipped(stageLogs, StageExtract, StageVote, StageParse, StagePersist);
@@ -241,9 +251,13 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                 Success = false,
                 Error = "PDF 物理文件不存在",
             };
-            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, fullTextPages, outcome, stageLogs);
             return outcome;
         }
+
+        // After stage 1 download succeeds, immediately persist a stub record
+        // so frontend can see the PDF file even if later stages fail.
+        UpsertPdfFileDocumentStub(symbol, pdf, stageLogs.ToList());
 
         // ── Stage 2: extract（含三路提取，时间归到此阶段） ──
         var extractOk = await TryRunStageAsync(stageLogs, StageExtract, async () =>
@@ -253,6 +267,21 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                 throw new InvalidOperationException("三路提取均失败");
             return $"extractor={votingResult.Winner.ExtractorName}";
         });
+
+        if (votingResult != null)
+        {
+            var extractDetails = new Dictionary<string, string>();
+            if (votingResult.AllExtractions != null)
+            {
+                foreach (var ext in votingResult.AllExtractions)
+                {
+                    var key = ext.ExtractorName;
+                    extractDetails[$"{key}.success"] = ext.Success.ToString();
+                    extractDetails[$"{key}.pages"] = ext.PageCount.ToString();
+                }
+            }
+            AddStageDetails(stageLogs, StageExtract, extractDetails);
+        }
 
         if (!extractOk || votingResult == null || votingResult.Winner == null)
         {
@@ -264,12 +293,35 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                 Error = "三路提取均失败",
                 VotingConfidence = votingResult?.Confidence.ToString(),
             };
-            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, fullTextPages, outcome, stageLogs);
             return outcome;
         }
 
         // ── Stage 3: vote（投票决策已在 ExtractAndVoteAsync 中完成，这里只记录结果） ──
         TryRunStage(stageLogs, StageVote, () => $"confidence={votingResult.Confidence}");
+
+        if (votingResult != null)
+        {
+            AddStageDetails(stageLogs, StageVote, new Dictionary<string, string>
+            {
+                ["winner"] = votingResult.Winner?.ExtractorName ?? "none",
+                ["confidence"] = votingResult.Confidence.ToString(),
+                ["notes"] = votingResult.Notes ?? ""
+            });
+        }
+
+        // v0.4.2 NS1：投票完成后，捕获获胜提取器的每页全文，供 RAG/LLM 使用。
+        if (votingResult.Winner?.Pages != null)
+        {
+            for (int i = 0; i < votingResult.Winner.Pages.Count; i++)
+            {
+                fullTextPages.Add(new PdfPageText
+                {
+                    PageNumber = i + 1,
+                    Text = votingResult.Winner.Pages[i]
+                });
+            }
+        }
 
         // ── Stage 4: parse ──
         var parseOk = TryRunStage(stageLogs, StageParse, () =>
@@ -279,6 +331,18 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                 throw new InvalidOperationException("PDF 文本中未找到可解析的财务数据");
             return $"fields={parsed.BalanceSheet.Count + parsed.IncomeStatement.Count + parsed.CashFlowStatement.Count}";
         });
+
+        if (parsed != null)
+        {
+            AddStageDetails(stageLogs, StageParse, new Dictionary<string, string>
+            {
+                ["balanceSheet"] = parsed.BalanceSheet.Count.ToString(),
+                ["incomeStatement"] = parsed.IncomeStatement.Count.ToString(),
+                ["cashFlow"] = parsed.CashFlowStatement.Count.ToString(),
+                ["reportDate"] = parsed.ReportDate ?? "",
+                ["reportType"] = parsed.ReportType ?? ""
+            });
+        }
 
         if (!parseOk || parsed == null || !parsed.HasData)
         {
@@ -291,7 +355,7 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                 VotingConfidence = votingResult.Confidence.ToString(),
                 ExtractorUsed = votingResult.Winner!.ExtractorName,
             };
-            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+            UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, fullTextPages, outcome, stageLogs);
             return outcome;
         }
 
@@ -330,7 +394,7 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
 
         // v0.4.1 §5.1 + §9.1：构造解析单元并落 pdf_files 集合（含 page_start / page_end / block_kind）。
         parseUnits = PdfParseUnitBuilder.Build(votingResult.Winner!, parsed);
-        UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, outcome, stageLogs);
+        UpsertPdfFileDocument(symbol, pdf, votingResult, parsed, parseUnits, fullTextPages, outcome, stageLogs);
 
         return outcome;
     }
@@ -373,6 +437,13 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
             _logger.LogWarning(ex, "[PDF] 阶段 {Stage} 失败", stage);
             return false;
         }
+    }
+
+    private static void AddStageDetails(List<PdfStageLog> logs, string stage, Dictionary<string, string> details)
+    {
+        var log = logs.FindLast(l => l.Stage == stage);
+        if (log != null)
+            log.Details = details;
     }
 
     private static void AppendSkipped(List<PdfStageLog> logs, params string[] stages)
@@ -428,6 +499,57 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
     }
 
     /// <summary>
+    /// v0.4.2 NS3：下载完成后立即写入一条 stub 记录到 pdf_files 集合，
+    /// 使得即使后续阶段失败，前端仍能看到 PDF 文件条目。
+    /// 若该 Symbol + LocalPath 已有完整记录（如之前全阶段跑完），不覆盖。
+    /// </summary>
+    private void UpsertPdfFileDocumentStub(string symbol, DownloadedPdf pdf, List<PdfStageLog> stageLogs)
+    {
+        try
+        {
+            var localPath = pdf.FilePath ?? string.Empty;
+            var existing = _db.PdfFiles.FindOne(x => x.Symbol == symbol && x.LocalPath == localPath);
+            if (existing != null)
+                return; // Already has a record, don't overwrite with stub
+
+            var fileName = Path.GetFileName(localPath);
+            var accessKey = PdfAccessKey.From(localPath);
+
+            var reportPeriod = pdf.Announcement.PublishTime.ToString("yyyy-MM-dd");
+            var fileNameType = InferReportTypeFromFileName(fileName)
+                ?? InferReportTypeFromFileName(pdf.Announcement.Title);
+            var reportType = fileNameType ?? "Unknown";
+
+            var doc = new PdfFileDocument
+            {
+                Symbol = symbol,
+                FileName = fileName,
+                Title = pdf.Announcement.Title ?? string.Empty,
+                LocalPath = localPath,
+                AccessKey = accessKey,
+                ReportPeriod = reportPeriod,
+                ReportType = reportType,
+                Extractor = null,
+                VoteConfidence = null,
+                FieldCount = 0,
+                LastError = null,
+                LastParsedAt = DateTime.UtcNow,
+                LastReparsedAt = null,
+                ParseUnits = new List<PdfParseUnit>(),
+                FullTextPages = new List<PdfPageText>(),
+                StageLogs = stageLogs,
+                VotingCandidates = new List<VotingCandidate>(),
+            };
+            _db.PdfFiles.Insert(doc);
+            _logger.LogInformation("PDF stub record persisted immediately after download: {Symbol}/{FileName}", symbol, fileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PDF] pdf_files stub 写入失败: {File}", pdf.FilePath);
+        }
+    }
+
+    /// <summary>
     /// v0.4.1 §5.1：将 PDF 详情持久化到 pdf_files 集合。
     /// 同一份 PDF（按 Symbol + LocalPath 唯一）已存在时刷新 LastReparsedAt 与解析快照。
     /// AccessKey 始终通过 <see cref="PdfAccessKey.From"/> 重算（v0.4.1 §S2 最小迁移）。
@@ -439,11 +561,33 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
         PdfVotingResult? voting,
         ParsedFinancialStatements? parsed,
         List<PdfParseUnit> parseUnits,
+        List<PdfPageText> fullTextPages,
         PdfFileResult outcome,
         List<PdfStageLog> stageLogs)
     {
         try
         {
+            // v0.4.2 NS5: Build voting candidates
+            var votingCandidates = new List<VotingCandidate>();
+            if (voting?.AllExtractions != null)
+            {
+                var winnerName = voting.Winner?.ExtractorName;
+                foreach (var ext in voting.AllExtractions)
+                {
+                    votingCandidates.Add(new VotingCandidate
+                    {
+                        Extractor = ext.ExtractorName,
+                        Success = ext.Success,
+                        PageCount = ext.PageCount,
+                        TextLength = ext.Success ? ext.FullText.Length : 0,
+                        SampleText = ext.Success && ext.FullText.Length > 0
+                            ? ext.FullText.Substring(0, Math.Min(200, ext.FullText.Length))
+                            : null,
+                        IsWinner = ext.ExtractorName == winnerName,
+                    });
+                }
+            }
+
             var fileName = Path.GetFileName(pdf.FilePath);
             var localPath = pdf.FilePath ?? string.Empty;
             var accessKey = PdfAccessKey.From(localPath);
@@ -482,7 +626,10 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                     LastParsedAt = now,
                     LastReparsedAt = null,
                     ParseUnits = parseUnits ?? new List<PdfParseUnit>(),
+                    FullTextPages = fullTextPages ?? new List<PdfPageText>(),
                     StageLogs = stageLogs ?? new List<PdfStageLog>(),
+                    VotingCandidates = votingCandidates,
+                    VotingNotes = voting?.Notes,
                 };
                 _db.PdfFiles.Insert(doc);
             }
@@ -499,7 +646,10 @@ public class PdfProcessingPipeline : IPdfProcessingPipeline
                 existing.LastError = outcome.Success ? null : outcome.Error;
                 existing.LastReparsedAt = now;
                 existing.ParseUnits = parseUnits ?? existing.ParseUnits;
+                existing.FullTextPages = fullTextPages ?? existing.FullTextPages;
                 existing.StageLogs = stageLogs ?? new List<PdfStageLog>(); // 整体覆盖
+                existing.VotingCandidates = votingCandidates;
+                existing.VotingNotes = voting?.Notes;
                 _db.PdfFiles.Update(existing);
             }
         }

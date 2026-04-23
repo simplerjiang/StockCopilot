@@ -91,6 +91,26 @@ public static class PdfParseUnitBuilder
                     : null,
             };
 
+            // v0.4.2 NS4: populate ExtractedText from page range
+            var textParts = new List<string>();
+            for (int p = pageStart; p <= Math.Min(pageEnd, pageCount); p++)
+            {
+                textParts.Add(extraction.Pages[p - 1]);
+            }
+            unit.ExtractedText = string.Join("\n", textParts);
+
+            // v0.4.2 NS4: populate ParsedFields from parsed statements
+            if (parsed != null && section != null)
+            {
+                unit.ParsedFields = section switch
+                {
+                    "BalanceSheet" => parsed.BalanceSheet?.ToDictionary(kv => kv.Key, kv => (object?)kv.Value),
+                    "IncomeStatement" => parsed.IncomeStatement?.ToDictionary(kv => kv.Key, kv => (object?)kv.Value),
+                    "CashFlowStatement" => parsed.CashFlowStatement?.ToDictionary(kv => kv.Key, kv => (object?)kv.Value),
+                    _ => null
+                };
+            }
+
             if (unit.IsValid) units.Add(unit);
         }
 

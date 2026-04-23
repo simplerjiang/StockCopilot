@@ -182,7 +182,8 @@ public class ThsFinanceClient : IThsFinanceClient
                     var fieldRow = reportArr[fieldIdx];
                     if (fieldRow.ValueKind == JsonValueKind.Array && periodIdx < fieldRow.GetArrayLength())
                     {
-                        dict[name] = FinanceClientHelper.ParseChineseNumber(ParseJsonValue(fieldRow[periodIdx]));
+                        var rawVal = ParseJsonValue(fieldRow[periodIdx]);
+                        dict[name] = ConvertWanToYuan(rawVal, FinanceClientHelper.ParseChineseNumber(rawVal));
                     }
 
                     // Append YoY
@@ -221,6 +222,18 @@ public class ThsFinanceClient : IThsFinanceClient
         }
 
         return date; // 已经是标准格式或不可识别，原样返回
+    }
+
+    /// <summary>
+    /// ParseChineseNumber 输出万元基准，此方法将非百分比值 ×10000 转为元，
+    /// 使 ths 通道与 emweb/datacenter 通道单位一致。
+    /// </summary>
+    private static object? ConvertWanToYuan(object? rawValue, object? parsed)
+    {
+        if (parsed is not double val) return parsed;
+        // 百分比值（原始字符串含 %）不转换
+        if (rawValue is string s && s.Contains('%')) return parsed;
+        return val * 10000;
     }
 
     private static object? ParseJsonValue(JsonElement el)

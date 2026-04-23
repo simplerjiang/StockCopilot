@@ -8,11 +8,12 @@ import FinancialPdfStageTimeline from '../FinancialPdfStageTimeline.vue'
 
 const STAGES = ['download', 'extract', 'vote', 'parse', 'persist']
 
-const makeLog = (stage, status, durationMs, message = null) => ({
+const makeLog = (stage, status, durationMs, message = null, details = null) => ({
   stage,
   status,
   durationMs,
   message,
+  details,
   occurredAt: '2026-04-22T10:00:00Z'
 })
 
@@ -142,16 +143,60 @@ describe('FinancialPdfStageTimeline', () => {
     )
   })
 
-  it('compact=true 时失败 message 折叠为 tooltip 形式', () => {
+  it('compact=true 时仍然渲染 <details> 折叠面板', () => {
     const stageLogs = [makeLog('download', 'failed', 100, '网络异常详情很长很长')]
     const wrapper = mount(FinancialPdfStageTimeline, {
       props: { stageLogs, compact: true }
     })
 
-    const tip = wrapper.find('[data-testid="fc-pdf-stage-message-download"]')
-    expect(tip.exists()).toBe(true)
-    expect(tip.attributes('title')).toContain('网络异常详情很长很长')
-    expect(tip.text()).not.toContain('网络异常详情很长很长')
+    const details = wrapper.find('[data-testid="fc-pdf-stage-details-download"]')
+    expect(details.exists()).toBe(true)
+    expect(details.element.tagName).toBe('DETAILS')
+    const message = wrapper.find('[data-testid="fc-pdf-stage-message-download"]')
+    expect(message.exists()).toBe(true)
+    expect(message.text()).toContain('网络异常详情很长很长')
     expect(wrapper.find('.fc-pdf-stage-list').classes()).toContain('is-compact')
+  })
+
+  it('每阶段渲染为 <details> 折叠面板', () => {
+    const stageLogs = STAGES.map(s => makeLog(s, 'success', 100))
+    const wrapper = mount(FinancialPdfStageTimeline, { props: { stageLogs } })
+
+    for (const stage of STAGES) {
+      const details = wrapper.find(`[data-testid="fc-pdf-stage-details-${stage}"]`)
+      expect(details.exists()).toBe(true)
+      expect(details.element.tagName).toBe('DETAILS')
+    }
+  })
+
+  it('details 字段存在时渲染 key-value 列表', () => {
+    const stageLogs = [
+      makeLog('download', 'success', 100, '已存在本地', { filePath: '/tmp/test.pdf', fileSize: '12345' }),
+      makeLog('extract', 'success', 300, null, { 'PdfPig.success': 'True', 'PdfPig.pages': '10' })
+    ]
+    const wrapper = mount(FinancialPdfStageTimeline, { props: { stageLogs } })
+
+    const dlDownload = wrapper.find('[data-testid="fc-pdf-stage-detail-list-download"]')
+    expect(dlDownload.exists()).toBe(true)
+    const dts = dlDownload.findAll('dt')
+    const dds = dlDownload.findAll('dd')
+    expect(dts.length).toBe(2)
+    expect(dts[0].text()).toBe('filePath')
+    expect(dds[0].text()).toBe('/tmp/test.pdf')
+    expect(dts[1].text()).toBe('fileSize')
+    expect(dds[1].text()).toBe('12345')
+
+    const dlExtract = wrapper.find('[data-testid="fc-pdf-stage-detail-list-extract"]')
+    expect(dlExtract.exists()).toBe(true)
+    expect(dlExtract.findAll('dt').length).toBe(2)
+  })
+
+  it('details 为 null 且无 message 时显示「暂无详细信息」', () => {
+    const stageLogs = [makeLog('download', 'success', 100)]
+    const wrapper = mount(FinancialPdfStageTimeline, { props: { stageLogs } })
+
+    const noDetails = wrapper.find('.fc-pdf-stage-no-details')
+    expect(noDetails.exists()).toBe(true)
+    expect(noDetails.text()).toContain('暂无详细信息')
   })
 })

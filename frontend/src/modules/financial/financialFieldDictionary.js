@@ -119,6 +119,33 @@ export function pickFieldValue(dict, field) {
   return null
 }
 
+/**
+ * 金额缩写显示。
+ * @param {number|string|null} value - 原始金额值（元）
+ * @returns {{ display: string, full: string }} display=缩写, full=完整千分位
+ */
+export function formatMoneyDisplay(value) {
+  if (value == null || value === '') return { display: '—', full: '' }
+  const num = Number(value)
+  if (isNaN(num)) return { display: '—', full: '' }
+
+  const full = new Intl.NumberFormat('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(num)
+
+  let display
+  if (Math.abs(num) >= 1e8) {
+    display = (num / 1e8).toFixed(2) + '亿'
+  } else if (Math.abs(num) >= 1e4) {
+    display = (num / 1e4).toFixed(2) + '万'
+  } else {
+    display = num.toFixed(2)
+  }
+
+  return { display, full }
+}
+
 const intFmt = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 })
 const decFmt = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 

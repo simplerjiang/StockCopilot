@@ -129,8 +129,8 @@ describe('FinancialDetailDrawer - 加载与渲染', () => {
     expect(text).toContain('净利润')
     expect(text).toContain('经营活动现金流净额')
     expect(text).toContain('期末现金及现金等价物余额')
-    // 数字格式化
-    expect(text).toContain('1,000,000')
+    // 数字格式化（formatMoneyDisplay 缩写：1000000 → 100.00万，epsBasic=1.23 保留原值）
+    expect(text).toContain('100.00万')
     expect(text).toContain('1.23')
 
     wrapper.unmount()
@@ -189,7 +189,9 @@ describe('FinancialDetailDrawer - 加载与渲染', () => {
 describe('FinancialDetailDrawer - 重新采集', () => {
   it('点击「重新采集」调用 recollectFinancialReport，成功后重新 fetch 详情', async () => {
     mocks.fetchFinancialReportDetail.mockResolvedValue(fullDetail())
-    mocks.recollectFinancialReport.mockResolvedValueOnce({ success: true })
+    mocks.recollectFinancialReport.mockResolvedValueOnce({
+      success: true, channel: 'emweb', reportCount: 5, durationMs: 2300
+    })
 
     const wrapper = mountDrawer()
     await flushPromises()
@@ -202,7 +204,9 @@ describe('FinancialDetailDrawer - 重新采集', () => {
     await flushPromises()
 
     expect(mocks.recollectFinancialReport).toHaveBeenCalledWith('600519')
-    expect(document.body.textContent).toContain('已重新采集，刷新中')
+    expect(document.body.textContent).toContain('采集完成')
+    expect(document.body.textContent).toContain('emweb')
+    expect(document.body.textContent).toContain('5 期报告')
     expect(mocks.fetchFinancialReportDetail).toHaveBeenCalledTimes(2)
 
     wrapper.unmount()
@@ -240,7 +244,7 @@ describe('FinancialDetailDrawer - V041-S8-FU-1 PDF 原件采集', () => {
         page: 1,
         pageSize: 5
       })
-    mocks.collectPdfFiles.mockResolvedValueOnce({ success: true, processedCount: 1 })
+    mocks.collectPdfFiles.mockResolvedValueOnce({ success: true, downloadedCount: 1, parsedCount: 1 })
 
     const wrapper = mountDrawer()
     await flushPromises()

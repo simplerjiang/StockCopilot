@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, toRef, watch } from 'vue'
 import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
+import { formatMoneyDisplay } from '../financial/financialFieldDictionary.js'
 import { listPdfFiles, collectPdfFiles } from '../financial/financialApi.js'
 import FinancialReportComparePane from '../financial/FinancialReportComparePane.vue'
 
@@ -256,25 +257,31 @@ const topMetrics = computed(() => {
   const ta = findLatestRenderableEntry(trend.value.totalAssets)
 
   if (rev) {
+    const m = formatMoneyDisplay(rev.value)
     metrics.push({
       label: '营业收入',
-      value: formatLargeNumber(rev.value),
+      value: m.display,
+      fullValue: m.full,
       yoyText: formatYoY(rev.yoY),
       yoyClass: getYoYClass(rev.yoY)
     })
   }
   if (np) {
+    const m = formatMoneyDisplay(np.value)
     metrics.push({
       label: '净利润',
-      value: formatLargeNumber(np.value),
+      value: m.display,
+      fullValue: m.full,
       yoyText: formatYoY(np.yoY),
       yoyClass: getYoYClass(np.yoY)
     })
   }
   if (ta) {
+    const m = formatMoneyDisplay(ta.value)
     metrics.push({
       label: '总资产',
-      value: formatLargeNumber(ta.value),
+      value: m.display,
+      fullValue: m.full,
       yoyText: formatYoY(ta.yoY),
       yoyClass: getYoYClass(ta.yoY)
     })
@@ -410,14 +417,7 @@ const dividendRows = computed(() => {
   }))
 })
 
-function formatLargeNumber(val) {
-  if (val == null) return '-'
-  const num = Number(val)
-  if (isNaN(num)) return '-'
-  if (Math.abs(num) >= 1e8) return (num / 1e8).toFixed(2) + '亿'
-  if (Math.abs(num) >= 1e4) return (num / 1e4).toFixed(2) + '万'
-  return num.toFixed(2)
-}
+
 
 function formatYoY(yoy) {
   if (yoy == null) return ''
@@ -430,10 +430,10 @@ function getYoYClass(yoy) {
 }
 
 function formatCellValue(val, yoy) {
-  const numStr = formatLargeNumber(val)
-  if (numStr === '-') return '-'
+  const money = formatMoneyDisplay(val)
+  if (money.display === '—') return '-'
   const yoyStr = yoy != null ? ` (${formatYoY(yoy)})` : ''
-  return numStr + yoyStr
+  return money.display + yoyStr
 }
 
 function formatMetricValue(val, isRatio = false) {
@@ -588,8 +588,14 @@ async function onCollectPdf() {
   collectPdfMessage.value = ''
   collectPdfErrorMsg.value = ''
   try {
-    await collectPdfFiles(symbol)
-    collectPdfMessage.value = 'PDF 原件采集完成，点击「📄 查看 PDF 原件」查看。'
+    const result = await collectPdfFiles(symbol)
+    const downloaded = result?.downloadedCount ?? 0
+    const parsed = result?.parsedCount ?? 0
+    if (downloaded > 0 || parsed > 0) {
+      collectPdfMessage.value = `PDF 原件采集完成（下载 ${downloaded} 个，解析 ${parsed} 个），点击「📄 查看 PDF 原件」查看。`
+    } else {
+      collectPdfErrorMsg.value = result?.notes || 'cninfo 未找到可下载的 PDF 公告'
+    }
     // 如果查看器当前是打开状态且处于错误/空态，重置 token 以避免错误状态残留
     pdfResolveToken++
   } catch (e) {
@@ -750,7 +756,7 @@ async function refreshPdfViewerFileList(detail) {
         <div v-if="topMetrics.length > 0" class="metric-cards">
           <div class="metric-card" v-for="metric in topMetrics" :key="metric.label">
             <div class="metric-label">{{ metric.label }}</div>
-            <div class="metric-value">{{ metric.value }}</div>
+            <div class="metric-value" :title="metric.fullValue">{{ metric.value }}</div>
             <div class="metric-yoy" :class="metric.yoyClass">{{ metric.yoyText }}</div>
           </div>
         </div>

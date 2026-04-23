@@ -4,7 +4,8 @@ import {
   INCOME_STATEMENT_FIELDS,
   CASH_FLOW_FIELDS,
   pickFieldValue,
-  formatFieldValue
+  formatFieldValue,
+  formatMoneyDisplay
 } from '../financialFieldDictionary.js'
 
 describe('financialFieldDictionary - 字段白名单', () => {
@@ -188,5 +189,47 @@ describe('formatFieldValue', () => {
 
   it('非数字字符串原样输出（trim）', () => {
     expect(formatFieldValue(' hello ')).toBe('hello')
+  })
+})
+
+describe('formatMoneyDisplay', () => {
+  it('formats values >= 1亿 as X.XX亿', () => {
+    expect(formatMoneyDisplay(123456789).display).toBe('1.23亿')
+    expect(formatMoneyDisplay(123456789).full).toBe('123,456,789.00')
+  })
+
+  it('formats values >= 1万 as X.XX万', () => {
+    expect(formatMoneyDisplay(56789).display).toBe('5.68万')
+  })
+
+  it('formats values < 1万 as decimal', () => {
+    expect(formatMoneyDisplay(1234.5).display).toBe('1234.50')
+  })
+
+  it('handles null/undefined/empty', () => {
+    expect(formatMoneyDisplay(null).display).toBe('—')
+    expect(formatMoneyDisplay(undefined).display).toBe('—')
+    expect(formatMoneyDisplay('').display).toBe('—')
+  })
+
+  it('handles negative values', () => {
+    expect(formatMoneyDisplay(-234567890).display).toBe('-2.35亿')
+  })
+
+  it('handles string numbers', () => {
+    expect(formatMoneyDisplay('99999').display).toBe('10.00万')
+  })
+
+  it('returns full formatted value with thousands separator', () => {
+    expect(formatMoneyDisplay(56789).full).toBe('56,789.00')
+    expect(formatMoneyDisplay(1234.5).full).toBe('1,234.50')
+  })
+
+  it('handles zero', () => {
+    expect(formatMoneyDisplay(0).display).toBe('0.00')
+  })
+
+  it('handles NaN string', () => {
+    expect(formatMoneyDisplay('abc').display).toBe('—')
   })
 })

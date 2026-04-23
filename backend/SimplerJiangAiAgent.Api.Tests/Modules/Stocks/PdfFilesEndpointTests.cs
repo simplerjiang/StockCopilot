@@ -70,9 +70,9 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
         var stub = new StubPdfFileQueryService();
         var detail = MakeDetail("000000000000000000000001", "600519", new[]
         {
-            new PdfParseUnitDto("narrative_section", 5, 8, "BalanceSheet", 18, null),
-            new PdfParseUnitDto("table", 12, 12, "FixedAsset", 24, null),
-            new PdfParseUnitDto("figure_caption", 3, 3, "FigureCaption", 0, "图1"),
+            new PdfParseUnitDto("narrative_section", 5, 8, "BalanceSheet", 18, null, null, null),
+            new PdfParseUnitDto("table", 12, 12, "FixedAsset", 24, null, null, null),
+            new PdfParseUnitDto("figure_caption", 3, 3, "FigureCaption", 0, "图1", null, null),
         });
         stub.DetailById["000000000000000000000001"] = detail;
         _factory.QueryStub = stub;
@@ -95,6 +95,41 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
             Assert.True(pageStart >= 1, $"pageStart must be >=1 (got {pageStart})");
             Assert.True(pageEnd >= pageStart, $"pageEnd must be >= pageStart (got {pageEnd} < {pageStart})");
         }
+    }
+
+    [Fact]
+    public async Task GetPdfFile_WithValidId_ReturnsFullTextPagesInResponse()
+    {
+        var stub = new StubPdfFileQueryService();
+        var detail = MakeDetail("000000000000000000000001", "600519", new[]
+        {
+            new PdfParseUnitDto("narrative_section", 5, 8, "BalanceSheet", 18, null, null, null),
+        }) with
+        {
+            FullTextPages = new[]
+            {
+                new PdfPageTextDto(1, "Page one text"),
+                new PdfPageTextDto(2, "Page two text"),
+            }
+        };
+        stub.DetailById["000000000000000000000001"] = detail;
+        _factory.QueryStub = stub;
+
+        var client = _factory.CreateClient();
+        var response = await client.GetAsync("/api/stocks/financial/pdf-files/000000000000000000000001");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var fullTextPages = body.GetProperty("fullTextPages");
+        Assert.Equal(2, fullTextPages.GetArrayLength());
+
+        var first = fullTextPages[0];
+        Assert.Equal(1, first.GetProperty("pageNumber").GetInt32());
+        Assert.Equal("Page one text", first.GetProperty("text").GetString());
+
+        var second = fullTextPages[1];
+        Assert.Equal(2, second.GetProperty("pageNumber").GetInt32());
+        Assert.Equal("Page two text", second.GetProperty("text").GetString());
     }
 
     [Fact]
@@ -168,7 +203,7 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
         var stub = new StubPdfFileQueryService();
         var detailWithFailedStages = MakeDetail("000000000000000000000001", "600519", new[]
         {
-            new PdfParseUnitDto("narrative_section", 5, 8, "BalanceSheet", 18, null),
+            new PdfParseUnitDto("narrative_section", 5, 8, "BalanceSheet", 18, null, null, null),
         }, lastError: "三路提取均失败", stageLogs: new[]
         {
             new PdfStageLogDto("download", "success", 0, "已存在本地", DateTime.UtcNow),
