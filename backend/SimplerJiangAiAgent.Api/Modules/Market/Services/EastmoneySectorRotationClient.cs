@@ -402,18 +402,17 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
 
     private EastmoneySectorBoardRow ToBoardRow(string boardType, JsonElement item, int rankNo)
     {
-        var mainFlow = GetDecimal(item, "f62");
         return new EastmoneySectorBoardRow(
             boardType,
             GetString(item, "f12"),
             GetString(item, "f14"),
             GetDecimal(item, "f3") / 100m,
-            mainFlow,
+            GetDecimal(item, "f62"),
             0m,
             0m,
             0m,
             0m,
-            mainFlow,
+            GetDecimal(item, "f6"),
             0m,
             rankNo,
             item.GetRawText());
@@ -448,12 +447,13 @@ public sealed class EastmoneySectorRotationClient : IEastmoneySectorRotationClie
                 var preferredName = !string.IsNullOrWhiteSpace(existing.Row.SectorName) ? existing.Row.SectorName : item.Row.SectorName;
                 var changePercent = existing.Row.ChangePercent != 0 ? existing.Row.ChangePercent : item.Row.ChangePercent;
                 var mainFlow = item.Row.MainNetInflow != 0 ? item.Row.MainNetInflow : existing.Row.MainNetInflow;
+                var turnover = existing.Row.TurnoverAmount != 0 ? existing.Row.TurnoverAmount : item.Row.TurnoverAmount;
                 var mergedRow = existing.Row with
                 {
                     SectorName = preferredName,
                     ChangePercent = changePercent,
                     MainNetInflow = mainFlow,
-                    TurnoverAmount = mainFlow,
+                    TurnoverAmount = turnover,
                     RawJson = existing.Row.RawJson.Length >= item.Row.RawJson.Length ? existing.Row.RawJson : item.Row.RawJson
                 };
                 merged[item.Row.SectorCode] = existing with { Row = mergedRow, RankByMainFlow = item.RankByMainFlow };
