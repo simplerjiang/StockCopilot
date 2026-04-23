@@ -67,8 +67,10 @@ public sealed class RecommendZombieCleanupWorker : BackgroundService
 
         foreach (var session in zombieSessions)
         {
-            var hasSuccess = session.Turns.Any(t => t.Status == RecommendTurnStatus.Completed);
-            session.Status = hasSuccess ? RecommendSessionStatus.Completed : RecommendSessionStatus.Failed;
+            var latestTurn = session.Turns.OrderByDescending(t => t.TurnIndex).FirstOrDefault();
+            session.Status = latestTurn?.Status == RecommendTurnStatus.Completed
+                ? RecommendSessionStatus.Completed
+                : RecommendSessionStatus.Failed;
             session.UpdatedAt = DateTime.UtcNow;
             _logger.LogWarning("Marked zombie recommend session {SessionId} as {Status}", session.Id, session.Status);
         }
