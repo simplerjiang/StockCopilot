@@ -176,6 +176,15 @@ public class FinancialDataReadService : IFinancialDataReadService
                 period.KeyMetrics["DebtToAssetRatio"] = Math.Round(tlD / taD, 4);
             }
 
+            // Computed: gross profit = TotalRevenue - TotalCost
+            if (!period.KeyMetrics.ContainsKey("GrossProfit")
+                && period.KeyMetrics.TryGetValue("TotalRevenue", out var trObj)
+                && period.KeyMetrics.TryGetValue("TotalCost", out var tcObj)
+                && trObj is double trD && tcObj is double tcD)
+            {
+                period.KeyMetrics["GrossProfit"] = Math.Round(trD - tcD, 2);
+            }
+
             summary.Periods.Add(period);
         }
 
