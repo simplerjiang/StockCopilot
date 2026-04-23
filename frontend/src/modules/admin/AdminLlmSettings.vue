@@ -96,6 +96,13 @@ const pulling = ref(false)
 const pullMsg = ref('')
 let keepAliveTimer = null
 
+// Embedding model management (v0.4.3 S8)
+const embeddingStatus = ref(null)
+const embeddingLoading = ref(false)
+const embeddingPullModel = ref('bge-m3')
+const embeddingPulling = ref(false)
+const embeddingPullMsg = ref('')
+
 const isLoggedIn = computed(() => Boolean(token.value))
 const isAntigravity = computed(() => provider.value === 'antigravity')
 const isOllamaProvider = computed(() => provider.value === 'ollama')
@@ -569,6 +576,49 @@ async function pullModel() {
   }
 }
 
+// v0.4.3 S8: Embedding model management
+async function checkEmbeddingStatus() {
+  embeddingLoading.value = true
+  try {
+    const res = await fetch('/api/stocks/financial/embedding/status')
+    if (res.ok) {
+      embeddingStatus.value = await res.json()
+    } else {
+      embeddingStatus.value = { available: false, error: `HTTP ${res.status}` }
+    }
+  } catch (e) {
+    embeddingStatus.value = { available: false, error: e.message }
+  } finally {
+    embeddingLoading.value = false
+  }
+}
+
+async function pullEmbeddingModel() {
+  const modelName = embeddingPullModel.value.trim()
+  if (!modelName) return
+  embeddingPulling.value = true
+  embeddingPullMsg.value = `正在拉取 ${modelName}...`
+  try {
+    const res = await fetch('/api/admin/ollama/pull', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelName })
+    })
+    if (res.status === 401 || res.status === 403) { handleUnauthorized(); return }
+    if (res.ok) {
+      embeddingPullMsg.value = `✅ ${modelName} 拉取成功`
+      await checkOllama()
+      await checkEmbeddingStatus()
+    } else {
+      embeddingPullMsg.value = `❌ 拉取失败: ${res.status}`
+    }
+  } catch (e) {
+    embeddingPullMsg.value = `❌ 拉取失败: ${e.message}`
+  } finally {
+    embeddingPulling.value = false
+  }
+}
+
 function formatSize(bytes) {
   if (!bytes) return ''
   const gb = bytes / (1024 * 1024 * 1024)
@@ -992,6 +1042,7 @@ if (token.value) {
       loadSettings()
       loadNewsCleansing()
       checkOllama()
+      checkEmbeddingStatus()
     }
   })
 }
@@ -1126,6 +1177,64 @@ onUnmounted(() => {
           </button>
         </div>
         <p v-if="pullMsg" class="pull-msg">{{ pullMsg }}</p>
+      </div>
+    </div>
+
+    <!-- v0.4.3 S8: Embedding 模型管理 -->
+    <div class="settings-card" style="margin-top:16px">
+      <h4>📐 Embedding 模型管理</h4>
+      <p class="hint">用于 RAG 向量检索。需要 Ollama 运行并已安装 embedding 模型。</p>
+
+      <div style="display:flex;gap:8px;margin:8px 0">
+        <button class="btn btn-sm" @click="checkEmbeddingStatus" :disabled="embeddingLoading">
+          {{ embeddingLoading ? '检查中...' : '🔄 检查状态' }}
+        </button>
+      </div>
+
+      <div v-if="embeddingStatus" class="embedding-status-panel">
+        <div class="status-row">
+          <span>Embedder 状态：</span>
+          <span :class="embeddingStatus.available ? 'status-ok' : 'status-off'">
+            {{ embeddingStatus.available ? '✅ 可用' : '❌ 不可用' }}
+          </span>
+        </div>
+        <div class="status-row">
+          <span>当前模型：</span>
+          <span>{{ embeddingStatus.model || '未配置' }}</span>
+        </div>
+        <div class="status-row">
+          <span>向量维度：</span>
+          <span>{{ embeddingStatus.dimension || '—' }}</span>
+        </div>
+        <div class="status-row">
+          <span>Embedding 覆盖：</span>
+          <span>{{ embeddingStatus.embeddingCount || 0 }} / {{ embeddingStatus.chunkCount || 0 }} chunks
+            ({{ embeddingStatus.coverage ? (embeddingStatus.coverage * 100).toFixed(1) + '%' : '0%' }})
+          </span>
+        </div>
+        <div v-if="embeddingStatus.error" class="status-error">
+          ⚠️ {{ embeddingStatus.error }}
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <h5>安装 Embedding 模型</h5>
+        <div v-if="ollamaStatus === 'running'" style="display:flex;gap:8px;align-items:center">
+          <select v-model="embeddingPullModel" style="padding:4px 8px;border-radius:4px;border:1px solid #ccc">
+            <option value="bge-m3">bge-m3 (推荐，2.2GB)</option>
+            <option value="bge-large-zh-v1.5">bge-large-zh-v1.5 (1.3GB)</option>
+            <option value="nomic-embed-text">nomic-embed-text (274MB)</option>
+          </select>
+          <button class="btn btn-sm btn-primary" @click="pullEmbeddingModel" :disabled="embeddingPulling">
+            {{ embeddingPulling ? '拉取中...' : '📥 安装' }}
+          </button>
+        </div>
+        <p v-if="embeddingPullMsg" class="pull-msg" style="margin-top:4px;font-size:12px">{{ embeddingPullMsg }}</p>
+        <p v-if="ollamaStatus !== 'running'" class="hint" style="color:orange">⚠️ 请先启动 Ollama 服务</p>
+      </div>
+
+      <div class="hint" style="margin-top:8px;padding:8px;background:rgba(245,158,11,0.08);border-radius:4px">
+        ⚠️ 切换 Embedding 模型后需要重建索引（向量维度可能不同）。重建将在下次 PDF 采集时自动执行。
       </div>
     </div>
 
@@ -1772,6 +1881,22 @@ onUnmounted(() => {
   color: var(--color-text-primary); font-size: var(--text-sm);
 }
 .pull-msg { font-size: var(--text-sm); color: var(--color-text-secondary); margin-top: 6px; }
+
+/* v0.4.3 S8: Embedding status panel */
+.embedding-status-panel {
+  padding: 8px 12px;
+  background: var(--color-surface-secondary, #f8fafc);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.embedding-status-panel .status-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+.status-ok { color: #16a34a; font-weight: 600; }
+.status-off { color: #dc2626; font-weight: 600; }
+.status-error { color: #dc2626; font-size: 12px; margin-top: 4px; }
 
 @media (max-width: 768px) {
   .ollama-runtime-grid {

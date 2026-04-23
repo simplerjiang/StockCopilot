@@ -200,6 +200,24 @@ app.MapGet("/api/runtime-logs", (long? afterId, int? count, InMemoryLogStore sto
     return Results.Ok(entries);
 });
 
+// v0.4.3 S8: Embedding status endpoint
+app.MapGet("/api/embedding/status", (RagDbContext ragDb, IEmbedder embedder) =>
+{
+    var dimension = ragDb.GetEmbeddingDimension();
+    var embeddingCount = ragDb.CountEmbeddings();
+    var chunkCount = ragDb.CountChunks();
+
+    return Results.Ok(new
+    {
+        available = embedder.IsAvailable,
+        model = "bge-m3",
+        dimension,
+        embeddingCount,
+        chunkCount,
+        coverage = chunkCount > 0 ? (double)embeddingCount / chunkCount : 0
+    });
+});
+
 // v0.4.2 S6: RAG search endpoint
 app.MapPost("/api/rag/search", async (
     RagSearchRequest request,

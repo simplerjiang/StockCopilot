@@ -504,6 +504,19 @@ public sealed class StocksModule : IModule
         .WithName("GetRagContext")
         .WithOpenApi();
 
+        // v0.4.3 S8: Embedding status proxy
+        financialGroup.MapGet("/embedding/status", async (IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Get,
+                "api/embedding/status",
+                configuration,
+                httpClientFactory,
+                httpContext.RequestAborted);
+        })
+        .WithName("GetEmbeddingStatus")
+        .WithOpenApi();
+
         group.MapGet("/watchlist", async (IActiveWatchlistService watchlistService) =>
         {
             var items = await watchlistService.GetAllAsync();
