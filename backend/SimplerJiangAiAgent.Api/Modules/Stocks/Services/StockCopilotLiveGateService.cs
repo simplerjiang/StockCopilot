@@ -400,7 +400,8 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
                 "本次仅记录真实 LLM-AUDIT 轨迹，不伪造任何工具计划。",
                 $"LLM traceId={llmTraceId}",
                 "若要继续，需要修正 prompt 或模型输出格式后重新执行。"
-            ]);
+            ],
+            RagCitations: Array.Empty<StockCopilotMcpEvidenceDto>());
 
         var turn = new StockCopilotTurnDto(
             TurnId: $"turn-live-{Guid.NewGuid():N}",
@@ -1274,13 +1275,22 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             constraints.Add($"本轮提前收口原因：{stopReason}。" );
         }
 
+        var ragCitations = toolResults
+            .Where(tr => tr.Evidence != null && tr.Evidence.Count > 0)
+            .Where(tr => tr.ToolName.Contains("Rag", StringComparison.OrdinalIgnoreCase)
+                      || tr.ToolName.Contains("FinancialReport", StringComparison.OrdinalIgnoreCase)
+                      || tr.ToolName.Contains("Announcement", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(tr => tr.Evidence)
+            .ToList();
+
         return new StockCopilotFinalAnswerDto(
             Status: status,
             Summary: summary,
             GroundingMode: "llm_plan_with_tool_receipts",
             ConfidenceScore: confidence,
             NeedsToolExecution: false,
-            Constraints: constraints);
+            Constraints: constraints,
+            RagCitations: ragCitations);
     }
 
     private static IReadOnlyList<StockCopilotFollowUpActionDto> BuildFollowUpActions(

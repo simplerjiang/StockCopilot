@@ -357,7 +357,8 @@ public sealed record StockCopilotFinalAnswerDto(
     string GroundingMode,
     decimal? ConfidenceScore,
     bool NeedsToolExecution,
-    IReadOnlyList<string> Constraints);
+    IReadOnlyList<string> Constraints,
+    IReadOnlyList<StockCopilotMcpEvidenceDto> RagCitations);
 
 public sealed record StockCopilotLoopBudgetDto(
     int MaxRounds,

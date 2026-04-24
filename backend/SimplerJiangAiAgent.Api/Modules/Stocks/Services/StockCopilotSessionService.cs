@@ -142,7 +142,8 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             GroundingMode: "tool_results_required",
             ConfidenceScore: null,
             NeedsToolExecution: true,
-            Constraints: constraints);
+            Constraints: constraints,
+            RagCitations: Array.Empty<StockCopilotMcpEvidenceDto>());
     }
 
     private static IReadOnlyList<StockCopilotPlanStepDto> BuildPlanSteps(
@@ -751,7 +752,8 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             GroundingMode: status == "done" ? "grounded" : "grounded_with_gaps",
             ConfidenceScore: confidence,
             NeedsToolExecution: false,
-            Constraints: constraints);
+            Constraints: constraints,
+            RagCitations: Array.Empty<StockCopilotMcpEvidenceDto>());
     }
 
     private static Dictionary<string, string> ParseInputSummary(string inputSummary)

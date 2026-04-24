@@ -33,7 +33,7 @@ public sealed class StockCopilotAcceptanceServiceTests
                 new StockCopilotToolResultDto("call-kline", "StockKlineMcp", "completed", "trace-kline", 2, 1, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<StockCopilotMcpEvidenceDto>(), "kline ok"),
                 new StockCopilotToolResultDto("call-news", "StockNewsMcp", "completed", "trace-news", 1, 1, new[] { "stale_cache" }, new[] { "market_context_stale" }, Array.Empty<StockCopilotMcpEvidenceDto>(), "news ok")
             },
-            FinalAnswer: new StockCopilotFinalAnswerDto("completed", "grounded", "tool_results", 0.78m, false, new[] { "only facts from tool results" }),
+            FinalAnswer: new StockCopilotFinalAnswerDto("completed", "grounded", "tool_results", 0.78m, false, new[] { "only facts from tool results" }, Array.Empty<StockCopilotMcpEvidenceDto>()),
             FollowUpActions: new[]
             {
                 new StockCopilotFollowUpActionDto("action-news", "查看本地新闻证据", "inspect_news", "StockNewsMcp", "news", true, null),
@@ -83,7 +83,7 @@ public sealed class StockCopilotAcceptanceServiceTests
                 new StockCopilotToolCallDto("call-news", "tool-1", "StockNewsMcp", "local_required", "读取本地新闻", "symbol=sz000001", "approved", null)
             },
             ToolResults: Array.Empty<StockCopilotToolResultDto>(),
-            FinalAnswer: new StockCopilotFinalAnswerDto("needs_tool_execution", "pending", "tool_results_required", null, true, Array.Empty<string>()),
+            FinalAnswer: new StockCopilotFinalAnswerDto("needs_tool_execution", "pending", "tool_results_required", null, true, Array.Empty<string>(), Array.Empty<StockCopilotMcpEvidenceDto>()),
             FollowUpActions: Array.Empty<StockCopilotFollowUpActionDto>());
 
         var result = await service.BuildBaselineAsync(new StockCopilotAcceptanceBaselineRequestDto(
