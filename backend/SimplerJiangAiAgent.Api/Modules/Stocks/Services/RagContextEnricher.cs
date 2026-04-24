@@ -82,7 +82,7 @@ public class RagContextEnricher
     {
         var workerBaseUrl = _configuration["FinancialWorker:BaseUrl"] ?? "http://localhost:5120";
         var client = _httpClientFactory.CreateClient();
-        client.Timeout = TimeSpan.FromSeconds(10);
+        client.Timeout = TimeSpan.FromSeconds(30);
 
         var request = new
         {

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,7 @@ public class CninfoClient
     private readonly HttpClient _httpClient;
     private readonly ILogger<CninfoClient> _logger;
     private readonly string _reportsDir;
+    private readonly ConcurrentDictionary<string, string> _orgIdCache = new();
 
     public CninfoClient(HttpClient httpClient, ILogger<CninfoClient> logger)
     {
@@ -23,7 +25,7 @@ public class CninfoClient
     public async Task<List<CninfoAnnouncement>> QueryAnnouncementsAsync(
         string symbol, string category = "category_ndbg_szsh", int pageSize = 30, CancellationToken ct = default)
     {
-        var orgId = GetOrgId(symbol);
+        var orgId = await ResolveOrgIdAsync(symbol, ct);
         var plate = symbol.StartsWith("6") ? "sh" : "sz";
         var column = symbol.StartsWith("6") ? "sse" : "szse";
 
@@ -200,7 +202,67 @@ public class CninfoClient
         return results;
     }
 
-    private static string GetOrgId(string code)
+    private async Task<string> ResolveOrgIdAsync(string code, CancellationToken ct)
+    {
+        if (_orgIdCache.TryGetValue(code, out var cached))
+            return cached;
+
+        try
+        {
+            var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["keyWord"] = code
+            });
+
+            var request = new HttpRequestMessage(HttpMethod.Post,
+                "http://www.cninfo.com.cn/new/information/topSearch/query")
+            {
+                Content = content
+            };
+            request.Headers.Add("Referer", "http://www.cninfo.com.cn/");
+            request.Headers.Add("Accept", "application/json");
+
+            var response = await _httpClient.SendAsync(request, ct);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            var doc = JsonDocument.Parse(json);
+
+            // cninfo topSearch API 返回裸数组 [{code,orgId,...}]，也可能返回 {keyBoardList:[...]}
+            var list = doc.RootElement.ValueKind == JsonValueKind.Array
+                ? doc.RootElement
+                : doc.RootElement.TryGetProperty("keyBoardList", out var kbl) && kbl.ValueKind == JsonValueKind.Array
+                    ? kbl
+                    : (JsonElement?)null;
+
+            if (list.HasValue)
+            {
+                foreach (var item in list.Value.EnumerateArray())
+                {
+                    if (item.TryGetProperty("code", out var codeProp) && codeProp.GetString() == code
+                        && item.TryGetProperty("orgId", out var orgIdProp))
+                    {
+                        var orgId = orgIdProp.GetString() ?? GetDefaultOrgId(code);
+                        _orgIdCache.TryAdd(code, orgId);
+                        _logger.LogInformation("[cninfo] OrgId 动态解析: {Code} → {OrgId}", code, orgId);
+                        return orgId;
+                    }
+                }
+            }
+
+            _logger.LogWarning("[cninfo] 未找到 {Code} 的 orgId，使用默认格式", code);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[cninfo] 动态获取 {Code} 的 orgId 失败，回退到默认格式", code);
+        }
+
+        var fallback = GetDefaultOrgId(code);
+        _orgIdCache.TryAdd(code, fallback);
+        return fallback;
+    }
+
+    private static string GetDefaultOrgId(string code)
     {
         // Shanghai (6xxx) → gssh0{code}, Shenzhen → gssz0{code}
         var prefix = code.StartsWith("6") ? "gssh0" : "gssz0";

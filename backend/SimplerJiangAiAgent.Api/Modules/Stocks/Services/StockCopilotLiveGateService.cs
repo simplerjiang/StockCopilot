@@ -775,7 +775,7 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
                     approvedCall,
                     await _mcpToolGateway.GetFinancialTrendAsync(symbol, ParseInt(input, "periods", 8), toolTaskId, cancellationToken),
                     envelope => $"财务趋势: {envelope.Data?.PeriodCount ?? 0}期"),
-                StockMcpToolNames.FinancialReportRag => await ExecuteRagToolAsync(approvedCall, symbol, question, toolTaskId, cancellationToken),
+                StockMcpToolNames.FinancialReportRag => await ExecuteRagToolAsync(approvedCall, symbol, input.GetValueOrDefault("query", question), toolTaskId, cancellationToken),
                 _ => BuildFailedOutcome(approvedCall, $"暂不支持工具 {approvedCall.Registration.ToolName} 的 live gate 执行。")
             };
         }
