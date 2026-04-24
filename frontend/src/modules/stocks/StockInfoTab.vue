@@ -84,6 +84,8 @@ import ResizeSplitter from './ResizeSplitter.vue'
 import { useResizable } from './useResizable'
 import { useCollapsible } from './useCollapsible'
 import { useRetailHeat } from './charting/useRetailHeat'
+import { useRetailHeatStatus } from './charting/useRetailHeatStatus.js'
+import RetailHeatStatusPanel from './RetailHeatStatusPanel.vue'
 
 const { confirm: showConfirm } = useConfirm()
 
@@ -227,6 +229,7 @@ const localNewsError = bindWorkspaceField('localNewsError', '')
 
 const retailHeatSymbol = computed(() => detail.value?.quote?.symbol ?? '')
 const { heatData: retailHeatData, backfilling: retailHeatBackfilling } = useRetailHeat(retailHeatSymbol)
+const { status: retailHeatStatus, collecting: retailHeatCollecting, collectResult: retailHeatCollectResult, collectNow: retailHeatCollectNow, fetchStatus: retailHeatFetchStatus } = useRetailHeatStatus(retailHeatSymbol)
 const planDraftLoading = bindWorkspaceField('planDraftLoading', false)
 const planSaving = bindWorkspaceField('planSaving', false)
 const planError = bindWorkspaceField('planError', '')
@@ -1481,6 +1484,12 @@ watch(currentStockKey, (newKey) => {
             </div>
           </template>
         </TerminalView>
+        <RetailHeatStatusPanel
+          :status="retailHeatStatus"
+          :collecting="retailHeatCollecting"
+          :collect-result="retailHeatCollectResult"
+          @collect="retailHeatCollectNow"
+        />
       </div>
 
       <ResizeSplitter

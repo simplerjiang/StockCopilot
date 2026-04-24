@@ -21,6 +21,7 @@ using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
 using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Services.IntentClassification;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks;
 
@@ -30,6 +31,8 @@ public sealed class StocksModule : IModule
     private static readonly ConcurrentDictionary<long, CancellationTokenSource> _turnCancellationSources = new();
     private static readonly TimeSpan FinancialWorkerProxyTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FinancialWorkerCollectProxyTimeout = TimeSpan.FromSeconds(60);
+    // V041-S8-FU-1: PDF 采集（下载 + 提取 + 投票 + 解析 + 持久化）耗时较长，单独放宽到 5 分钟。
+    private static readonly TimeSpan FinancialWorkerPdfCollectProxyTimeout = TimeSpan.FromMinutes(5);
 
     public void Register(IServiceCollection services, IConfiguration configuration)
     {
@@ -63,6 +66,8 @@ public sealed class StocksModule : IModule
         services.AddScoped<IStockDataService, StockDataService>();
         services.AddScoped<IStockHistoryService, StockHistoryService>();
         services.AddScoped<IFinancialDataReadService, FinancialDataReadService>();
+        services.AddScoped<IPdfFileQueryService, PdfFileQueryService>();
+        services.AddSingleton<IPdfReparseGateway, HttpPdfReparseGateway>();
         services.AddHttpClient<IStockSearchService, StockSearchService>(client => ConfigureStockHttpClient(client, stockHttpTimeout));
         services.AddScoped<IStockAgentHistoryService, StockAgentHistoryService>();
         services.AddScoped<IStockAgentFeatureEngineeringService, StockAgentFeatureEngineeringService>();
@@ -94,6 +99,7 @@ public sealed class StocksModule : IModule
         services.AddScoped<IResearchArtifactService, ResearchArtifactService>();
         services.AddScoped<IResearchReportService, ResearchReportService>();
         services.AddSingleton<Infrastructure.Logging.ISessionFileLogger, Infrastructure.Logging.SessionFileLogger>();
+        services.AddSingleton<IQuestionIntentClassifier, QuestionIntentClassifier>();
         services.AddSingleton<IRecommendEventBus, RecommendEventBus>();
         services.AddSingleton<IRecommendRoleContractRegistry, RecommendRoleContractRegistry>();
         services.AddScoped<IRecommendToolDispatcher, RecommendToolDispatcher>();
@@ -145,6 +151,12 @@ public sealed class StocksModule : IModule
         services.AddScoped<IHistoricalBackfillService, HistoricalBackfillService>();
         services.AddSingleton<IBackfillStatusTracker, BackfillStatusTracker>();
         services.AddHostedService<ForumScrapingWorker>();
+
+        // v0.4.3 S6: RAG context enrichment
+        services.AddSingleton<RagContextEnricher>();
+
+        // v0.4.6 S5: Evidence Pack unified assembly
+        services.AddScoped<IEvidencePackBuilder, EvidencePackBuilder>();
 
         // FinancialWorker process supervisor
         services.AddSingleton<FinancialWorkerSupervisorService>();
@@ -213,6 +225,107 @@ public sealed class StocksModule : IModule
         .WithName("GetStockFinancialReportById")
         .WithOpenApi();
 
+        // ── v0.4.1 §S2：PDF 文件 4 接口 ──
+        financialGroup.MapGet("/pdf-files", (
+            string? symbol,
+            string? reportType,
+            int? page,
+            int? pageSize,
+            IPdfFileQueryService pdfFileQuery) =>
+        {
+            var query = new PdfFileListQuery(
+                Symbol: string.IsNullOrWhiteSpace(symbol) ? null : symbol.Trim(),
+                ReportType: string.IsNullOrWhiteSpace(reportType) ? null : reportType.Trim(),
+                Page: Math.Max(1, page ?? 1),
+                PageSize: Math.Clamp(pageSize ?? 20, 1, 100));
+            return Results.Ok(pdfFileQuery.List(query));
+        })
+        .WithName("ListPdfFiles")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/pdf-files/{id}", (string id, IPdfFileQueryService pdfFileQuery) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+            var detail = pdfFileQuery.GetById(id.Trim());
+            return detail is null ? Results.NotFound() : Results.Ok(detail);
+        })
+        .WithName("GetPdfFileById")
+        .WithOpenApi();
+
+        financialGroup.MapGet("/pdf-files/{id}/content", (string id, HttpContext httpContext, IPdfFileQueryService pdfFileQuery) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+            var resolution = pdfFileQuery.ResolveContent(id.Trim());
+            switch (resolution.Status)
+            {
+                case "found":
+                    var safeName = string.IsNullOrWhiteSpace(resolution.AccessKey) ? "document.pdf" : resolution.AccessKey;
+                    httpContext.Response.Headers["Content-Disposition"] = $"inline; filename=\"{safeName}\"";
+                    // V042-P0-B (B2)：在 packaged WebView2 内 iframe 渲染 PDF 时整块灰白。
+                    // 显式声明响应可被同源 iframe 嵌入（移除任何中间件可能加上的
+                    // X-Frame-Options: DENY），并禁用 sniff，避免 Chromium 把响应误判为
+                    // application/octet-stream 触发下载。
+                    httpContext.Response.Headers.Remove("X-Frame-Options");
+                    httpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
+                    return Results.File(
+                        resolution.FullPath!,
+                        contentType: "application/pdf",
+                        fileDownloadName: null,
+                        enableRangeProcessing: true);
+                case "forbidden":
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                default:
+                    return Results.NotFound();
+            }
+        })
+        .WithName("GetPdfFileContent")
+        .WithOpenApi();
+
+        financialGroup.MapPost("/pdf-files/{id}/reparse", async (
+            string id,
+            IPdfReparseGateway gateway,
+            IPdfFileQueryService pdfFileQuery,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return Results.BadRequest(new { message = "id 不能为空" });
+            }
+
+            var trimmed = id.Trim();
+            var pre = pdfFileQuery.GetById(trimmed);
+            if (pre is null)
+            {
+                return Results.NotFound();
+            }
+
+            var gatewayResult = await gateway.ReparseAsync(trimmed, ct);
+            if (!gatewayResult.DocumentFound)
+            {
+                return Results.NotFound();
+            }
+            if (gatewayResult.PhysicalFileMissing)
+            {
+                return Results.NotFound();
+            }
+
+            // 重读详情，确保返回最新 stageLogs / parseUnits
+            var detail = pdfFileQuery.GetById(trimmed) ?? pre;
+            var response = new PdfFileReparseResponse(
+                Success: gatewayResult.Success,
+                Error: gatewayResult.Success ? null : gatewayResult.Error,
+                Detail: detail);
+            return Results.Ok(response);
+        })
+        .WithName("ReparsePdfFile")
+        .WithOpenApi();
+
         financialGroup.MapPost("/collect/{symbol}", async (string symbol, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
@@ -235,6 +348,31 @@ public sealed class StocksModule : IModule
                 includeCollectErrorFields: true);
         })
         .WithName("CollectStockFinancialData")
+        .WithOpenApi();
+
+        // V041-S8-FU-1: PDF 原件采集代理（独立路径 + 5 分钟超时，不影响结构化采集）
+        financialGroup.MapPost("/pdf-files/collect/{symbol}", async (string symbol, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空", errorMessage = "symbol 不能为空" });
+            }
+
+            var workerSymbol = NormalizeFinancialWorkerSymbol(symbol);
+            if (string.IsNullOrWhiteSpace(workerSymbol))
+            {
+                return Results.BadRequest(new { message = "symbol 不能为空", errorMessage = "symbol 不能为空" });
+            }
+
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Post,
+                $"api/pdf-collect/{Uri.EscapeDataString(workerSymbol)}",
+                configuration,
+                httpClientFactory,
+                httpContext.RequestAborted,
+                includeCollectErrorFields: true);
+        })
+        .WithName("CollectStockFinancialPdfFiles")
         .WithOpenApi();
 
         financialGroup.MapGet("/logs", (string? symbol, int? limit, IFinancialDataReadService financialDataReadService) =>
@@ -330,6 +468,58 @@ public sealed class StocksModule : IModule
                 payload);
         })
         .WithName("UpdateStockFinancialConfig")
+        .WithOpenApi();
+
+        // v0.4.2 S6: RAG search proxy
+        financialGroup.MapPost("/rag/search", async (JsonElement payload, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Post,
+                "api/rag/search",
+                configuration,
+                httpClientFactory,
+                httpContext.RequestAborted,
+                payload);
+        })
+        .WithName("SearchFinancialRag")
+        .WithOpenApi();
+
+        // v0.4.3 S6: RAG context enrichment endpoint
+        financialGroup.MapPost("/rag/context", async (
+            RagContextRequest request,
+            RagContextEnricher enricher,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Query))
+                return Results.BadRequest(new { error = "query is required" });
+
+            var citations = await enricher.EnrichAsync(
+                request.Query,
+                request.Symbol,
+                request.TopK ?? 3,
+                ct);
+
+            return Results.Ok(new
+            {
+                query = request.Query,
+                citations,
+                contextText = RagContextEnricher.FormatAsContext(citations)
+            });
+        })
+        .WithName("GetRagContext")
+        .WithOpenApi();
+
+        // v0.4.3 S8: Embedding status proxy
+        financialGroup.MapGet("/embedding/status", async (IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Get,
+                "api/embedding/status",
+                configuration,
+                httpClientFactory,
+                httpContext.RequestAborted);
+        })
+        .WithName("GetEmbeddingStatus")
         .WithOpenApi();
 
         group.MapGet("/watchlist", async (IActiveWatchlistService watchlistService) =>
@@ -463,6 +653,7 @@ public sealed class StocksModule : IModule
             string? to,
             IRetailHeatIndexService retailHeatService,
             IBackfillStatusTracker backfillStatusTracker,
+            IForumScrapingService forumScrapingService,
             IServiceProvider serviceProvider,
             CancellationToken ct) =>
         {
@@ -504,6 +695,40 @@ public sealed class StocksModule : IModule
             }
 
             var isBackfilling = backfillStatusTracker.IsBackfilling(result.Symbol);
+
+            // S1: 访问散户热度时自动加入自选股，确保后续自动采集
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = serviceProvider.CreateScope();
+                    var ws = scope.ServiceProvider.GetRequiredService<IActiveWatchlistService>();
+                    await ws.UpsertAsync(symbol.Trim(), null, "history");
+                }
+                catch { /* best-effort, don't block API response */ }
+            });
+
+            // S4: Auto-trigger today's collection if missing
+            var chinaToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+            if (chinaToday.DayOfWeek != DayOfWeek.Saturday && chinaToday.DayOfWeek != DayOfWeek.Sunday)
+            {
+                var todayStr = chinaToday.ToString("yyyy-MM-dd");
+                var hasTodayData = result.Data.Any(d => d.Date == todayStr && d.HasData);
+                if (!hasTodayData)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var scope = serviceProvider.CreateScope();
+                            var scraper = scope.ServiceProvider.GetRequiredService<IForumScrapingService>();
+                            await scraper.CollectSingleStockNowAsync(symbol.Trim(), CancellationToken.None);
+                        }
+                        catch { /* best-effort */ }
+                    });
+                }
+            }
+
             return Results.Ok(new { result.Symbol, result.Data, result.Latest, result.Description, Backfilling = isBackfilling });
         })
         .WithName("GetRetailHeatIndex")
@@ -543,6 +768,45 @@ public sealed class StocksModule : IModule
             return Results.Ok(new { message = "Backfill all completed" });
         })
         .WithName("BackfillAllRetailHeat")
+        .WithOpenApi();
+
+        // S2: Collection status endpoint
+        group.MapGet("/{symbol}/retail-heat/collection-status", async (
+            string symbol,
+            int? days,
+            IRetailHeatIndexService retailHeatService,
+            IActiveWatchlistService watchlistService,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            var status = await retailHeatService.GetCollectionStatusAsync(symbol, days ?? 30, ct);
+
+            var allWatchlist = await watchlistService.GetAllAsync(ct);
+            var normalizedSymbol = symbol.Trim();
+            var inWatchlist = allWatchlist.Any(w =>
+                w.Symbol.EndsWith(normalizedSymbol, StringComparison.OrdinalIgnoreCase) ||
+                normalizedSymbol.EndsWith(w.Symbol, StringComparison.OrdinalIgnoreCase));
+
+            return Results.Ok(status with { InWatchlist = inWatchlist });
+        })
+        .WithName("GetRetailHeatCollectionStatus")
+        .WithOpenApi();
+
+        // S3: Collect-now endpoint
+        group.MapPost("/{symbol}/retail-heat/collect-now", async (
+            string symbol,
+            IForumScrapingService forumScrapingService,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            var results = await forumScrapingService.CollectSingleStockNowAsync(symbol.Trim(), ct);
+            return Results.Ok(new { symbol = symbol.Trim(), results, collectedAt = DateTime.UtcNow });
+        })
+        .WithName("CollectRetailHeatNow")
         .WithOpenApi();
 
         group.MapGet("/mcp/kline", async (string symbol, string? interval, int? count, string? source, string? taskId, int? evidenceSkip, int? evidenceTake, IMcpToolGateway gateway, HttpContext httpContext) =>
@@ -2584,6 +2848,10 @@ public sealed class StocksModule : IModule
     internal static TimeSpan ResolveFinancialWorkerProxyTimeout(string relativePath)
     {
         var normalizedRelativePath = relativePath.TrimStart('/');
+        if (normalizedRelativePath.StartsWith("api/pdf-collect/", StringComparison.OrdinalIgnoreCase))
+        {
+            return FinancialWorkerPdfCollectProxyTimeout;
+        }
         return normalizedRelativePath.StartsWith("api/collect/", StringComparison.OrdinalIgnoreCase)
             ? FinancialWorkerCollectProxyTimeout
             : FinancialWorkerProxyTimeout;

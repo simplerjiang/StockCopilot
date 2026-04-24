@@ -12,6 +12,23 @@ set "PACKAGE_EXE=%PACKAGE_ROOT%\SimplerJiangAiAgent.Desktop.exe"
 
 pushd "%ROOT%" || exit /b 1
 
+echo [Startup] Checking for orphan processes on ports 5119 and 5120...
+
+REM Kill any process using port 5119 (API)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5119.*LISTENING"') do (
+    echo   Killing orphan process on port 5119 (PID: %%a)
+    taskkill /PID %%a /F >nul 2>&1
+)
+
+REM Kill any process using port 5120 (Worker)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5120.*LISTENING"') do (
+    echo   Killing orphan process on port 5120 (PID: %%a)
+    taskkill /PID %%a /F >nul 2>&1
+)
+
+timeout /t 2 /nobreak >nul
+echo [Startup] Port cleanup complete.
+
 echo Stopping existing desktop and backend instances...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$procs = Get-Process -Name SimplerJiangAiAgent.Desktop,SimplerJiangAiAgent.Api,SimplerJiangAiAgent.FinancialWorker -ErrorAction SilentlyContinue;" ^

@@ -17,11 +17,12 @@ public sealed class EastmoneySectorRotationClientTests
                         var url = request.RequestUri?.ToString() ?? string.Empty;
                         if (url.Contains("dataapi/bkzj/getbkzj", StringComparison.OrdinalIgnoreCase) && url.Contains("key=f3", StringComparison.OrdinalIgnoreCase))
                         {
+                                // bkzj returns raw integer values: 320 means 3.20%
                                 return Json("""
                                 {
                                     "data": [
-                                        { "f12": "BK001", "f14": "AI", "f3": 3.2 },
-                                        { "f12": "BK002", "f14": "Robot", "f3": 2.1 }
+                                        { "f12": "BK001", "f14": "AI", "f3": 320 },
+                                        { "f12": "BK002", "f14": "Robot", "f3": 210 }
                                     ]
                                 }
                                 """);
@@ -48,8 +49,8 @@ public sealed class EastmoneySectorRotationClientTests
                 var result = await client.GetBoardRankingsAsync(SectorBoardTypes.Concept, 10);
 
                 Assert.Equal(3, result.Count);
-                Assert.Contains(result, x => x.SectorCode == "BK001" && x.ChangePercent == 3.2m);
-                Assert.Contains(result, x => x.SectorCode == "BK002" && x.ChangePercent == 2.1m && x.MainNetInflow == 1500000m);
+                Assert.Contains(result, x => x.SectorCode == "BK001" && x.ChangePercent == 3.20m);
+                Assert.Contains(result, x => x.SectorCode == "BK002" && x.ChangePercent == 2.10m && x.MainNetInflow == 1500000m);
                 Assert.Contains(result, x => x.SectorCode == "BK003" && x.MainNetInflow == 1200000m);
                 Assert.Equal(1, handler.CountRequests("key=f3"));
                 Assert.Equal(1, handler.CountRequests("key=f62"));

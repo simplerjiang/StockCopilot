@@ -22,7 +22,13 @@ public class FinancialDbContext : IDisposable
     public ILiteCollection<MarginTradingRecord> MarginTrading => _db.GetCollection<MarginTradingRecord>("margin_trading");
     public ILiteCollection<CollectionLog> Logs => _db.GetCollection<CollectionLog>("collection_logs");
     public ILiteCollection<FinancialCollectionConfig> Config => _db.GetCollection<FinancialCollectionConfig>("config");
-    
+
+    /// <summary>
+    /// PDF 详情持久化集合（v0.4.1 §5.1）。每文档内嵌 ParseUnits 数组，
+    /// 含 page_start / page_end / block_kind 三字段（v0.4.1 §9.1 硬约束）。
+    /// </summary>
+    public ILiteCollection<PdfFileDocument> PdfFiles => _db.GetCollection<PdfFileDocument>("pdf_files");
+
     private void EnsureIndexes()
     {
         // 财务报表：按 Symbol + ReportDate 唯一
@@ -47,6 +53,11 @@ public class FinancialDbContext : IDisposable
         // 采集日志：按时间和Symbol索引
         Logs.EnsureIndex(x => x.Timestamp);
         Logs.EnsureIndex(x => x.Symbol);
+
+        // PDF 详情：按 Symbol、LocalPath 索引；Symbol+LocalPath 唯一（一份 PDF 只持久化一条）。
+        PdfFiles.EnsureIndex(x => x.Symbol);
+        PdfFiles.EnsureIndex(x => x.LocalPath);
+        PdfFiles.EnsureIndex("Symbol_LocalPath", BsonExpression.Create("$.Symbol + '_' + $.LocalPath"), unique: true);
     }
     
     /// <summary>获取数据库文件大小（字节）</summary>

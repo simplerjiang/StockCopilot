@@ -9,110 +9,85 @@
 3. **预存在测试失败必须立项**：复核中发现非本 Story 引入的失败用例，须开独立技术债 Story 跟踪，不允许"已知失败"长期挂在主干。
 4. **`tasks.json` 与 `sprint.md` 关系**：`sprint.md` 是当前 Sprint 唯一权威看板；`tasks.json` 仅作历史任务事件流（append-only），不再用作活跃任务管理。
 
-## Sprint 目标
+---
 
-**v0.4.0 财报中心基础落地**：把现有的财务数据测试工具升级为正式业务页面 `财报中心`，实现采集结果透明化与本地财报数据表格化。是 v0.4.x 路线的第一阶段。
+## 已完成 Sprint 摘要
 
-参考路线图：[docs/GOAL-v040-financial-report-roadmap.md](../docs/GOAL-v040-financial-report-roadmap.md)
-参考详细计划：[docs/GOAL-v040-financial-center-foundation.md](../docs/GOAL-v040-financial-center-foundation.md)
+| Sprint | 完成日期 | Stories | 测试 | 要点 |
+|--------|----------|---------|------|------|
+| v0.4.2 必修 | 2026-04-23 | 7/7 | User Rep 95/100 | BLOCKER 修复：smartPickPdfId / X-Frame-Options / publish 脚本 |
+| v0.4.2N PDF 管线重构 | 2026-04-24 | 8/8 | 1126 tests, 0 fail | 全文持久化 / 价格缩写 / 投票透明化 / cninfo 修复 |
+| v0.4.2 财报 RAG Lite | 2026-04-24 | 8/8 | 1147 tests, 0 fail | SQLite FTS5 / jieba 分词 / 三层切块 / BM25 检索 / REST API |
+| v0.4.3 | 2026-04-24 | S0–S9 全部 DONE | — | Hybrid Retrieval + AI 集成 |
+| v0.4.4 | 2026-04-24 | S0–S8 + HF-1 全部 DONE | 1158 tests, 0 fail | 推荐状态修复 / 情绪轮动恢复 / 基本面补全 / SQLite 稳定性 |
+| v0.4.5 | 2026-04-24 | S0–S5 全部 DONE | 1158 tests, 0 fail | 数值单位修复 / Worker 重启 / cninfo headers / 采集面板集成 |
+| v0.4.6 | 2026-04-24 | S0–S8 + HF-1 + HF-2 全部 DONE | — | 多 Agent 路由 / 财报 RAG 闭环 / LiveGate 合成 / 散户热度图表 / cninfo 修复 / 论坛重试 |
 
-## 当前 Stories
+---
 
-### Story V040-S1: 后端财报列表分页查询接口
-- **状态**：DONE
-- **级别**：M
-- **验收标准**：
-  - 新增 `GET /api/financial/reports?symbol=&reportType=&startDate=&endDate=&page=&pageSize=&sort=` 分页接口
-  - 新增 `GET /api/financial/reports/{id}` 详情接口（返回三表概览 + 元数据）
-  - 排序支持 `reportDate desc/asc`、`updatedAt desc/asc`
-  - 分页响应包含 `total / pageSize / page / items`
-  - 单元测试覆盖：空集 / 单页 / 多页 / 筛选组合 / 不存在的 id
-- **依赖**：无
-- **完成时间**：2026-04-22
-- **commit**：`a911e33`（含 V040-S1 实现 + 12 单元测试）
-- **遗留 NIT（待本 Sprint 内修完）**：
-  - `MapListItem` 用 `default(DateTime)` 序列化为 `0001-01-01`，需改为 nullable 或显式 fallback
-  - `ParseSort` 静默降级未识别字段无日志
-  - 缺 WebApplicationFactory `[AsParameters]` 集成测试（V040-S2 未补，留待 V040-DEBT 或后续 story）
+## Backlog（技术债）
 
-### Story V040-S2: 采集结果透明化（后端）
-- **状态**：DONE（commits: 6f5f1aa / fcefd62 / 0dddb5b）
-- **级别**：S
-- **验收标准**：
-  - `/api/stocks/financial/collect/{symbol}` 响应增加：`reportPeriod / reportTitle / sourceChannel / fallbackReason / pdfSummary`
-  - 同字段落库到 `collection_logs`
-  - 替换"只报数量"的旧响应格式（保持向后兼容字段，但补齐新字段）
-  - 单元测试覆盖：成功 / 降级 / 失败 / PDF 补充触发 4 个路径
-- **依赖**：无
-- **完成说明**：3 cycles 完成，607 + 4 单测全绿；HTTP 响应含 11 原字段 + 6 完整新字段 + 5 友好别名。
+- ~~**V040-S3-FU-1**（中）：已在 v0.4.4 S5 修复。~~
+- **V040-DEBT-4**（候选）：`StockSearchService` 无排序无市场过滤。
+- **V041-DEBT-1**（中）：`FinancialDbContext` BsonMapper.Global 并发 race。
+- **V041-DEBT-2**（低）：Api vs Worker RuntimePaths 不一致。
+- **V041-DEBT-3**（中）：PdfFileDetail 缺 voting candidates 数组。
 
-### Story V040-S3: 财报中心前端页面骨架
-- **状态**：TODO
-- **级别**：M
-- **验收标准**：
-  - 新增路由 `/financial-center` 与左侧导航入口
-  - 表格列：股票代码 / 名称 / 报告期 / 类型 / 来源渠道 / 采集时间 / 操作
-  - 筛选区：股票多选 / 报告期范围 / 报告类型多选 / 关键词
-  - 分页 + 排序（点击表头切换）
-  - 详情抽屉入口（详情内容由 V040-S5 实现）
-  - 浏览器验收（Browser MCP）：实际筛选/分页/排序操作 + 控制台无错误
-- **依赖**：V040-S1
+---
 
-### Story V040-S4: 采集结果透明化（前端 UI 接入）
-- **状态**：TODO
-- **级别**：S
-- **验收标准**：
-  - `FinancialDataTestPanel.vue` 与 `FinancialReportTab.vue` 显示新字段
-  - 替换"只报数量"展示
-  - 降级原因用 Tag 着色（emweb/datacenter/ths/pdf 不同色）
-  - 单元测试 + Browser 抽测
-- **依赖**：V040-S2
+## v0.4.6 Sprint（多 Agent 路由与财报 RAG 闭环）✅ 已归档
 
-### Story V040-S5: 详情抽屉（轻量版，不含 PDF 预览）
-- **状态**：TODO
-- **级别**：S
-- **验收标准**：
-  - 抽屉显示：报告期 / 标题 / 来源 / 采集时间 / 三表概览（前 5 个关键字段）/ 元数据
-  - "重新采集"按钮触发 `POST /api/stocks/financial/collect/{symbol}`
-  - PDF 预览不在本 Story（v0.4.1 实现）
-  - 占位区域写明"PDF 原件预览将在 v0.4.1 提供"
-- **依赖**：V040-S1, V040-S3
+### Sprint 目标
+**让简单 prompt 自动路由到正确取证链路，子 Agent 真正接上财报 RAG，最终回答有可验证证据。**
 
-### Story V040-S6: v0.4.0 全链路验收
-- **状态**：TODO
-- **级别**：M
-- **验收标准**：
-  - Test Agent 跑通后端单元测试 + 前端 vitest
-  - UI Designer Agent 走查财报中心页面与详情抽屉
-  - User Representative Agent 模拟交易员视角验收
-  - 更新 `README.UserAgentTest.md` 增加财报中心验收路径
-  - 更新 `.automation/tasks.json` 记录 v0.4.0 完成
-  - 写 v0.4.0 完成报告到 `.automation/reports/`
-- **依赖**：V040-S1 ~ V040-S5 全部 DONE
+详细计划：[GOAL-v046-rag-agent-routing-evidence.md](../docs/GOAL-v046-rag-agent-routing-evidence.md)
 
-## 技术债 Stories（与 v0.4.0 主线并行）
+| Story | 标题 | 分级 | 验收标准 | 状态 |
+|---|---|---|---|---|
+| S0 | 问题意图分类器 | M | 10 个测试问题 ≥ 80% 正确分类 | DONE |
+| S1 | 路由决策表 | M | 路由覆盖所有意图类型 | DONE |
+| S2 | 注册财报 RAG 为 MCP 工具 | M | 子角色工具列表包含 SearchFinancialReport | DONE |
+| S3 | Research 子角色接入 RAG | M | Research 报告包含财报引用 | DONE |
+| S4 | Recommend 子流程接入 RAG | M | 推荐报告含财报 citation | DONE |
+| S5 | Evidence Pack 统一组装 | M | 3 条链路证据来源一致 | DONE |
+| S6 | 估值问题强制取证 | M | 估值回答含 ≥1 条财报引用 | DONE |
+| S7 | 结论格式标准化 | S | 输出含结论/依据/假设/引用 4 字段 | DONE |
+| S8 | 全链路验收 | S | tests 全绿 + 5 个 E2E 问题验证 | DONE |
 
-### Story V040-DEBT-1: 修复 LocalFactAiEnrichmentServiceTests 14 个失败用例
-- **状态**：DONE（commit: 9aa0230）
-- **级别**：S（预估 1.5–2 小时）
-- **背景**：Bug-4 修复 commit `a616fe3` 引入 `ProcessMarketPendingAsync` RequestPath 模式与新排序逻辑，但 6 个测试方法（含 Theory 共 14 案例）的期望值未同步。
-- **失败用例**：
-  - `ShouldKeepFailureExplainability_WhenRepairStillFails`
-  - `ShouldExposeNoProgressStopReason_WhenArchiveSweepAppliesNothing`
-  - `ShouldParseBatchResponseWithTrailingExplanation`
-  - `ShouldBoundSelectionToLiveRequestBudget`
-  - `ShouldEmitParseWarningAndKeepPending_WhenBatchResponseIsInvalid`
-  - `ShouldPrioritizeCurrentCrawlRowsOverOlderBacklog`
-- **验收标准**：
-  - 14 个用例全部 PASS
-  - 不修改生产代码（除非确认是回归 bug）
-  - 单独跑 + 全量跑都 PASS
-- **依赖**：无（独立技术债）
-- **优先级**：在阻塞 V040-S2 复核信号前必须完成
-- **完成说明**：2026-04-22 修复，全量 607 测试 0 失败。
+### 验收记录
+- **一轮验收（User Rep）**：不通过 — LiveGate 返回计划草案而非真实分析
+- **P0-1 修复**：添加 SynthesizeAnalysisAsync 第二次 LLM 调用（commit `bf67a8c`）
+- **二轮验收（User Rep）**：通过 ✅ — B+ 评级，PE/PB/ROE 等真实数据，结构化分析
+- **遗留项**：FinancialTrendMcp LiveGate 适配、RAG 在部分场景失败、PE/PB 精确计算
+- **HF-2 修复**：LiveGate 添加 FinancialReport/FinancialTrend/FinancialReportRag 工具 dispatch（commit `b3bfe09`）
+- **验证**：FinancialTrendMcp completed, PE≈22.06x, PB≈7.41x, 0 个"暂不支持"错误
+
+---
+
+## v0.4.7 Sprint（AI 分析质量 + 公告 PDF RAG 扩展）
+
+### Sprint 目标
+**修复 AI 分析页面 JSON 渲染问题；爬取东方财富个股公告 PDF 扩展 RAG 数据库。**
+
+| Story | 标题 | 分级 | 验收标准 | 状态 |
+|---|---|---|---|---|
+| S1 | AI 分析 JSON 渲染修复 | S | AI 分析页面不再直接输出原始 JSON，嵌套 JSON 也能正确转义渲染 | TODO |
+| S2 | 东方财富公告 PDF 爬取 | M | 盘中消息带中"东方财富网公告"的 PDF 能自动下载入库 | TODO |
+| S3 | 公告 PDF RAG 入库 | M | 下载的公告 PDF 经过 embedding 进入 RAG 数据库，可被检索 | TODO |
+| S4 | 公告 RAG MCP 工具注册 | M | LLM 能通过 MCP 工具检索公告内容，回答引用公告来源 | TODO |
+| S5 | 全链路验收 | S | AI 分析无 JSON 泄漏 + 公告 RAG 可检索 + tests 全绿 | TODO |
+
+---
 
 ## 历史归档
 
+- v0.4.6 多 Agent 路由与财报 RAG 闭环 → 本看板"已完成 Sprint 摘要"
+- v0.4.5 数据质量与 Worker 稳定性 → 本看板"已完成 Sprint 摘要"
+- v0.4.4 产品质量修复 → 本看板"已完成 Sprint 摘要"
+- v0.4.2 RAG Lite → 本看板"已完成 Sprint 摘要"
+- v0.4.2N PDF 管线重构 → 本看板"已完成 Sprint 摘要"
+- v0.4.2 必修 → 本看板"已完成 Sprint 摘要"
+- v0.4.1 PDF 原件对照 → `/memories/repo/sprints/v041-pdf-compare-reparse.md`
+- v0.4.0 财报中心基础设施 → `/memories/repo/sprints/v040-financial-center.md`
 - v0.3.2 散户热度反向指标 → `/memories/repo/sprints/v0.3.2-retail-heat-contrarian.md`
-- v0.3.2 S7 市场数据不可用恢复（开发完成，盘中验收 4/21–4/23 独立跟踪）
-- `tasks.json` 自 2026-04-22 起仅作 append-only 历史事件流，不再用作活跃任务管理
+- `tasks.json` 自 2026-04-22 起仅作 append-only 历史事件流

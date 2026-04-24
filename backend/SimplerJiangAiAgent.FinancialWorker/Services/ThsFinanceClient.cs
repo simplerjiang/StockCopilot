@@ -182,7 +182,8 @@ public class ThsFinanceClient : IThsFinanceClient
                     var fieldRow = reportArr[fieldIdx];
                     if (fieldRow.ValueKind == JsonValueKind.Array && periodIdx < fieldRow.GetArrayLength())
                     {
-                        dict[name] = FinanceClientHelper.ParseChineseNumber(ParseJsonValue(fieldRow[periodIdx]));
+                        var rawVal = ParseJsonValue(fieldRow[periodIdx]);
+                        dict[name] = FinanceClientHelper.ParseChineseNumber(rawVal);
                     }
 
                     // Append YoY

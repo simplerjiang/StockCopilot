@@ -3,6 +3,7 @@ using SimplerJiangAiAgent.FinancialWorker.Data;
 using SimplerJiangAiAgent.FinancialWorker.Models;
 using SimplerJiangAiAgent.FinancialWorker.Services;
 using SimplerJiangAiAgent.FinancialWorker.Services.Pdf;
+using SimplerJiangAiAgent.FinancialWorker.Services.Rag;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +16,24 @@ var dbPath = FinancialWorkerRuntimePaths.ResolveFinancialDatabasePath();
 Directory.CreateDirectory(appDataPath);
 
 builder.Services.AddSingleton(new FinancialDbContext($"Filename={dbPath};Connection=shared"));
+
+var ragDbPath = FinancialWorkerRuntimePaths.ResolveRagDatabasePath();
+builder.Services.AddSingleton(new RagDbContext($"Data Source={ragDbPath}"));
+builder.Services.AddSingleton<IChineseTokenizer, JiebaTokenizer>();
+builder.Services.AddSingleton<IChunker, FinancialReportChunker>();
+// v0.4.3 S2: OllamaEmbedder (falls back gracefully if Ollama unavailable)
+builder.Services.AddHttpClient<OllamaEmbedder>(client =>
+{
+    client.BaseAddress = new Uri("http://localhost:11434");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddSingleton<IEmbedder>(sp =>
+{
+    var ollamaEmbedder = sp.GetRequiredService<OllamaEmbedder>();
+    return ollamaEmbedder;
+});
+builder.Services.AddSingleton<HybridRetriever>();
+builder.Services.AddSingleton<IRetriever>(sp => sp.GetRequiredService<HybridRetriever>());
 
 builder.Services.AddHttpClient<IEastmoneyFinanceClient, EastmoneyFinanceClient>(client =>
 {
@@ -44,8 +63,14 @@ builder.Services.AddHttpClient<IThsFinanceClient, ThsFinanceClient>(client =>
 builder.Services.AddHttpClient<CninfoClient>(client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    client.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate");
+    client.DefaultRequestHeaders.Add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
     client.Timeout = TimeSpan.FromSeconds(60);
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate
 });
 
 builder.Services.AddSingleton<FinancialDataOrchestrator>();
@@ -58,15 +83,13 @@ builder.Services.AddSingleton<FinancialTableParser>();
 builder.Services.AddSingleton<PdfProcessingPipeline>();
 builder.Services.AddSingleton<IPdfProcessingPipeline>(sp => sp.GetRequiredService<PdfProcessingPipeline>());
 
-builder.Services.AddSingleton<InMemoryLogStore>();
+var logStore = new InMemoryLogStore();
+builder.Services.AddSingleton(logStore);
+builder.Logging.AddProvider(new InMemoryLoggerProvider(logStore));
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddCors();
 
 var app = builder.Build();
-
-// 注册内存日志 Provider，捕获运行时 ILogger 输出
-var logStore = app.Services.GetRequiredService<InMemoryLogStore>();
-app.Services.GetRequiredService<ILoggerFactory>().AddProvider(new InMemoryLoggerProvider(logStore));
 
 app.UseCors(c => c.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 
@@ -120,6 +143,14 @@ app.MapPost("/api/pdf-collect/{symbol}", async (string symbol, PdfProcessingPipe
 })
 .WithName("PdfCollect");
 
+// v0.4.1 §S2：单文件重新解析（同步，覆盖 stageLogs，更新 LastReparsedAt）
+app.MapPost("/api/pdf-reparse/{id}", async (string id, IPdfProcessingPipeline pipeline, CancellationToken ct) =>
+{
+    var outcome = await pipeline.ReparseAsync(id, ct);
+    return Results.Ok(outcome);
+})
+.WithName("PdfReparse");
+
 // === 数据查询 API ===
 app.MapGet("/api/reports/{symbol}", (string symbol, FinancialDbContext db) =>
 {
@@ -171,6 +202,73 @@ app.MapGet("/api/runtime-logs", (long? afterId, int? count, InMemoryLogStore sto
         ? store.GetEntries(afterId.Value, take)
         : store.GetLatest(take);
     return Results.Ok(entries);
+});
+
+// v0.4.3 S8: Embedding status endpoint
+app.MapGet("/api/embedding/status", (RagDbContext ragDb, IEmbedder embedder) =>
+{
+    var dimension = ragDb.GetEmbeddingDimension();
+    var embeddingCount = ragDb.CountEmbeddings();
+    var chunkCount = ragDb.CountChunks();
+
+    return Results.Ok(new
+    {
+        available = embedder.IsAvailable,
+        model = "bge-m3",
+        dimension,
+        embeddingCount,
+        chunkCount,
+        coverage = chunkCount > 0 ? (double)embeddingCount / chunkCount : 0
+    });
+});
+
+// v0.4.2 S6: RAG search endpoint
+app.MapPost("/api/rag/search", async (
+    RagSearchRequest request,
+    HybridRetriever retriever,
+    CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Query))
+        return Results.BadRequest(new { error = "query is required" });
+
+    var topK = request.TopK is > 0 and <= 50 ? request.TopK.Value : 5;
+    var mode = (request.Mode?.ToLowerInvariant()) switch
+    {
+        "bm25" => SearchMode.Bm25,
+        "vector" => SearchMode.Vector,
+        "hybrid" => SearchMode.Hybrid,
+        _ => SearchMode.Hybrid
+    };
+
+    var results = await retriever.RetrieveAsync(
+        request.Query,
+        mode,
+        request.Symbol,
+        request.ReportDate,
+        request.ReportType,
+        topK,
+        ct);
+
+    return Results.Ok(new RagSearchResponse
+    {
+        Query = request.Query,
+        TotalResults = results.Count,
+        Mode = retriever.ActualMode.ToString().ToLowerInvariant(),
+        Results = results.Select(r => new RagSearchResultItem
+        {
+            ChunkId = r.ChunkId,
+            SourceId = r.SourceId,
+            Symbol = r.Symbol,
+            ReportDate = r.ReportDate,
+            ReportType = r.ReportType,
+            Section = r.Section,
+            BlockKind = r.BlockKind,
+            PageStart = r.PageStart,
+            PageEnd = r.PageEnd,
+            Text = r.Text,
+            Score = r.Score
+        }).ToList()
+    });
 });
 
 app.Run();

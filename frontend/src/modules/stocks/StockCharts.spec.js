@@ -50,6 +50,7 @@ vi.mock('klinecharts', () => {
     let loader = null
     let symbol = { ticker: 'A-SHARE', pricePrecision: 2, volumePrecision: 0 }
     let period = kind === 'minute' ? { type: 'minute', span: 1 } : { type: 'day', span: 1 }
+    let lastLoadedData = []
 
     const invokeLoad = () => {
       if (!loader?.getBars) return
@@ -59,6 +60,7 @@ vi.mock('klinecharts', () => {
         symbol,
         period,
         callback: data => {
+          lastLoadedData = Array.isArray(data) ? data : []
           targetLoads.push(data)
         }
       })
@@ -106,7 +108,9 @@ vi.mock('klinecharts', () => {
       }),
       unsubscribeAction: vi.fn(),
       scrollToRealTime: vi.fn(),
-      resize: targetResize
+      resize: targetResize,
+      getDataList: vi.fn(() => lastLoadedData),
+      convertFromPixel: vi.fn(() => [{ dataIndex: lastLoadedData.length ? lastLoadedData.length - 1 : 0 }])
     }
   }
 
@@ -396,7 +400,7 @@ describe('StockCharts', () => {
     expect(hoverTip.text()).toContain('开: 10')
     expect(hoverTip.text()).toContain('收: 11')
     expect(hoverTip.text()).toContain('涨跌: +2')
-    expect(hoverTip.text()).toContain('涨跌幅: 22.22%')
+    expect(hoverTip.text()).toContain('涨跌幅: +22.22%')
   })
 
   it('keeps monthly and yearly kline timestamps renderable for higher timeframes', async () => {

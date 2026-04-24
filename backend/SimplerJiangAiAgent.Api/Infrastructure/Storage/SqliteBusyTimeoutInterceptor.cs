@@ -11,7 +11,7 @@ public sealed class SqliteBusyTimeoutInterceptor : DbConnectionInterceptor
 {
     private readonly int _timeoutMs;
 
-    public SqliteBusyTimeoutInterceptor(int timeoutMs = 5000)
+    public SqliteBusyTimeoutInterceptor(int timeoutMs = 15000)
     {
         _timeoutMs = timeoutMs;
     }

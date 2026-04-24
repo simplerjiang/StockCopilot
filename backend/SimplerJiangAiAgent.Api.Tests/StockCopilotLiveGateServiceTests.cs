@@ -1,8 +1,11 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Services.IntentClassification;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -62,7 +65,8 @@ public sealed class StockCopilotLiveGateServiceTests
         Assert.True(
             result.Prompt.IndexOf("question=看下浦发银行的本地新闻证据", StringComparison.Ordinal)
             < result.Prompt.IndexOf("工具注册表：", StringComparison.Ordinal));
-        Assert.Equal(LlmResponseFormats.Json, llm.LastRequest?.ResponseFormat);
+        Assert.Equal(LlmResponseFormats.Json, llm.Requests[0].ResponseFormat); // planner call
+        Assert.Null(llm.Requests[1].ResponseFormat); // synthesis call is free-text
     }
 
     [Fact]
@@ -104,9 +108,10 @@ public sealed class StockCopilotLiveGateServiceTests
         var turn = Assert.Single(result.Session.Turns);
         Assert.Equal("done", turn.FinalAnswer.Status);
         Assert.Single(turn.ToolResults);
-        Assert.Equal(2, llm.CallCount);
+        Assert.Equal(3, llm.CallCount); // initial + repair + synthesis
         Assert.Equal("llm-trace-repair", result.LlmTraceId);
-        Assert.All(llm.Requests, request => Assert.Equal(LlmResponseFormats.Json, request.ResponseFormat));
+        Assert.All(llm.Requests.Take(2), request => Assert.Equal(LlmResponseFormats.Json, request.ResponseFormat));
+        Assert.Null(llm.Requests[2].ResponseFormat); // synthesis call is free-text
         Assert.Contains("上次输出不是有效 JSON，现在只做一次 JSON repair。", llm.Requests[1].Prompt, StringComparison.Ordinal);
         Assert.Contains("必须字段：plannerSummary, governorSummary, finalAnswerDraft, toolCalls", llm.Requests[1].Prompt, StringComparison.Ordinal);
         Assert.Contains("上一次无效输出片段：", llm.Requests[1].Prompt, StringComparison.Ordinal);
@@ -334,7 +339,30 @@ public sealed class StockCopilotLiveGateServiceTests
             new McpServiceRegistry(),
             new StockAgentRoleContractRegistry(),
             new FakeStockMarketContextService(),
-            new StockCopilotAcceptanceService(new FakeReplayCalibrationService()));
+            new StockCopilotAcceptanceService(new FakeReplayCalibrationService()),
+            new NoOpIntentClassifier(),
+            new NoOpEvidencePackBuilder(),
+            new NoOpHttpClientFactory(),
+            new ConfigurationBuilder().Build(),
+            NullLogger<StockCopilotLiveGateService>.Instance);
+    }
+
+    private sealed class NoOpHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
+    }
+
+    private sealed class NoOpIntentClassifier : IQuestionIntentClassifier
+    {
+        public Task<QuestionIntent> ClassifyAsync(string question, string? stockSymbol = null, CancellationToken ct = default)
+            => Task.FromResult(new QuestionIntent(IntentType.General, 1.0, false, false, SuggestedPipeline.LiveGate));
+    }
+
+    private sealed class NoOpEvidencePackBuilder : IEvidencePackBuilder
+    {
+        public Task<EvidencePack> BuildAsync(string symbol, string query, IntentType intent, CancellationToken ct = default)
+            => Task.FromResult(new EvidencePack(symbol, query, intent, Array.Empty<RagCitationDto>(), Array.Empty<FinancialMetricSummary>(), null, Array.Empty<string>()));
+        public string FormatAsPromptContext(EvidencePack pack) => string.Empty;
     }
 
     private sealed class FakeLlmService : ILlmService
@@ -555,5 +583,8 @@ public sealed class StockCopilotLiveGateServiceTests
 
         public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+
+        public Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
+            => Task.FromResult(new List<RagCitationDto>());
     }
 }

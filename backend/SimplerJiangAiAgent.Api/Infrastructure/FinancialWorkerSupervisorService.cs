@@ -18,7 +18,9 @@ public record FinancialWorkerStatus(
     int? ProcessId,
     string? LastError,
     FinancialWorkerHealthDto? LastHealthResponse,
-    DateTime? WorkerStartedAt
+    DateTime? WorkerStartedAt,
+    int AutoRestartCount = 0,
+    DateTime? LastAutoRestart = null
 );
 
 public record FinancialWorkerHealthDto(
@@ -51,7 +53,10 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 
     private int _consecutiveFailures;
-    private const int MaxConsecutiveFailures = 6; // 60 秒无响应后重启
+    private const int MaxConsecutiveFailures = 3; // 30 秒无响应后重启
+
+    private int _autoRestartCount;
+    private DateTime? _lastAutoRestart;
 
     public FinancialWorkerSupervisorService(
         IHttpClientFactory httpClientFactory,
@@ -93,6 +98,34 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
             if (_state == "stopped") return;
         }
 
+        // Proactive process exit detection — immediate restart without waiting for heartbeat threshold
+        bool processExited = false;
+        lock (_lock)
+        {
+            if (_workerProcess != null && _workerProcess.HasExited)
+            {
+                _logger.LogWarning("Worker process (PID {Pid}) has exited with code {ExitCode}. Scheduling immediate restart.",
+                    _workerProcess.Id, _workerProcess.ExitCode);
+                _state = "error";
+                _isHealthy = false;
+                _lastError = $"Process exited with code {_workerProcess.ExitCode}";
+                _workerProcess = null;
+                _processId = null;
+                _consecutiveFailures = 0;
+                processExited = true;
+            }
+        }
+
+        if (processExited)
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await TryAutoStartAsync(CancellationToken.None); }
+                catch (Exception ex) { _logger.LogError(ex, "Auto-restart after process exit failed"); }
+            });
+            return;
+        }
+
         var baseUrl = ResolveBaseUrl();
         try
         {
@@ -115,6 +148,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
                     _lastHeartbeat = DateTime.UtcNow;
                     _lastHealthResponse = healthDto;
                     _consecutiveFailures = 0;
+                    _autoRestartCount = 0;
                     _lastError = null;
 
                     if (_workerProcess is null || _workerProcess.HasExited)
@@ -179,6 +213,18 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
             lock (_lock) { if (_state != "running") _workerStartedAt = DateTime.UtcNow; _state = "running"; }
             _logger.LogInformation("FinancialWorker already running");
             return;
+        }
+
+        lock (_lock)
+        {
+            _autoRestartCount++;
+            _lastAutoRestart = DateTime.UtcNow;
+
+            if (_autoRestartCount >= 3 && _lastAutoRestart.HasValue
+                && (DateTime.UtcNow - _lastAutoRestart.Value).TotalMinutes < 5)
+            {
+                _logger.LogError("Worker has been restarted {Count} times in 5 minutes. Possible crash loop.", _autoRestartCount);
+            }
         }
 
         await StartWorkerInternalAsync(ct);
@@ -322,7 +368,8 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
         lock (_lock)
         {
             return new FinancialWorkerStatus(
-                _state, _isHealthy, _lastHeartbeat, _processId, _lastError, _lastHealthResponse, _workerStartedAt
+                _state, _isHealthy, _lastHeartbeat, _processId, _lastError, _lastHealthResponse, _workerStartedAt,
+                _autoRestartCount, _lastAutoRestart
             );
         }
     }

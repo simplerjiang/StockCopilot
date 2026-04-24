@@ -97,14 +97,14 @@ public sealed class RecommendRoleContractRegistry : IRecommendRoleContractRegist
             RecommendAgentRoleIds.LeaderPicker, "龙头猎手",
             RecommendPromptTemplates.LeaderPicker,
             """{ "picks": [{"symbol":"","name":"","sectorName":"","pickType":"leader","reason":"","metrics":{}}] }""",
-            ["stock_search", "stock_kline", "stock_fundamentals", "stock_financial_report", "stock_financial_trend", "web_search"],
+            ["stock_search", "stock_kline", "stock_fundamentals", "stock_financial_report", "stock_financial_trend", "financial_report_rag", "web_search"],
             MaxToolCalls: 8);
 
         yield return new RecommendRoleContract(
             RecommendAgentRoleIds.GrowthPicker, "潜力股猎手",
             RecommendPromptTemplates.GrowthPicker,
             """{ "picks": [{"symbol":"","name":"","sectorName":"","pickType":"growth","triggerCondition":"","reason":""}] }""",
-            ["stock_search", "stock_kline", "stock_fundamentals", "stock_financial_report", "stock_financial_trend", "web_search_news", "web_read_url"],
+            ["stock_search", "stock_kline", "stock_fundamentals", "stock_financial_report", "stock_financial_trend", "financial_report_rag", "web_search_news", "web_read_url"],
             MaxToolCalls: 8);
 
         yield return new RecommendRoleContract(

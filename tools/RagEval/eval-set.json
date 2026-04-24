@@ -1,0 +1,217 @@
+{
+  "version": "1.0",
+  "description": "v0.4.2.1 财报 RAG 评估集 — 30条 Q&A",
+  "created": "2026-04-24",
+  "queries": [
+    {
+      "id": "Q01",
+      "category": "经营情况",
+      "query": "营业收入",
+      "expected_keywords": ["营业收入", "收入", "营收"],
+      "description": "查找营业收入相关段落"
+    },
+    {
+      "id": "Q02",
+      "category": "经营情况",
+      "query": "主营业务收入构成",
+      "expected_keywords": ["主营业务", "收入构成", "产品", "业务"],
+      "description": "查找主营业务收入结构"
+    },
+    {
+      "id": "Q03",
+      "category": "经营情况",
+      "query": "营业成本分析",
+      "expected_keywords": ["营业成本", "成本", "费用"],
+      "description": "查找营业成本相关分析"
+    },
+    {
+      "id": "Q04",
+      "category": "经营情况",
+      "query": "销售费用管理费用",
+      "expected_keywords": ["销售费用", "管理费用", "费用"],
+      "description": "查找期间费用分析"
+    },
+    {
+      "id": "Q05",
+      "category": "经营情况",
+      "query": "毛利率变化趋势",
+      "expected_keywords": ["毛利", "利润率", "毛利率"],
+      "description": "查找毛利率相关分析"
+    },
+    {
+      "id": "Q06",
+      "category": "经营情况",
+      "query": "净利润增长",
+      "expected_keywords": ["净利润", "利润", "增长"],
+      "description": "查找净利润变动情况"
+    },
+    {
+      "id": "Q07",
+      "category": "经营情况",
+      "query": "研发投入情况",
+      "expected_keywords": ["研发", "投入", "研究", "开发"],
+      "description": "查找研发费用及投入"
+    },
+    {
+      "id": "Q08",
+      "category": "经营情况",
+      "query": "市场占有率竞争地位",
+      "expected_keywords": ["市场", "竞争", "份额", "地位"],
+      "description": "查找市场竞争分析"
+    },
+    {
+      "id": "Q09",
+      "category": "经营情况",
+      "query": "应收账款变动",
+      "expected_keywords": ["应收账款", "应收", "账款", "坏账"],
+      "description": "查找应收账款风险"
+    },
+    {
+      "id": "Q10",
+      "category": "经营情况",
+      "query": "存货周转情况",
+      "expected_keywords": ["存货", "周转", "库存"],
+      "description": "查找存货管理分析"
+    },
+    {
+      "id": "Q11",
+      "category": "风险提示",
+      "query": "公司面临的风险因素",
+      "expected_keywords": ["风险", "不确定", "挑战"],
+      "description": "查找风险因素章节"
+    },
+    {
+      "id": "Q12",
+      "category": "风险提示",
+      "query": "市场竞争风险",
+      "expected_keywords": ["竞争", "风险", "市场"],
+      "description": "查找市场竞争风险描述"
+    },
+    {
+      "id": "Q13",
+      "category": "风险提示",
+      "query": "原材料价格波动风险",
+      "expected_keywords": ["原材料", "价格", "波动", "成本"],
+      "description": "查找原材料风险"
+    },
+    {
+      "id": "Q14",
+      "category": "风险提示",
+      "query": "政策法规变动风险",
+      "expected_keywords": ["政策", "法规", "监管", "合规"],
+      "description": "查找政策法规风险"
+    },
+    {
+      "id": "Q15",
+      "category": "风险提示",
+      "query": "汇率变动对经营的影响",
+      "expected_keywords": ["汇率", "外汇", "汇兑"],
+      "description": "查找汇率风险"
+    },
+    {
+      "id": "Q16",
+      "category": "募资用途",
+      "query": "募集资金使用情况",
+      "expected_keywords": ["募集", "资金", "募投", "用途"],
+      "description": "查找募资用途说明"
+    },
+    {
+      "id": "Q17",
+      "category": "募资用途",
+      "query": "投资计划和资本支出",
+      "expected_keywords": ["投资", "资本", "支出", "项目"],
+      "description": "查找投资计划"
+    },
+    {
+      "id": "Q18",
+      "category": "募资用途",
+      "query": "产能扩张项目进展",
+      "expected_keywords": ["产能", "扩张", "项目", "建设"],
+      "description": "查找产能扩张信息"
+    },
+    {
+      "id": "Q19",
+      "category": "募资用途",
+      "query": "在建工程和固定资产投资",
+      "expected_keywords": ["在建工程", "固定资产", "投资"],
+      "description": "查找在建工程情况"
+    },
+    {
+      "id": "Q20",
+      "category": "募资用途",
+      "query": "技改项目和技术升级",
+      "expected_keywords": ["技改", "技术", "升级", "改造"],
+      "description": "查找技术改造项目"
+    },
+    {
+      "id": "Q21",
+      "category": "会计政策",
+      "query": "会计政策变更说明",
+      "expected_keywords": ["会计政策", "变更", "准则"],
+      "description": "查找会计政策变更"
+    },
+    {
+      "id": "Q22",
+      "category": "会计政策",
+      "query": "会计估计变更",
+      "expected_keywords": ["会计估计", "变更", "估计"],
+      "description": "查找会计估计变更"
+    },
+    {
+      "id": "Q23",
+      "category": "会计政策",
+      "query": "合并报表范围变化",
+      "expected_keywords": ["合并", "报表", "子公司", "范围"],
+      "description": "查找合并报表范围变动"
+    },
+    {
+      "id": "Q24",
+      "category": "会计政策",
+      "query": "折旧摊销方法",
+      "expected_keywords": ["折旧", "摊销", "年限", "方法"],
+      "description": "查找折旧摊销政策"
+    },
+    {
+      "id": "Q25",
+      "category": "会计政策",
+      "query": "收入确认原则",
+      "expected_keywords": ["收入确认", "确认", "原则", "收入"],
+      "description": "查找收入确认政策"
+    },
+    {
+      "id": "Q26",
+      "category": "分红方案",
+      "query": "利润分配方案",
+      "expected_keywords": ["利润分配", "分配", "方案", "分红"],
+      "description": "查找利润分配方案"
+    },
+    {
+      "id": "Q27",
+      "category": "分红方案",
+      "query": "现金分红金额",
+      "expected_keywords": ["现金", "分红", "股利", "派息"],
+      "description": "查找现金分红金额"
+    },
+    {
+      "id": "Q28",
+      "category": "分红方案",
+      "query": "每股收益和每股分红",
+      "expected_keywords": ["每股", "收益", "分红", "EPS"],
+      "description": "查找每股收益与分红"
+    },
+    {
+      "id": "Q29",
+      "category": "分红方案",
+      "query": "股利支付率",
+      "expected_keywords": ["股利", "支付率", "分红比例", "分配"],
+      "description": "查找股利支付比率"
+    },
+    {
+      "id": "Q30",
+      "category": "分红方案",
+      "query": "未分配利润",
+      "expected_keywords": ["未分配", "利润", "留存", "滚存"],
+      "description": "查找未分配利润情况"
+    }
+  ]
+}

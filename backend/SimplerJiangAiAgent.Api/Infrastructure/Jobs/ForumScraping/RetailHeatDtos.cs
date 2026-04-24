@@ -13,5 +13,32 @@ public sealed record RetailHeatDataPointDto(
     double Ma20,
     double HeatRatio,
     string Signal,
-    int PlatformCount
+    int PlatformCount,
+    int PostCount,
+    bool HasData
+);
+
+public sealed record RetailHeatCollectionStatusDto(
+    string Symbol,
+    bool InWatchlist,
+    IReadOnlyList<PlatformCollectionStatusDto> Platforms,
+    IReadOnlyList<string> MissingDates,
+    int TotalTradingDays,
+    int DaysWithData,
+    double CoveragePercent
+);
+
+public sealed record PlatformCollectionStatusDto(
+    string Platform,
+    string? LastDate,
+    int LastPostCount,
+    int TotalRecords,
+    string Status  // "ok" | "stale" | "none"
+);
+
+public sealed record SingleStockCollectResult(
+    string Platform,
+    bool Success,
+    int? PostCount,
+    string? Error
 );

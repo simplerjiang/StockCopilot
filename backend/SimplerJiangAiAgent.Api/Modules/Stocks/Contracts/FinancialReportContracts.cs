@@ -29,6 +29,7 @@ public sealed record FinancialReportListQuery(
     string? ReportType,
     string? StartDate,
     string? EndDate,
+    string? Keyword = null,
     int Page = 1,
     int PageSize = 20,
     string Sort = "reportDate:desc");

@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+
+// V041-S6: stub ComparePane to keep tests focused on Tab behaviour and avoid pulling
+// the PDF viewer / parse / voting subtree.
+vi.mock('../financial/FinancialReportComparePane.vue', () => ({
+  default: {
+    name: 'FinancialReportComparePaneStub',
+    props: ['pdfFileId', 'pdfFileDetail', 'loading', 'error'],
+    emits: ['refresh', 'close'],
+    template: '<div class="compare-pane-stub" data-testid="compare-pane-stub">stub:{{ pdfFileId }}</div>'
+  }
+}))
+
 import FinancialReportTab from './FinancialReportTab.vue'
 
 const mockFetch = vi.fn()
@@ -361,5 +373,454 @@ describe('FinancialReportTab', () => {
 
     expect(wrapper.find('.error-msg').exists()).toBe(true)
     expect(wrapper.find('.error-msg').text()).toContain('采集失败')
+  })
+
+  it('renders V040-S4 透明化字段：报告期/标题/来源 Tag/降级原因/PDF 摘要', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(emptySummaryData))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        channel: 'emweb',
+        reportCount: 4,
+        durationMs: 3500,
+        reportPeriod: '2024-12-31',
+        reportTitle: '2024年年度报告',
+        sourceChannel: 'emweb',
+        fallbackReason: 'datacenter empty data',
+        pdfSummary: 'pdf:2_tables_appended'
+      }))
+      .mockResolvedValueOnce(createJsonResponse(mockTrendData))
+      .mockResolvedValueOnce(createJsonResponse(mockSummaryData))
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: 'SZ000001', active: true } })
+    await flushPromises()
+    await wrapper.find('.collect-btn').trigger('click')
+    await flushPromises()
+
+    const meta = wrapper.find('.collect-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-field="reportPeriod"]').text()).toContain('2024-12-31')
+    expect(meta.find('[data-field="reportTitle"]').text()).toContain('2024年年度报告')
+
+    const channelRow = meta.find('[data-field="sourceChannel"]')
+    expect(channelRow.exists()).toBe(true)
+    const tag = channelRow.find('.source-channel-tag')
+    expect(tag.exists()).toBe(true)
+    expect(tag.attributes('data-channel-key')).toBe('emweb')
+    expect(tag.text()).toBe('EM 网页')
+
+    expect(meta.find('[data-field="fallbackReason"]').text()).toContain('datacenter empty data')
+
+    const pdfRow = meta.find('[data-field="pdfSummary"]')
+    expect(pdfRow.exists()).toBe(true)
+    expect(wrapper.find('.pdf-summary-content').exists()).toBe(false)
+    await pdfRow.find('.pdf-summary-toggle').trigger('click')
+    expect(wrapper.find('.pdf-summary-content').text()).toContain('pdf:2_tables_appended')
+  })
+
+  it('omits 透明化 meta rows when fields are missing (旧响应兼容)', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(emptySummaryData))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        channel: 'emweb',
+        reportCount: 4,
+        durationMs: 3500
+      }))
+      .mockResolvedValueOnce(createJsonResponse(mockTrendData))
+      .mockResolvedValueOnce(createJsonResponse(mockSummaryData))
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: 'SZ000001', active: true } })
+    await flushPromises()
+    await wrapper.find('.collect-btn').trigger('click')
+    await flushPromises()
+
+    // sourceChannel falls back to legacy `channel`, so the row exists; other 4 should not.
+    const meta = wrapper.find('.collect-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-field="reportPeriod"]').exists()).toBe(false)
+    expect(meta.find('[data-field="reportTitle"]').exists()).toBe(false)
+    expect(meta.find('[data-field="fallbackReason"]').exists()).toBe(false)
+    expect(meta.find('[data-field="pdfSummary"]').exists()).toBe(false)
+    expect(meta.find('[data-field="sourceChannel"] .source-channel-tag').attributes('data-channel-key')).toBe('emweb')
+  })
+
+  it('falls back to reportPeriods[0] / pdfSummarySupplement aliases', async () => {
+    mockFetch
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(emptySummaryData))
+      .mockResolvedValueOnce(createJsonResponse({
+        success: true,
+        channel: 'pdf',
+        reportCount: 1,
+        durationMs: 2000,
+        reportPeriods: ['2024-09-30', '2024-06-30'],
+        pdfSummarySupplement: 'pdf:1_tables_appended'
+      }))
+      .mockResolvedValueOnce(createJsonResponse(emptyTrendData))
+      .mockResolvedValueOnce(createJsonResponse(sparsePdfSummaryData))
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: 'SZ000001', active: true } })
+    await flushPromises()
+    await wrapper.find('.collect-btn').trigger('click')
+    await flushPromises()
+
+    const meta = wrapper.find('.collect-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.find('[data-field="reportPeriod"]').text()).toContain('2024-09-30')
+    expect(meta.find('[data-field="sourceChannel"] .source-channel-tag').attributes('data-channel-key')).toBe('pdf')
+    expect(meta.find('[data-field="pdfSummary"]').exists()).toBe(true)
+  })
+
+  // ============================================================================
+  // V041-S6: 「查看 PDF 原件 / 对照」入口 + ComparePane 复用
+  // ============================================================================
+
+  it('V041-S6 入口可见性：数据加载后 report-header 中可见 view-pdf-btn', async () => {
+    setupFetchMock()
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    const btn = wrapper.find('[data-testid="view-pdf-btn"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('查看 PDF 原件')
+    wrapper.unmount()
+  })
+
+  it('V041-S6 点击跳转：解析 pdfFileId 后挂载 ComparePane stub', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (url.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [
+            { id: 4242, reportPeriod: '2024-12-31', fileName: 'mt.pdf' },
+            { id: 4001, reportPeriod: '2024-06-30', fileName: 'old.pdf' }
+          ],
+          total: 2,
+          page: 1,
+          pageSize: 5
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    // Modal Teleport 到 body，需要在 document 上找
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    const stub = modal.querySelector('[data-testid="compare-pane-stub"]')
+    expect(stub).not.toBeNull()
+    // 期望按 reportDate 匹配，挑到 id=4242 的那条
+    expect(stub.textContent).toContain('4242')
+
+    // 至少调用过一次 listPdfFiles（带 symbol 参数）
+    const pdfCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/pdf-files?'))
+    expect(pdfCall).toBeTruthy()
+    expect(String(pdfCall[0])).toContain('symbol=600519')
+
+    wrapper.unmount()
+    // 清理 Teleport 残留
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  it('V041-S6 reparse 回写：ComparePane emit refresh 后 Tab 不抛异常且 modal 仍可关闭', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (url.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [{ id: 7777, reportPeriod: '2024-12-31', fileName: 'rp.pdf' }]
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const stubComp = wrapper.findComponent({ name: 'FinancialReportComparePaneStub' })
+    expect(stubComp.exists()).toBe(true)
+
+    // 触发 refresh —— Tab 自身 onComparePaneRefresh 不应抛异常
+    expect(() => stubComp.vm.$emit('refresh', { id: 7777, voteConfidence: 0.95 })).not.toThrow()
+    await flushPromises()
+
+    // modal 仍存在
+    expect(document.querySelector('[data-testid="pdf-viewer-modal"]')).not.toBeNull()
+
+    // 触发 ComparePane close → 关闭 modal
+    stubComp.vm.$emit('close')
+    await flushPromises()
+    expect(document.querySelector('[data-testid="pdf-viewer-modal"]')).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('V041-S6 空态：listPdfFiles 返回空列表时显示提示，不挂载 ComparePane', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (url.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({ items: [], total: 0, page: 1, pageSize: 5 }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    expect(modal.querySelector('[data-testid="compare-pane-stub"]')).toBeNull()
+    expect(modal.textContent).toContain('暂无 PDF 原件')
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  // ============================================================================
+  // V041-S8-FU-1: 「📥 采集 PDF 原件」入口
+  // ============================================================================
+  it('V041-S8-FU-1 点击「📥 采集 PDF 原件」调用 collect 接口，成功后显示完成提示', async () => {
+    mockFetch.mockImplementation((url, init) => {
+      if (typeof url === 'string' && url.includes('/pdf-files/collect/')) {
+        return Promise.resolve(createJsonResponse({ success: true, downloadedCount: 1, parsedCount: 1 }))
+      }
+      if (url.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (url.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+
+    const btn = wrapper.find('[data-testid="collect-pdf-btn"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('采集 PDF 原件')
+
+    await btn.trigger('click')
+    await flushPromises()
+
+    const collectCall = mockFetch.mock.calls.find(c => String(c[0]).includes('/pdf-files/collect/'))
+    expect(collectCall).toBeTruthy()
+    expect(String(collectCall[0])).toContain('600519')
+    expect(collectCall[1]).toEqual({ method: 'POST' })
+
+    expect(wrapper.find('[data-testid="collect-pdf-info"]').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  // ============================================================================
+  // V042-P0-C (B3): 入口 fallback 修复
+  //   1) symbol 必须 strip 市场前缀（sh/sz）→ 后端按数字精确匹配才能命中
+  //   2) reportPeriod 没命中时 fallback 到 fieldCount 最大那条（主报告而非摘要）
+  //   3) 空数组仍展示「暂无 PDF 原件」alert
+  //   4) ComparePane emit refresh 后调用 fetchData 局部刷新
+  // ============================================================================
+
+  it('V042-P0-C 入口：sh600519 → listPdfFiles 仅传裸数字 600519', async () => {
+    const calls = []
+    mockFetch.mockImplementation((url) => {
+      const u = String(url)
+      calls.push(u)
+      if (u.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (u.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (u.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [{ id: 'PDF-1', reportPeriod: '2024-12-31', fieldCount: 10, fileName: 'main.pdf' }],
+          total: 1, page: 1, pageSize: 10
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: 'sh600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const pdfCall = calls.find(u => u.includes('/pdf-files?'))
+    expect(pdfCall).toBeTruthy()
+    expect(pdfCall).toContain('symbol=600519')
+    expect(pdfCall).not.toContain('sh600519')
+    // ComparePane 应该被挂载，不应出现 alert
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    expect(modal.querySelector('[data-testid="compare-pane-stub"]')).not.toBeNull()
+    expect(modal.textContent).not.toContain('暂无 PDF 原件')
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  it('V042-P0-C fallback：reportPeriod 未命中时挑 fieldCount 最大那条（主报告）', async () => {
+    mockFetch.mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (u.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (u.includes('/pdf-files?')) {
+        // 3 条记录：摘要 fieldCount=0、主报告 fieldCount=10、扉页 fieldCount=2
+        // 没有任何一条的 reportPeriod 跟 summary 的 2024-12-31 对得上
+        return Promise.resolve(createJsonResponse({
+          items: [
+            { id: 'PDF-SUMMARY', reportPeriod: '2024-09-30', fieldCount: 0, fileName: 'summary.pdf' },
+            { id: 'PDF-MAIN', reportPeriod: '2024-06-30', fieldCount: 10, fileName: 'annual.pdf' },
+            { id: 'PDF-COVER', reportPeriod: '2024-06-30', fieldCount: 2, fileName: 'cover.pdf' }
+          ],
+          total: 3, page: 1, pageSize: 10
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    const stub = modal.querySelector('[data-testid="compare-pane-stub"]')
+    expect(stub).not.toBeNull()
+    // fieldCount 最大那条 = PDF-MAIN
+    expect(stub.textContent).toContain('PDF-MAIN')
+    expect(modal.textContent).not.toContain('暂无 PDF 原件')
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  it('V042-P0-C fallback：reportPeriod 命中时优先按 reportPeriod 选（不被 fieldCount 覆盖）', async () => {
+    mockFetch.mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (u.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (u.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [
+            // reportPeriod 命中（fieldCount 较小）
+            { id: 'PDF-PERIOD-MATCH', reportPeriod: '2024-12-31', fieldCount: 4, fileName: 'q4.pdf' },
+            // fieldCount 更大，但 reportPeriod 不匹配 — 不应被选
+            { id: 'PDF-BIG-OTHER', reportPeriod: '2023-12-31', fieldCount: 99, fileName: 'old-annual.pdf' }
+          ],
+          total: 2, page: 1, pageSize: 10
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const stub = document.querySelector('[data-testid="compare-pane-stub"]')
+    expect(stub).not.toBeNull()
+    expect(stub.textContent).toContain('PDF-PERIOD-MATCH')
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  it('V042-P0-C 空数组仍显示 alert，不挂载 ComparePane', async () => {
+    mockFetch.mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/trend/')) return Promise.resolve(createJsonResponse(mockTrendData))
+      if (u.includes('/summary/')) return Promise.resolve(createJsonResponse(mockSummaryData))
+      if (u.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({ items: [], total: 0, page: 1, pageSize: 10 }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const modal = document.querySelector('[data-testid="pdf-viewer-modal"]')
+    expect(modal).not.toBeNull()
+    expect(modal.querySelector('[data-testid="compare-pane-stub"]')).toBeNull()
+    expect(modal.textContent).toContain('暂无 PDF 原件')
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
+  })
+
+  it('V042-P0-C (B4) ComparePane refresh → 触发一次 fetchData（trend + summary 重新拉取）', async () => {
+    let trendCalls = 0
+    let summaryCalls = 0
+    mockFetch.mockImplementation((url) => {
+      const u = String(url)
+      if (u.includes('/trend/')) { trendCalls++; return Promise.resolve(createJsonResponse(mockTrendData)) }
+      if (u.includes('/summary/')) { summaryCalls++; return Promise.resolve(createJsonResponse(mockSummaryData)) }
+      if (u.includes('/pdf-files?')) {
+        return Promise.resolve(createJsonResponse({
+          items: [{ id: 'PDF-X', reportPeriod: '2024-12-31', fieldCount: 8 }]
+        }))
+      }
+      return Promise.resolve({ ok: false })
+    })
+
+    const wrapper = mount(FinancialReportTab, {
+      props: { symbol: '600519', active: true },
+      attachTo: document.body
+    })
+    await flushPromises()
+    expect(trendCalls).toBe(1)
+    expect(summaryCalls).toBe(1)
+
+    await wrapper.find('[data-testid="view-pdf-btn"]').trigger('click')
+    await flushPromises()
+
+    const stubComp = wrapper.findComponent({ name: 'FinancialReportComparePaneStub' })
+    expect(stubComp.exists()).toBe(true)
+    stubComp.vm.$emit('refresh', { id: 'PDF-X' })
+    await flushPromises()
+
+    expect(trendCalls).toBe(2)
+    expect(summaryCalls).toBe(2)
+
+    wrapper.unmount()
+    document.querySelectorAll('[data-testid="pdf-viewer-modal"]').forEach(el => el.remove())
   })
 })

@@ -10,14 +10,14 @@ const sourceTagDisplayNames = {
   'gnews-cn-stocks': 'Google·A股', 'gnews-cn-finance': 'Google·金融',
   'gnews-cn-macro': 'Google·宏观', 'gnews-us-stocks': 'Google·美股',
   'gnews-us-macro': 'Google·美宏观', 'gnews-global-macro': 'Google·全球',
-  'gnews-reuters': 'Reuters', 'gnews-bloomberg': 'Bloomberg',
+  'gnews-reuters': '路透社', 'gnews-bloomberg': '彭博社',
   'gnews-ft': 'FT金融时报', 'gnews-wsj': 'WSJ华尔街日报',
   'cnbc-finance-rss': 'CNBC金融', 'cnbc-us-markets-rss': 'CNBC美股',
   'cnbc-economy-rss': 'CNBC经济', 'cnbc-world-rss': 'CNBC国际',
-  'marketwatch-top-rss': 'MarketWatch', 'marketwatch-pulse-rss': 'MW脉搏',
+  'marketwatch-top-rss': '市场观察', 'marketwatch-pulse-rss': 'MW脉搏',
   'bbc-business-rss': 'BBC商业', 'nyt-business-rss': 'NYT商业',
-  'seeking-alpha-rss': 'Seeking Alpha', 'investing-com-rss': 'Investing.com',
-  'sky-business-rss': 'Sky商业', 'cointelegraph-rss': 'CoinTelegraph'
+  'seeking-alpha-rss': '投资研究', 'investing-com-rss': '英为财情',
+  'sky-business-rss': 'Sky商业', 'cointelegraph-rss': '加密电报'
 }
 function formatSourceTag(tag) { return sourceTagDisplayNames[tag] || tag }
 

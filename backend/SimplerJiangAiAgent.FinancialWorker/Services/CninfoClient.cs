@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,7 @@ public class CninfoClient
     private readonly HttpClient _httpClient;
     private readonly ILogger<CninfoClient> _logger;
     private readonly string _reportsDir;
+    private readonly ConcurrentDictionary<string, string> _orgIdCache = new();
 
     public CninfoClient(HttpClient httpClient, ILogger<CninfoClient> logger)
     {
@@ -23,56 +25,74 @@ public class CninfoClient
     public async Task<List<CninfoAnnouncement>> QueryAnnouncementsAsync(
         string symbol, string category = "category_ndbg_szsh", int pageSize = 30, CancellationToken ct = default)
     {
-        var orgId = GetOrgId(symbol);
+        var orgId = await ResolveOrgIdAsync(symbol, ct);
         var plate = symbol.StartsWith("6") ? "sh" : "sz";
-        var column = "szse";
+        var column = symbol.StartsWith("6") ? "sse" : "szse";
 
-        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        const int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            ["stock"] = $"{symbol},{orgId}",
-            ["tabName"] = "fulltext",
-            ["pageSize"] = pageSize.ToString(),
-            ["pageNum"] = "1",
-            ["column"] = column,
-            ["category"] = category,
-            ["plate"] = plate,
-            ["seDate"] = ""
-        });
-
-        var request = new HttpRequestMessage(HttpMethod.Post, "http://www.cninfo.com.cn/new/hisAnnouncement/query")
-        {
-            Content = content
-        };
-        request.Headers.Add("Referer", "http://www.cninfo.com.cn/");
-        request.Headers.Add("Accept", "application/json");
-
-        var response = await _httpClient.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-
-        var json = await response.Content.ReadAsStringAsync(ct);
-        var doc = JsonDocument.Parse(json);
-
-        var results = new List<CninfoAnnouncement>();
-        if (doc.RootElement.TryGetProperty("announcements", out var arr) && arr.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in arr.EnumerateArray())
+            try
             {
-                var ann = new CninfoAnnouncement
+                var content = new FormUrlEncodedContent(new Dictionary<string, string>
                 {
-                    AnnouncementId = item.GetProperty("announcementId").GetString() ?? "",
-                    AdjunctUrl = item.GetProperty("adjunctUrl").GetString() ?? "",
-                    Title = item.GetProperty("announcementTitle").GetString() ?? "",
-                    PublishTime = item.TryGetProperty("announcementTime", out var ts) && ts.ValueKind == JsonValueKind.Number
-                        ? DateTimeOffset.FromUnixTimeMilliseconds(ts.GetInt64()).DateTime
-                        : DateTime.MinValue
+                    ["stock"] = $"{symbol},{orgId}",
+                    ["tabName"] = "fulltext",
+                    ["pageSize"] = pageSize.ToString(),
+                    ["pageNum"] = "1",
+                    ["column"] = column,
+                    ["category"] = category,
+                    ["plate"] = plate,
+                    ["seDate"] = ""
+                });
+
+                var request = new HttpRequestMessage(HttpMethod.Post, "http://www.cninfo.com.cn/new/hisAnnouncement/query")
+                {
+                    Content = content
                 };
-                if (!string.IsNullOrEmpty(ann.AdjunctUrl))
-                    results.Add(ann);
+                request.Headers.Add("Referer", "http://www.cninfo.com.cn/new/disclosure");
+                request.Headers.Add("Origin", "http://www.cninfo.com.cn");
+                request.Headers.Add("Accept", "application/json");
+
+                var response = await _httpClient.SendAsync(request, ct);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync(ct);
+                var doc = JsonDocument.Parse(json);
+
+                var results = new List<CninfoAnnouncement>();
+                if (doc.RootElement.TryGetProperty("announcements", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in arr.EnumerateArray())
+                    {
+                        var ann = new CninfoAnnouncement
+                        {
+                            AnnouncementId = item.GetProperty("announcementId").GetString() ?? "",
+                            AdjunctUrl = item.GetProperty("adjunctUrl").GetString() ?? "",
+                            Title = item.GetProperty("announcementTitle").GetString() ?? "",
+                            PublishTime = item.TryGetProperty("announcementTime", out var ts) && ts.ValueKind == JsonValueKind.Number
+                                ? DateTimeOffset.FromUnixTimeMilliseconds(ts.GetInt64()).DateTime
+                                : DateTime.MinValue
+                        };
+                        if (!string.IsNullOrEmpty(ann.AdjunctUrl))
+                            results.Add(ann);
+                    }
+                }
+
+                _logger.LogInformation("cninfo 查询 {Symbol} 分类 {Category} (column={Column}): {Count} 条公告",
+                    symbol, category, column, results.Count);
+                return results;
+            }
+            catch (Exception ex) when (attempt < maxRetries && !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "cninfo 查询失败 (第 {Attempt}/{Max} 次): {Symbol} {Category}",
+                    attempt, maxRetries, symbol, category);
+                await Task.Delay(1000 * attempt, ct);
             }
         }
 
-        _logger.LogInformation("cninfo 查询 {Symbol} 分类 {Category}: {Count} 条公告", symbol, category, results.Count);
-        return results;
+        _logger.LogError("cninfo 查询最终失败: {Symbol} {Category}，已重试 {Max} 次", symbol, category, maxRetries);
+        return new List<CninfoAnnouncement>();
     }
 
     /// <summary>
@@ -96,27 +116,42 @@ public class CninfoClient
         }
 
         var url = $"http://static.cninfo.com.cn/{announcement.AdjunctUrl}";
-        try
-        {
-            var response = await _httpClient.GetAsync(url, ct);
-            response.EnsureSuccessStatusCode();
 
-            var bytes = await response.Content.ReadAsByteArrayAsync(ct);
-            if (bytes.Length < 1024) // PDF too small, likely an error page
+        const int maxRetries = 2;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
             {
-                _logger.LogWarning("PDF 文件过小 ({Size} bytes)，可能是错误页面: {Url}", bytes.Length, url);
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Add("Referer", "http://www.cninfo.com.cn/");
+                request.Headers.Add("Accept", "*/*");
+
+                var response = await _httpClient.SendAsync(request, ct);
+                response.EnsureSuccessStatusCode();
+
+                var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                if (bytes.Length < 1024)
+                {
+                    _logger.LogWarning("PDF 文件过小 ({Size} bytes)，可能是错误页面: {Url}", bytes.Length, url);
+                    return null;
+                }
+
+                await File.WriteAllBytesAsync(filePath, bytes, ct);
+                _logger.LogInformation("PDF 下载完成: {Path} ({Size:N0} bytes)", filePath, bytes.Length);
+                return filePath;
+            }
+            catch (Exception ex) when (attempt < maxRetries && !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "PDF 下载失败 (第 {Attempt}/{Max} 次): {Url}", attempt, maxRetries, url);
+                await Task.Delay(1000 * attempt, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "PDF 下载最终失败: {Url}", url);
                 return null;
             }
-
-            await File.WriteAllBytesAsync(filePath, bytes, ct);
-            _logger.LogInformation("PDF 下载完成: {Path} ({Size:N0} bytes)", filePath, bytes.Length);
-            return filePath;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "PDF 下载失败: {Url}", url);
-            return null;
-        }
+        return null;
     }
 
     /// <summary>
@@ -131,11 +166,18 @@ public class CninfoClient
         var annuals = await QueryAnnouncementsAsync(symbol, "category_ndbg_szsh", maxCount, ct);
         // 半年报
         var semis = await QueryAnnouncementsAsync(symbol, "category_bndbg_szsh", maxCount, ct);
+        // 一季报
+        var q1 = await QueryAnnouncementsAsync(symbol, "category_yjdbg_szsh", maxCount, ct);
+        // 三季报
+        var q3 = await QueryAnnouncementsAsync(symbol, "category_sjdbg_szsh", maxCount, ct);
 
-        var all = annuals.Concat(semis)
+        var all = annuals.Concat(semis).Concat(q1).Concat(q3)
             .OrderByDescending(a => a.PublishTime)
             .Take(maxCount)
             .ToList();
+
+        _logger.LogInformation("[cninfo] {Symbol}: 查询完成 — 年报 {Annual} 条, 半年报 {Semi} 条, 一季报 {Q1} 条, 三季报 {Q3} 条, 合并后取 top {Max}",
+            symbol, annuals.Count, semis.Count, q1.Count, q3.Count, maxCount);
 
         foreach (var ann in all)
         {
@@ -154,10 +196,73 @@ public class CninfoClient
             await Task.Delay(500, ct);
         }
 
+        _logger.LogInformation("[cninfo] {Symbol}: 下载完成 — {Downloaded}/{Total} 成功",
+            symbol, results.Count, all.Count);
+
         return results;
     }
 
-    private static string GetOrgId(string code)
+    private async Task<string> ResolveOrgIdAsync(string code, CancellationToken ct)
+    {
+        if (_orgIdCache.TryGetValue(code, out var cached))
+            return cached;
+
+        try
+        {
+            var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["keyWord"] = code
+            });
+
+            var request = new HttpRequestMessage(HttpMethod.Post,
+                "http://www.cninfo.com.cn/new/information/topSearch/query")
+            {
+                Content = content
+            };
+            request.Headers.Add("Referer", "http://www.cninfo.com.cn/");
+            request.Headers.Add("Accept", "application/json");
+
+            var response = await _httpClient.SendAsync(request, ct);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            var doc = JsonDocument.Parse(json);
+
+            // cninfo topSearch API 返回裸数组 [{code,orgId,...}]，也可能返回 {keyBoardList:[...]}
+            var list = doc.RootElement.ValueKind == JsonValueKind.Array
+                ? doc.RootElement
+                : doc.RootElement.TryGetProperty("keyBoardList", out var kbl) && kbl.ValueKind == JsonValueKind.Array
+                    ? kbl
+                    : (JsonElement?)null;
+
+            if (list.HasValue)
+            {
+                foreach (var item in list.Value.EnumerateArray())
+                {
+                    if (item.TryGetProperty("code", out var codeProp) && codeProp.GetString() == code
+                        && item.TryGetProperty("orgId", out var orgIdProp))
+                    {
+                        var orgId = orgIdProp.GetString() ?? GetDefaultOrgId(code);
+                        _orgIdCache.TryAdd(code, orgId);
+                        _logger.LogInformation("[cninfo] OrgId 动态解析: {Code} → {OrgId}", code, orgId);
+                        return orgId;
+                    }
+                }
+            }
+
+            _logger.LogWarning("[cninfo] 未找到 {Code} 的 orgId，使用默认格式", code);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[cninfo] 动态获取 {Code} 的 orgId 失败，回退到默认格式", code);
+        }
+
+        var fallback = GetDefaultOrgId(code);
+        _orgIdCache.TryAdd(code, fallback);
+        return fallback;
+    }
+
+    private static string GetDefaultOrgId(string code)
     {
         // Shanghai (6xxx) → gssh0{code}, Shenzhen → gssz0{code}
         var prefix = code.StartsWith("6") ? "gssh0" : "gssz0";
@@ -209,6 +314,9 @@ internal static class FinancialWorkerRuntimePaths
     {
         return Path.Combine(ResolveAppDataPath(), "financial-reports");
     }
+
+    public static string ResolveRagDatabasePath() =>
+        Path.Combine(ResolveAppDataPath(), "financial-rag.db");
 }
 
 public class CninfoAnnouncement

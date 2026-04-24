@@ -9,6 +9,7 @@ namespace SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 public interface IRetailHeatIndexService
 {
     Task<RetailHeatTimeSeriesDto> GetTimeSeriesAsync(string symbol, DateOnly? from, DateOnly? to, CancellationToken ct);
+    Task<RetailHeatCollectionStatusDto> GetCollectionStatusAsync(string symbol, int recentDays, CancellationToken ct);
 }
 
 public sealed class RetailHeatIndexService : IRetailHeatIndexService
@@ -66,6 +67,18 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
             }
         }
 
+        // 汇总各平台原始 PostCount 用于直接展示
+        var datesWithData = new HashSet<string>();
+        var dailyPostCounts = new Dictionary<string, int>();
+        foreach (var row in rawRecords)
+        {
+            datesWithData.Add(row.TradingDate);
+            if (dailyPostCounts.TryGetValue(row.TradingDate, out var existing))
+                dailyPostCounts[row.TradingDate] = existing + row.PostCount;
+            else
+                dailyPostCounts[row.TradingDate] = row.PostCount;
+        }
+
         // 补零：确保从 extendedStart 到 endDate 之间每个工作日都有数据点
         // 包含 extendedStart 范围以保证 MA20 窗口完整
         {
@@ -121,7 +134,9 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
             if (string.Compare(date, fromStr, StringComparison.Ordinal) >= 0)
             {
                 dataPoints.Add(new RetailHeatDataPointDto(
-                    date, deltaSum, Math.Round(ma20, 1), Math.Round(heatRatio, 2), signal, platformCount));
+                    date, deltaSum, Math.Round(ma20, 1), Math.Round(heatRatio, 2), signal, platformCount,
+                    dailyPostCounts.GetValueOrDefault(date, 0),
+                    datesWithData.Contains(date)));
             }
         }
 
@@ -131,6 +146,62 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
             : "暂无散户论坛数据";
 
         return new RetailHeatTimeSeriesDto(normalizedSymbol, dataPoints, latest, description);
+    }
+
+    public async Task<RetailHeatCollectionStatusDto> GetCollectionStatusAsync(
+        string symbol, int recentDays, CancellationToken ct)
+    {
+        var normalizedSymbol = NormalizeSymbol(symbol);
+        var chinaToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var startDate = chinaToday.AddDays(-recentDays);
+
+        var rawRecords = await QueryRawPostCountsAsync(normalizedSymbol, startDate, chinaToday, ct);
+
+        var platformGroups = rawRecords
+            .GroupBy(r => r.Platform)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.TradingDate).ToList());
+
+        var allPlatforms = new[] { "eastmoney", "sina", "taoguba" };
+        var platforms = new List<PlatformCollectionStatusDto>();
+
+        foreach (var platform in allPlatforms)
+        {
+            if (platformGroups.TryGetValue(platform, out var records) && records.Count > 0)
+            {
+                var latest = records[0];
+                var lastDate = DateOnly.Parse(latest.TradingDate);
+                var daysSinceLastCollection = chinaToday.DayNumber - lastDate.DayNumber;
+                var status = daysSinceLastCollection <= 2 ? "ok" : "stale";
+                platforms.Add(new PlatformCollectionStatusDto(platform, latest.TradingDate, latest.PostCount, records.Count, status));
+            }
+            else
+            {
+                platforms.Add(new PlatformCollectionStatusDto(platform, null, 0, 0, "none"));
+            }
+        }
+
+        var datesWithData = new HashSet<string>(rawRecords.Select(r => r.TradingDate));
+        var missingDates = new List<string>();
+        var totalTradingDays = 0;
+        var current = startDate;
+        while (current <= chinaToday)
+        {
+            if (current.DayOfWeek != DayOfWeek.Saturday && current.DayOfWeek != DayOfWeek.Sunday)
+            {
+                totalTradingDays++;
+                var dateStr = current.ToString("yyyy-MM-dd");
+                if (!datesWithData.Contains(dateStr))
+                    missingDates.Add(dateStr);
+            }
+            current = current.AddDays(1);
+        }
+
+        var daysWithData = totalTradingDays - missingDates.Count;
+        var coverage = totalTradingDays > 0 ? Math.Round(100.0 * daysWithData / totalTradingDays, 1) : 0;
+
+        return new RetailHeatCollectionStatusDto(
+            normalizedSymbol, false,
+            platforms, missingDates, totalTradingDays, daysWithData, coverage);
     }
 
     /// <summary>

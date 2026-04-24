@@ -1,5 +1,9 @@
 <script setup>
 import { computed, ref, toRef, watch } from 'vue'
+import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
+import { formatMoneyDisplay } from '../financial/financialFieldDictionary.js'
+import { listPdfFiles, collectPdfFiles } from '../financial/financialApi.js'
+import FinancialReportComparePane from '../financial/FinancialReportComparePane.vue'
 
 const props = defineProps({
   symbol: { type: String, default: '' },
@@ -33,6 +37,33 @@ function toCollectNumber(value) {
   return Number.isFinite(num) ? num : 0
 }
 
+function pickFirstNonEmptyString(result, ...keys) {
+  if (!result || typeof result !== 'object') return ''
+  for (const k of keys) {
+    const v = result[k]
+    if (v == null) continue
+    if (typeof v === 'string') {
+      if (v.trim() !== '') return v
+    } else {
+      const s = String(v)
+      if (s !== '') return s
+    }
+  }
+  return ''
+}
+
+function pickFirstStringFromArray(result, ...keys) {
+  if (!result || typeof result !== 'object') return ''
+  for (const k of keys) {
+    const v = result[k]
+    if (Array.isArray(v) && v.length > 0) {
+      const first = v[0]
+      if (first != null && first !== '') return String(first)
+    }
+  }
+  return ''
+}
+
 function normalizeCollectResult(result) {
   if (!result || typeof result !== 'object') {
     return {
@@ -42,18 +73,34 @@ function normalizeCollectResult(result) {
       durationMs: 0,
       isDegraded: false,
       degradeReason: '',
-      errorMessage: ''
+      errorMessage: '',
+      reportPeriod: '',
+      reportTitle: '',
+      sourceChannel: '',
+      fallbackReason: '',
+      pdfSummary: ''
     }
   }
 
+  const channel = String(getCollectField(result, 'channel', 'Channel') ?? '')
+  const degradeReason = String(getCollectField(result, 'degradeReason', 'DegradeReason') ?? '')
+
   return {
     success: toCollectBoolean(getCollectField(result, 'success', 'Success')),
-    channel: String(getCollectField(result, 'channel', 'Channel') ?? ''),
+    channel,
     reportCount: toCollectNumber(getCollectField(result, 'reportCount', 'ReportCount')),
     durationMs: toCollectNumber(getCollectField(result, 'durationMs', 'DurationMs')),
     isDegraded: toCollectBoolean(getCollectField(result, 'isDegraded', 'IsDegraded')),
-    degradeReason: String(getCollectField(result, 'degradeReason', 'DegradeReason') ?? ''),
-    errorMessage: String(getCollectField(result, 'errorMessage', 'ErrorMessage') ?? '')
+    degradeReason,
+    errorMessage: String(getCollectField(result, 'errorMessage', 'ErrorMessage') ?? ''),
+    // V040-S4 采集结果透明化新字段（含友好别名 + 兜底回退）
+    reportPeriod: pickFirstNonEmptyString(result, 'reportPeriod', 'ReportPeriod')
+      || pickFirstStringFromArray(result, 'reportPeriods', 'ReportPeriods'),
+    reportTitle: pickFirstNonEmptyString(result, 'reportTitle', 'ReportTitle')
+      || pickFirstStringFromArray(result, 'reportTitles', 'ReportTitles'),
+    sourceChannel: pickFirstNonEmptyString(result, 'sourceChannel', 'SourceChannel', 'mainSourceChannel', 'MainSourceChannel') || channel,
+    fallbackReason: pickFirstNonEmptyString(result, 'fallbackReason', 'FallbackReason') || degradeReason,
+    pdfSummary: pickFirstNonEmptyString(result, 'pdfSummary', 'PdfSummary', 'pdfSummarySupplement', 'PdfSummarySupplement')
   }
 }
 
@@ -163,6 +210,7 @@ async function collectData() {
   collecting.value = true
   collectError.value = ''
   collectResult.value = null
+  pdfSummaryOpen.value = false
   try {
     const resp = await fetch(`/api/stocks/financial/collect/${encodeURIComponent(symbolRef.value)}`, { method: 'POST' })
     if (!resp.ok) {
@@ -209,25 +257,31 @@ const topMetrics = computed(() => {
   const ta = findLatestRenderableEntry(trend.value.totalAssets)
 
   if (rev) {
+    const m = formatMoneyDisplay(rev.value)
     metrics.push({
       label: '营业收入',
-      value: formatLargeNumber(rev.value),
+      value: m.display,
+      fullValue: m.full,
       yoyText: formatYoY(rev.yoY),
       yoyClass: getYoYClass(rev.yoY)
     })
   }
   if (np) {
+    const m = formatMoneyDisplay(np.value)
     metrics.push({
       label: '净利润',
-      value: formatLargeNumber(np.value),
+      value: m.display,
+      fullValue: m.full,
       yoyText: formatYoY(np.yoY),
       yoyClass: getYoYClass(np.yoY)
     })
   }
   if (ta) {
+    const m = formatMoneyDisplay(ta.value)
     metrics.push({
       label: '总资产',
-      value: formatLargeNumber(ta.value),
+      value: m.display,
+      fullValue: m.full,
       yoyText: formatYoY(ta.yoY),
       yoyClass: getYoYClass(ta.yoY)
     })
@@ -363,14 +417,7 @@ const dividendRows = computed(() => {
   }))
 })
 
-function formatLargeNumber(val) {
-  if (val == null) return '-'
-  const num = Number(val)
-  if (isNaN(num)) return '-'
-  if (Math.abs(num) >= 1e8) return (num / 1e8).toFixed(2) + '亿'
-  if (Math.abs(num) >= 1e4) return (num / 1e4).toFixed(2) + '万'
-  return num.toFixed(2)
-}
+
 
 function formatYoY(yoy) {
   if (yoy == null) return ''
@@ -383,10 +430,10 @@ function getYoYClass(yoy) {
 }
 
 function formatCellValue(val, yoy) {
-  const numStr = formatLargeNumber(val)
-  if (numStr === '-') return '-'
+  const money = formatMoneyDisplay(val)
+  if (money.display === '—') return '-'
   const yoyStr = yoy != null ? ` (${formatYoY(yoy)})` : ''
-  return numStr + yoyStr
+  return money.display + yoyStr
 }
 
 function formatMetricValue(val, isRatio = false) {
@@ -397,6 +444,217 @@ function formatMetricValue(val, isRatio = false) {
   if (Math.abs(num) >= 1e8) return (num / 1e8).toFixed(2) + '亿'
   if (Math.abs(num) >= 1e4) return (num / 1e4).toFixed(2) + '万'
   return num.toFixed(2)
+}
+
+// ---- V040-S4 采集结果透明化新字段 ----
+const pdfSummaryOpen = ref(false)
+
+const collectReportPeriod = computed(() => collectResult.value?.reportPeriod || '')
+const collectReportTitle = computed(() => collectResult.value?.reportTitle || '')
+const collectSourceChannel = computed(() => collectResult.value?.sourceChannel || '')
+const collectFallbackReason = computed(() => collectResult.value?.fallbackReason || '')
+const collectPdfSummary = computed(() => collectResult.value?.pdfSummary || '')
+const collectChannelTag = computed(() => getSourceChannelTag(collectSourceChannel.value))
+
+const hasCollectMeta = computed(() => Boolean(
+  collectReportPeriod.value
+  || collectReportTitle.value
+  || collectSourceChannel.value
+  || collectFallbackReason.value
+  || collectPdfSummary.value
+))
+
+// ---- V041-S6: 「查看 PDF 原件 / 对照」入口 ----
+const pdfViewerOpen = ref(false)
+const pdfViewerLoading = ref(false)
+const pdfViewerError = ref('')
+const pdfViewerFileId = ref(null)
+const pdfViewerFileList = ref([])  // V042-P0-A: 候选列表，传给 ComparePane 渲染 picker
+let pdfResolveToken = 0
+
+// ---- V041-S8-FU-1：「采集 PDF 原件」入口（与「查看 PDF 原件」区分） ----
+const collectingPdf = ref(false)
+const collectPdfMessage = ref('')
+const collectPdfErrorMsg = ref('')
+
+// V042-P0-C (B3) 修复：后端 pdf_files 集合的 Symbol 字段统一存为 6 位数字（如
+// "600519"），而本 Tab 的 props.symbol 经常带市场前缀（如 "sh600519" / "SZ000001"），
+// 直接用 raw 值查询会被精确匹配过滤掉，回到 items.length === 0 的空态分支，
+// 表现就是「Modal 打开后只有『该报告暂无 PDF 原件』alert」。这里统一抽出数字部分。
+function normalizeSymbolForPdf(raw) {
+  if (raw == null) return ''
+  const digits = String(raw).replace(/\D+/g, '')
+  return digits
+}
+
+async function openPdfViewer() {
+  const rawSymbol = symbolRef.value?.trim() || ''
+  if (!rawSymbol || pdfViewerLoading.value) return
+  pdfViewerOpen.value = true
+  pdfViewerError.value = ''
+  pdfViewerFileId.value = null
+  pdfViewerLoading.value = true
+  const token = ++pdfResolveToken
+  try {
+    const reportDate = summary.value?.periods?.[0]?.reportDate
+      || summary.value?.periods?.[0]?.ReportDate
+      || null
+    // V041-S8 NIT-3 / V042-P0-C (B3) 修复：
+    // 1) summary 的 reportType（Annual/Quarterly）与后端按 PDF 标题判定的
+    //    reportType（Annual/Q1/Q2/Q3/Unknown）经常不匹配，所以只按 symbol 拉。
+    // 2) symbol 必须用数字形式（"600519"），不能带 sh/sz 前缀，否则后端
+    //    LiteDB `$.Symbol = @p0` 精确匹配返回 0 条。
+    // 3) reportPeriod 命中则用之；否则不再退化到「items[0]」（受 LastParsedAt
+    //    desc 排序影响，可能选到 fieldCount=0 的摘要 PDF），改为挑 fieldCount
+    //    最大那条（更可能是主报告，与 ComparePane B1 切换器策略一致）。
+    const symbolForApi = normalizeSymbolForPdf(rawSymbol) || rawSymbol
+    // V042-R3 N4 修复：把 pageSize 从 10 抬到 20，保证主报告 / 摘要 / 英文版三件套
+    // 都能进入候选列表，避免后端按 LastParsedAt desc 排序时主报告被挤出去。
+    const res = await listPdfFiles({ symbol: symbolForApi, page: 1, pageSize: 20 })
+    if (token !== pdfResolveToken) return
+    const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    pdfViewerFileList.value = items
+    if (items.length === 0) {
+      pdfViewerError.value = '该报告暂无 PDF 原件，请先触发「📥 采集 PDF 原件」'
+      return
+    }
+    let pick = null
+    // V042-R3 N4 + B1 二阶段：reportDate 命中可能匹配「摘要 PDF」，造成默认选中
+    // fieldCount=0 的摘要而非主报告。改成 reportDate 命中后再按 fieldCount/摘要降权
+    // 二次筛选，与 ComparePane.smartPickPdfId 策略一致。
+    const SUMMARY_PATTERN = /(摘要|summary|英文|english)/i
+    const fcOf = (it) => Number(it?.fieldCount ?? it?.FieldCount ?? 0) || 0
+    const isSummary = (it) => SUMMARY_PATTERN.test(String(it?.fileName ?? it?.FileName ?? ''))
+    const smartPick = (pool) => {
+      if (!Array.isArray(pool) || pool.length === 0) return null
+      return [...pool].sort((a, b) => {
+        const fa = fcOf(a), fb = fcOf(b)
+        const hasA = fa > 0 ? 1 : 0, hasB = fb > 0 ? 1 : 0
+        if (hasA !== hasB) return hasB - hasA
+        const sa = isSummary(a) ? 1 : 0, sb = isSummary(b) ? 1 : 0
+        if (sa !== sb) return sa - sb
+        if (fa !== fb) return fb - fa
+        return 0
+      })[0] || null
+    }
+    if (reportDate) {
+      const matched = items.filter(x => (x.reportPeriod || x.ReportPeriod) === reportDate)
+      if (matched.length > 0) {
+        pick = smartPick(matched)
+      }
+    }
+    if (!pick) {
+      // 全集兜底：fieldCount 最大且非摘要/英文
+      pick = smartPick(items) || items[0]
+    }
+    const id = pick?.id ?? pick?.Id ?? null
+    if (!id) {
+      pdfViewerError.value = '该报告暂无可用 PDF 文件 ID。'
+      return
+    }
+    pdfViewerFileId.value = String(id)
+  } catch (e) {
+    if (token !== pdfResolveToken) return
+    pdfViewerError.value = e?.message || '加载 PDF 列表失败'
+  } finally {
+    if (token === pdfResolveToken) {
+      pdfViewerLoading.value = false
+    }
+  }
+}
+
+function closePdfViewer() {
+  pdfViewerOpen.value = false
+  pdfViewerFileId.value = null
+  pdfViewerFileList.value = []
+  pdfViewerError.value = ''
+  pdfResolveToken++
+}
+
+// V042-P0-A：用户在 ComparePane picker 中切换 PDF
+function onPdfViewerPicked(id) {
+  if (!id) return
+  const v = String(id)
+  if (pdfViewerFileId.value !== v) {
+    pdfViewerFileId.value = v
+  }
+}
+
+// V041-S8-FU-1：触发 PDF 原件采集。成功后重置 pdfResolveToken，下次「查看 PDF 原件」重新解析。
+async function onCollectPdf() {
+  const symbol = symbolRef.value?.trim() || ''
+  if (!symbol || collectingPdf.value) return
+  collectingPdf.value = true
+  collectPdfMessage.value = ''
+  collectPdfErrorMsg.value = ''
+  try {
+    const result = await collectPdfFiles(symbol)
+    const downloaded = result?.downloadedCount ?? 0
+    const parsed = result?.parsedCount ?? 0
+    if (downloaded > 0 || parsed > 0) {
+      collectPdfMessage.value = `PDF 原件采集完成（下载 ${downloaded} 个，解析 ${parsed} 个），点击「📄 查看 PDF 原件」查看。`
+    } else {
+      collectPdfErrorMsg.value = result?.notes || 'cninfo 未找到可下载的 PDF 公告'
+    }
+    // 如果查看器当前是打开状态且处于错误/空态，重置 token 以避免错误状态残留
+    pdfResolveToken++
+  } catch (e) {
+    collectPdfErrorMsg.value = e?.message || 'PDF 原件采集失败'
+  } finally {
+    collectingPdf.value = false
+  }
+}
+
+function onComparePaneRefresh(detail) {
+  // V042-P0-C (B4)：ComparePane 触发 reparse 后，结构化趋势/摘要也应该跟着刷新，
+  // 否则用户看到 PDF 解析换了新版本但 Tab 上方表格还停留在旧值。这里重新拉
+  // trend + summary，但保留采集结果横幅（preserveCollectState=true），避免把
+  // 用户刚看到的「✅ 已通过 emweb 获取 X 期报表」给清掉。
+  // eslint-disable-next-line no-console
+  console.debug('[FinancialReportTab] ComparePane refresh', detail)
+  // 失败不抛（避免 ComparePane 内部 emit 链路冒泡）。
+  Promise.resolve(fetchData({ preserveCollectState: true })).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[FinancialReportTab] ComparePane refresh -> fetchData 失败', err)
+  })
+
+  // V042-R3 B4 二阶段：reparse 后还要刷 picker 候选列表里的 fieldCount /
+  // lastReparsedAt，否则用户切回别的 PDF 再切回来时 picker 文案是旧的。
+  refreshPdfViewerFileList(detail).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.warn('[FinancialReportTab] refreshPdfViewerFileList 失败', err)
+  })
+}
+
+// V042-R3 B4 二阶段：reparse 后让 picker 候选列表跟上最新 fieldCount / lastReparsedAt。
+// 优先把刚拿到的 detail 直接合并进列表（即时反馈），再异步重拉一次 listPdfFiles 兜底。
+async function refreshPdfViewerFileList(detail) {
+  const rawSymbol = symbolRef.value?.trim() || ''
+  if (!rawSymbol) return
+  const symbolForApi = normalizeSymbolForPdf(rawSymbol) || rawSymbol
+
+  // 先用 detail 即时打补丁，避免等待 HTTP
+  if (detail && (detail.id || detail.Id)) {
+    const id = String(detail.id ?? detail.Id)
+    const idx = pdfViewerFileList.value.findIndex((it) => String(it.id ?? it.Id) === id)
+    if (idx >= 0) {
+      const merged = { ...pdfViewerFileList.value[idx], ...detail }
+      const next = pdfViewerFileList.value.slice()
+      next[idx] = merged
+      pdfViewerFileList.value = next
+    }
+  }
+
+  try {
+    const res = await listPdfFiles({ symbol: symbolForApi, page: 1, pageSize: 20 })
+    const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res?.Items) ? res.Items : [])
+    if (items.length > 0) {
+      pdfViewerFileList.value = items
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[FinancialReportTab] listPdfFiles 重拉失败', e)
+  }
 }
 </script>
 
@@ -418,10 +676,32 @@ function formatMetricValue(val, isRatio = false) {
 
       <div class="report-header">
         <span class="header-title">财务报表</span>
-        <button class="refresh-btn" @click="collectData" :disabled="collecting">
-          {{ collecting ? '刷新中...' : '🔄 刷新数据' }}
-        </button>
+        <div class="report-header-actions">
+          <button
+            type="button"
+            class="view-pdf-btn"
+            data-testid="view-pdf-btn"
+            @click="openPdfViewer"
+            :disabled="pdfViewerLoading"
+          >{{ pdfViewerLoading ? '加载中...' : '📄 查看 PDF 原件' }}</button>
+          <button
+            type="button"
+            class="view-pdf-btn"
+            data-testid="collect-pdf-btn"
+            @click="onCollectPdf"
+            :disabled="collectingPdf"
+            title="从巨潮下载 PDF 原件并入库（耗时几十秒到几分钟）"
+          >{{ collectingPdf ? '正在采集 PDF...' : '📥 采集 PDF 原件' }}</button>
+          <button class="refresh-btn" @click="collectData" :disabled="collecting">
+            {{ collecting ? '刷新中...' : '🔄 刷新数据' }}
+          </button>
+        </div>
       </div>
+      <p v-if="collectPdfErrorMsg" class="error-msg" data-testid="collect-pdf-error">{{ collectPdfErrorMsg }}</p>
+      <p v-else-if="collectPdfMessage" class="collect-info" data-testid="collect-pdf-info">{{ collectPdfMessage }}</p>
+      <p v-else-if="collectingPdf" class="collect-info" data-testid="collect-pdf-hint">
+        正在下载并解析 PDF 原件，可能需要几十秒到几分钟…
+      </p>
       <p v-if="collectResult && collectResult.success && hasRenderableFinancialData" class="collect-info">
         ✅ 已通过 {{ collectResult.channel }} 获取 {{ collectResult.reportCount }} 期报表，耗时 {{ (collectResult.durationMs / 1000).toFixed(1) }}s
         <span v-if="collectResult.isDegraded && collectResult.degradeReason">（提示：{{ localizeCollectMessage(collectResult.degradeReason) }}）</span>
@@ -433,6 +713,42 @@ function formatMetricValue(val, isRatio = false) {
           提示：{{ localizeCollectMessage(collectResult.degradeReason) }}
         </p>
       </div>
+      <!-- V040-S4 采集结果透明化：报告期 / 标题 / 来源 / 降级原因 / PDF 摘要 -->
+      <dl v-if="collectResult && hasCollectMeta" class="collect-meta">
+        <div v-if="collectReportPeriod" class="collect-meta-row" data-field="reportPeriod">
+          <dt>报告期</dt>
+          <dd>{{ collectReportPeriod }}</dd>
+        </div>
+        <div v-if="collectReportTitle" class="collect-meta-row" data-field="reportTitle">
+          <dt>报告标题</dt>
+          <dd>{{ collectReportTitle }}</dd>
+        </div>
+        <div v-if="collectSourceChannel" class="collect-meta-row" data-field="sourceChannel">
+          <dt>来源渠道</dt>
+          <dd>
+            <span
+              class="source-channel-tag"
+              :data-channel-key="collectChannelTag.key"
+              :style="sourceChannelTagStyle(collectChannelTag)"
+            >{{ collectChannelTag.label }}</span>
+          </dd>
+        </div>
+        <div v-if="collectFallbackReason" class="collect-meta-row" data-field="fallbackReason">
+          <dt>降级原因</dt>
+          <dd class="collect-meta-fallback">{{ collectFallbackReason }}</dd>
+        </div>
+        <div v-if="collectPdfSummary" class="collect-meta-row" data-field="pdfSummary">
+          <dt>PDF 摘要</dt>
+          <dd>
+            <button
+              type="button"
+              class="pdf-summary-toggle"
+              @click="pdfSummaryOpen = !pdfSummaryOpen"
+            >{{ pdfSummaryOpen ? '收起' : '展开' }}</button>
+            <pre v-if="pdfSummaryOpen" class="pdf-summary-content">{{ collectPdfSummary }}</pre>
+          </dd>
+        </div>
+      </dl>
       <p v-if="collectError" class="error-msg">{{ collectError }}</p>
 
       <template v-if="!showPartialDataState">
@@ -440,7 +756,7 @@ function formatMetricValue(val, isRatio = false) {
         <div v-if="topMetrics.length > 0" class="metric-cards">
           <div class="metric-card" v-for="metric in topMetrics" :key="metric.label">
             <div class="metric-label">{{ metric.label }}</div>
-            <div class="metric-value">{{ metric.value }}</div>
+            <div class="metric-value" :title="metric.fullValue">{{ metric.value }}</div>
             <div class="metric-yoy" :class="metric.yoyClass">{{ metric.yoyText }}</div>
           </div>
         </div>
@@ -515,6 +831,41 @@ function formatMetricValue(val, isRatio = false) {
       <div v-else-if="!showPartialDataState" class="empty-section">暂无分红数据</div>
 
     </template>
+
+    <!-- V041-S6: PDF 原件 / 对照查看器 -->
+    <Teleport to="body">
+      <div
+        v-if="pdfViewerOpen"
+        class="pdf-viewer-overlay"
+        data-testid="pdf-viewer-modal"
+        @click.self="closePdfViewer"
+      >
+        <div class="pdf-viewer-dialog" role="dialog" aria-modal="true" aria-label="PDF 原件对照">
+          <header class="pdf-viewer-header">
+            <h3 class="pdf-viewer-title">PDF 原件 / 对照</h3>
+            <button
+              type="button"
+              class="pdf-viewer-close"
+              data-testid="pdf-viewer-close"
+              @click="closePdfViewer"
+              title="关闭"
+            >✕</button>
+          </header>
+          <div class="pdf-viewer-body">
+            <div v-if="pdfViewerLoading" class="pdf-viewer-state">正在查找 PDF 原件...</div>
+            <div v-else-if="pdfViewerError" class="pdf-viewer-state pdf-viewer-error" role="alert">{{ pdfViewerError }}</div>
+            <FinancialReportComparePane
+              v-else-if="pdfViewerFileId"
+              :pdf-file-id="pdfViewerFileId"
+              :pdf-files="pdfViewerFileList"
+              @refresh="onComparePaneRefresh"
+              @pdf-change="onPdfViewerPicked"
+              @close="closePdfViewer"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -666,6 +1017,67 @@ td:first-child, th:first-child { text-align: left; }
   line-height: 1.5;
 }
 
+.collect-meta {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #152030;
+  border-radius: 6px;
+  border: 1px solid #2a3a4a;
+  font-size: 12px;
+}
+.collect-meta-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+}
+.collect-meta-row dt {
+  color: #91a6bc;
+  min-width: 70px;
+  flex-shrink: 0;
+  margin: 0;
+}
+.collect-meta-row dd {
+  color: #ddd;
+  margin: 0;
+  word-break: break-word;
+  flex: 1;
+}
+.collect-meta-fallback { color: #d97706; }
+.source-channel-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-weight: 500;
+}
+.pdf-summary-toggle {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: #3a4a5a;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pdf-summary-toggle:hover { background: #4a5a6a; }
+.pdf-summary-content {
+  margin: 6px 0 0;
+  padding: 8px;
+  background: #0d1622;
+  border-radius: 4px;
+  color: #c8d3e0;
+  font-size: 11px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 .error-msg {
   color: #e74c3c;
   font-size: 12px;
@@ -685,4 +1097,86 @@ td:first-child, th:first-child { text-align: left; }
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* V041-S6: PDF viewer entry button + modal */
+.report-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.view-pdf-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+  background: var(--bg-secondary, #2a2a2e);
+  color: var(--text-primary, #e0e0e0);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+.view-pdf-btn:hover:not(:disabled) {
+  background: var(--bg-hover, #3a3a3e);
+}
+.view-pdf-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pdf-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+.pdf-viewer-dialog {
+  width: min(92vw, 1280px);
+  height: min(90vh, 860px);
+  background: #15202b;
+  border: 1px solid #2a3a4a;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.pdf-viewer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a3a4a;
+  background: #1a2535;
+}
+.pdf-viewer-title {
+  margin: 0;
+  font-size: 14px;
+  color: #e0e0e0;
+  font-weight: 600;
+}
+.pdf-viewer-close {
+  border: none;
+  background: transparent;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.pdf-viewer-close:hover { background: #2a3a4a; color: #fff; }
+.pdf-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+.pdf-viewer-body > * { flex: 1; min-height: 0; }
+.pdf-viewer-state {
+  padding: 24px;
+  color: #aaa;
+  font-size: 13px;
+}
+.pdf-viewer-error { color: #ffb3ab; }
 </style>

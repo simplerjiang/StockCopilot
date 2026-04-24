@@ -89,6 +89,15 @@ internal sealed class StubMcpToolGateway : IMcpToolGateway
 
     public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
         => Wrap(StockMcpToolNames.FinancialTrend, taskId, new StockCopilotFinancialTrendDataDto(symbol, periods, Array.Empty<FinancialTrendPointDto>(), Array.Empty<FinancialTrendPointDto>(), Array.Empty<FinancialTrendPointDto>(), Array.Empty<FinancialDividendDto>()));
+
+    public Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        CalledTools.Add(StockMcpToolNames.FinancialReportRag);
+        ToolCalls.Add((StockMcpToolNames.FinancialReportRag, null));
+        if (ShouldThrow) throw new InvalidOperationException($"Tool {StockMcpToolNames.FinancialReportRag} failed");
+        return Task.FromResult(new List<RagCitationDto>());
+    }
 }
 
 internal sealed class StubRoleToolPolicyService : IRoleToolPolicyService
@@ -879,11 +888,12 @@ public sealed class ResearchSessionAndRunnerTests
 
         Assert.Equal(ResearchRoleStatus.Completed, result.Status);
         Assert.Empty(result.DegradedFlags);
-        Assert.Equal(5, gateway.ToolCalls.Count);
-        Assert.Equal(5, gateway.CalledTools.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(6, gateway.ToolCalls.Count);
+        Assert.Equal(6, gateway.CalledTools.Distinct(StringComparer.Ordinal).Count());
         Assert.Contains(StockMcpToolNames.Fundamentals, gateway.CalledTools);
         Assert.Contains(StockMcpToolNames.FinancialReport, gateway.CalledTools);
         Assert.Contains(StockMcpToolNames.FinancialTrend, gateway.CalledTools);
+        Assert.Contains(StockMcpToolNames.FinancialReportRag, gateway.CalledTools);
         Assert.Contains(StockMcpToolNames.CompanyOverview, gateway.CalledTools);
         Assert.Contains(StockMcpToolNames.MarketContext, gateway.CalledTools);
         Assert.Contains(gateway.ToolCalls, item => item == (StockMcpToolNames.FinancialReport, "research:2:20:sh600000::FinancialReportMcp"));

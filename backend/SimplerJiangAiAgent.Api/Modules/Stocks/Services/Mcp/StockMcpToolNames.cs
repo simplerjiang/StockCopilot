@@ -18,6 +18,7 @@ public static class StockMcpToolNames
     public const string WebReadUrl = "WebReadUrlMcp";
     public const string FinancialReport = "FinancialReportMcp";
     public const string FinancialTrend = "FinancialTrendMcp";
+    public const string FinancialReportRag = "FinancialReportRag";
 
     public static readonly IReadOnlyList<string> All =
     [
@@ -36,6 +37,7 @@ public static class StockMcpToolNames
         WebSearchNews,
         WebReadUrl,
         FinancialReport,
-        FinancialTrend
+        FinancialTrend,
+        FinancialReportRag
     ];
 }

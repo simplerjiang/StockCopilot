@@ -554,7 +554,7 @@ const reconnectSse = () => {
   failedSseSessionId = null
   sseRetryCount = 0
   statusPhase.value = 'connecting'
-  statusMessage.value = '正在重新连接分析流...'
+  statusMessage.value = '正在重试...'
   const activeTurn = getActiveSessionTurn(activeSession.value)
   startElapsedTimer(getTurnStartedAt(activeTurn) ?? getTurnRequestedAt(activeTurn) ?? Date.now())
   const sessionId = activeSession.value.id ?? activeSession.value.Id
@@ -1041,7 +1041,7 @@ watch(realtimeContextEnabled, value => {
         <div v-if="statusPhase === 'failed'" class="sse-reconnect-bar">
           <span class="sse-error-text">{{ statusMessage }}</span>
           <button class="sse-reconnect-btn" @click="reconnectSse">
-            重新连接
+            再试一次
           </button>
         </div>
 

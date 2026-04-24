@@ -12,6 +12,7 @@ namespace SimplerJiangAiAgent.FinancialWorker.Tests;
 /// success / degraded / fail / pdf-supplement, plus assertion that the new
 /// CollectionLog fields are persisted.
 /// </summary>
+[Collection("LiteDbBsonMapper")] // 与 PdfFileDocumentTests 共享集合：避免 BsonMapper.Global 并发污染
 public class FinancialDataOrchestratorPathTests : IDisposable
 {
     private const string Symbol = "600519";

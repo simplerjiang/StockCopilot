@@ -29,38 +29,67 @@ public sealed partial class TaogubaScraper : IForumPostCountScraper
         try
         {
             using var client = _httpClientFactory.CreateClient("TaogubaGuba");
+
+            // Fetch first page
             var url = $"https://www.taoguba.com.cn/quotes/{prefixed}";
             var html = await client.GetStringAsync(url, ct);
 
-            // 提取帖子日期，统计今日帖子数
-            var todayStr = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone)
-                .ToString("yyyy-MM-dd");
-
-            var dateMatches = PostDateRegex().Matches(html);
-            if (dateMatches.Count == 0)
+            // Strategy 1: Try to find total post count from pagination info
+            var totalFromPagination = TryExtractTotalFromPagination(html);
+            if (totalFromPagination.HasValue && totalFromPagination.Value > 0)
             {
-                // 回退：仅计数 forumRow 元素
-                var rowMatches = ForumRowRegex().Matches(html);
-                if (rowMatches.Count == 0)
+                _logger.LogDebug("淘股吧: {Symbol} 分页估算总帖数={Count}", symbol, totalFromPagination.Value);
+                return totalFromPagination.Value;
+            }
+
+            // Strategy 2: Count forumRow elements across visible pages
+            var page1Count = ForumRowRegex().Matches(html).Count;
+            if (page1Count == 0)
+            {
+                // Try date-based counting as last resort
+                var dateCount = PostDateRegex().Matches(html).Count;
+                if (dateCount > 0)
                 {
-                    _logger.LogWarning("淘股吧: 首页未找到帖子行: {Symbol}", symbol);
-                    return null;
+                    _logger.LogDebug("淘股吧: {Symbol} 首页日期计数={Count}", symbol, dateCount);
+                    return dateCount;
                 }
-                _logger.LogDebug("淘股吧: 无法解析帖子日期，回退为行计数: {Symbol}, count={Count}", symbol, rowMatches.Count);
-                return rowMatches.Count;
+
+                _logger.LogWarning("淘股吧: 首页未找到帖子: {Symbol}", symbol);
+                return null;
             }
 
-            var todayCount = 0;
-            foreach (Match m in dateMatches)
+            // Try page 2 and 3 to accumulate more posts
+            var totalCount = page1Count;
+            for (var page = 2; page <= 3; page++)
             {
-                if (m.Groups[1].Value == todayStr)
-                    todayCount++;
+                ct.ThrowIfCancellationRequested();
+                await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(1000, 2000)), ct);
+
+                try
+                {
+                    var pageUrl = $"https://www.taoguba.com.cn/quotes/{prefixed}?pageNo={page}";
+                    var pageHtml = await client.GetStringAsync(pageUrl, ct);
+                    var pageCount = ForumRowRegex().Matches(pageHtml).Count;
+                    if (pageCount == 0) break; // No more pages
+                    totalCount += pageCount;
+
+                    // Also check pagination info on later pages
+                    var total = TryExtractTotalFromPagination(pageHtml);
+                    if (total.HasValue && total.Value > 0)
+                    {
+                        _logger.LogDebug("淘股吧: {Symbol} 第{Page}页找到分页信息，总帖数={Count}", symbol, page, total.Value);
+                        return total.Value;
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch
+                {
+                    break; // Ignore page fetch errors
+                }
             }
 
-            _logger.LogDebug("淘股吧: {Symbol} 首页帖子={Total}, 今日帖子={Today}", symbol, dateMatches.Count, todayCount);
-
-            // 返回今日帖子数（即使为 0 也是有效数据）
-            return todayCount;
+            _logger.LogDebug("淘股吧: {Symbol} 前几页帖子总数={Count}", symbol, totalCount);
+            return totalCount;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -73,6 +102,21 @@ public sealed partial class TaogubaScraper : IForumPostCountScraper
         }
     }
 
+    private static int? TryExtractTotalFromPagination(string html)
+    {
+        // Try "共 N 条" pattern (total post count)
+        var totalMatch = TotalCountRegex().Match(html);
+        if (totalMatch.Success && int.TryParse(totalMatch.Groups[1].Value, out var total))
+            return total;
+
+        // Try "共 N 页" pattern with items per page estimation
+        var pageMatch = TotalPagesRegex().Match(html);
+        if (pageMatch.Success && int.TryParse(pageMatch.Groups[1].Value, out var pages))
+            return pages * 20; // Estimate 20 posts per page
+
+        return null;
+    }
+
     [GeneratedRegex(@"<div\s+id\s*=\s*""forumRow_", RegexOptions.IgnoreCase)]
     private static partial Regex ForumRowRegex();
 
@@ -81,6 +125,12 @@ public sealed partial class TaogubaScraper : IForumPostCountScraper
     /// </summary>
     [GeneratedRegex(@"<div\s+class\s*=\s*""related-sources""\s*>(\d{4}-\d{2}-\d{2})\s", RegexOptions.IgnoreCase)]
     private static partial Regex PostDateRegex();
+
+    [GeneratedRegex(@"共\s*(\d+)\s*条", RegexOptions.IgnoreCase)]
+    private static partial Regex TotalCountRegex();
+
+    [GeneratedRegex(@"共\s*(\d+)\s*页", RegexOptions.IgnoreCase)]
+    private static partial Regex TotalPagesRegex();
 
     private static TimeZoneInfo ResolveChinaTimeZone()
     {

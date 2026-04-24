@@ -3,6 +3,7 @@ using System.Text.Json;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Services.IntentClassification;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -30,6 +31,11 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
     private readonly IStockAgentRoleContractRegistry _roleContractRegistry;
     private readonly IStockMarketContextService _marketContextService;
     private readonly IStockCopilotAcceptanceService _acceptanceService;
+    private readonly IQuestionIntentClassifier _intentClassifier;
+    private readonly IEvidencePackBuilder _evidencePackBuilder;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<StockCopilotLiveGateService> _logger;
 
     public StockCopilotLiveGateService(
         IStockChatHistoryService chatHistoryService,
@@ -39,7 +45,12 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         IMcpServiceRegistry mcpServiceRegistry,
         IStockAgentRoleContractRegistry roleContractRegistry,
         IStockMarketContextService marketContextService,
-        IStockCopilotAcceptanceService acceptanceService)
+        IStockCopilotAcceptanceService acceptanceService,
+        IQuestionIntentClassifier intentClassifier,
+        IEvidencePackBuilder evidencePackBuilder,
+        IHttpClientFactory httpClientFactory,
+        IConfiguration configuration,
+        ILogger<StockCopilotLiveGateService> logger)
     {
         _chatHistoryService = chatHistoryService;
         _llmService = llmService;
@@ -49,6 +60,11 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         _roleContractRegistry = roleContractRegistry;
         _marketContextService = marketContextService;
         _acceptanceService = acceptanceService;
+        _intentClassifier = intentClassifier;
+        _evidencePackBuilder = evidencePackBuilder;
+        _httpClientFactory = httpClientFactory;
+        _configuration = configuration;
+        _logger = logger;
     }
 
     public async Task<StockCopilotLiveGateResultDto> RunAsync(StockCopilotLiveGateRequestDto request, CancellationToken cancellationToken = default)
@@ -66,7 +82,29 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         var session = await _chatHistoryService.CreateSessionAsync(normalizedSymbol, sessionTitle, request.SessionKey, cancellationToken);
         var marketContext = await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken);
         var checklist = _roleContractRegistry.BuildChecklist();
+        var intentTask = _intentClassifier.ClassifyAsync(trimmedQuestion, normalizedSymbol, cancellationToken);
         var prompt = BuildPrompt(normalizedSymbol, trimmedQuestion, request.AllowExternalSearch, marketContext, checklist);
+
+        var intent = await intentTask;
+        string? evidenceContext = null;
+        if (intent.RequiresRag || intent.RequiresFinancialData)
+        {
+            var evidencePack = await _evidencePackBuilder.BuildAsync(
+                normalizedSymbol, trimmedQuestion, intent.Type, cancellationToken);
+            evidenceContext = _evidencePackBuilder.FormatAsPromptContext(evidencePack);
+            var conclusionConstraint = BuildStructuredConclusionConstraint(intent.Type);
+            if (!string.IsNullOrWhiteSpace(evidenceContext))
+            {
+                prompt = InjectEvidenceIntoPrompt(prompt, evidenceContext + conclusionConstraint);
+            }
+            else if (intent.Type is IntentType.Valuation or IntentType.Risk or IntentType.FinancialAnalysis)
+            {
+                prompt = InjectEvidenceIntoPrompt(prompt,
+                    "\n[系统提示：该问题需要财报数据支撑，但当前没有找到相关财报证据。" +
+                    "请在回答中明确说明缺少财报依据，建议用户先采集该股票的财报数据。]\n" + conclusionConstraint);
+            }
+        }
+
         var (planJson, rawModelResponse, llmTraceId, parseError) = await RequestPlanWithRepairAsync(
             provider,
             request.Model,
@@ -100,8 +138,26 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         var validation = ValidateToolCalls(parsedPlan.ToolCalls, normalizedSymbol, trimmedQuestion, request.AllowExternalSearch);
         var execution = await ExecuteApprovedToolsAsync(normalizedSymbol, trimmedQuestion, request.TaskId, validation.ApprovedCalls, cancellationToken);
 
+        string finalAnswerText;
+        if (execution.ToolResults.Any(t => string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase)))
+        {
+            finalAnswerText = await SynthesizeAnalysisAsync(
+                provider,
+                request.Model,
+                normalizedSymbol,
+                trimmedQuestion,
+                parsedPlan.FinalAnswerDraft,
+                execution.ToolResults,
+                evidenceContext,
+                cancellationToken);
+        }
+        else
+        {
+            finalAnswerText = parsedPlan.FinalAnswerDraft;
+        }
+
         var finalAnswer = BuildFinalAnswer(
-            parsedPlan.FinalAnswerDraft,
+            finalAnswerText,
             llmTraceId,
             execution.ToolResults,
             validation.RejectedCalls,
@@ -161,6 +217,74 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             prompt,
             rawModelResponse,
             validation.RejectedCalls);
+    }
+
+    private async Task<string> SynthesizeAnalysisAsync(
+        string provider,
+        string? model,
+        string symbol,
+        string question,
+        string plannerDraft,
+        IReadOnlyList<StockCopilotToolResultDto> toolResults,
+        string? evidenceContext,
+        CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("你是一个专业的股票分析师。基于以下工具执行结果，为用户提供深度分析。");
+        sb.AppendLine($"\n## 目标股票: {symbol}");
+        sb.AppendLine($"## 用户问题: {question}");
+
+        if (!string.IsNullOrWhiteSpace(evidenceContext))
+        {
+            sb.AppendLine(evidenceContext);
+        }
+
+        sb.AppendLine("\n## 工具执行结果:");
+        foreach (var tool in toolResults.Where(t => string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase)))
+        {
+            sb.AppendLine($"\n### [{tool.ToolName}]");
+            if (tool.EvidenceCount > 0 && tool.Evidence?.Count > 0)
+            {
+                foreach (var ev in tool.Evidence.Take(10))
+                {
+                    sb.AppendLine($"- {ev.Point}");
+                    if (!string.IsNullOrWhiteSpace(ev.Excerpt))
+                        sb.AppendLine($"  摘要: {ev.Excerpt}");
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(tool.Summary))
+                sb.AppendLine($"工具摘要: {tool.Summary}");
+        }
+
+        if (evidenceContext?.Contains("输出格式要求") == true)
+        {
+            sb.AppendLine("\n请严格按照以下格式输出：");
+            sb.AppendLine("### 结论\n简明扼要的核心判断。");
+            sb.AppendLine("### 依据\n支撑结论的关键数据点，引用上方工具数据。");
+            sb.AppendLine("### 假设\n结论成立的前提条件。");
+            sb.AppendLine("### 引用来源\n列出所有引用的数据来源。");
+        }
+        else
+        {
+            sb.AppendLine("\n请基于以上数据提供深度分析，直接回答用户的问题。分析必须基于实际数据，不要凭空推测。");
+        }
+
+        var request = new LlmChatRequest(
+            sb.ToString(),
+            model,
+            Temperature: 0.3f,
+            TraceId: $"live-gate-synthesis-{symbol}",
+            MaxOutputTokens: 2048);
+
+        try
+        {
+            var result = await _llmService.ChatAsync(provider, request, ct);
+            return result?.Content ?? plannerDraft;
+        }
+        catch
+        {
+            return plannerDraft;
+        }
     }
 
     private async Task<(JsonElement? PlanJson, string RawResponse, string TraceId, string? ParseError)> RequestPlanWithRepairAsync(
@@ -643,6 +767,15 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
                     approvedCall,
                     await _mcpToolGateway.SearchAsync(input.GetValueOrDefault("query", question), true, toolTaskId, cancellationToken),
                     envelope => $"外部搜索 provider={envelope.Data.Provider}，结果 {envelope.Data.ResultCount} 条。"),
+                StockMcpToolNames.FinancialReport => MapOutcome(
+                    approvedCall,
+                    await _mcpToolGateway.GetFinancialReportAsync(symbol, ParseInt(input, "periods", 4), toolTaskId, cancellationToken),
+                    envelope => $"财报数据: {envelope.Data?.PeriodCount ?? 0}期"),
+                StockMcpToolNames.FinancialTrend => MapOutcome(
+                    approvedCall,
+                    await _mcpToolGateway.GetFinancialTrendAsync(symbol, ParseInt(input, "periods", 8), toolTaskId, cancellationToken),
+                    envelope => $"财务趋势: {envelope.Data?.PeriodCount ?? 0}期"),
+                StockMcpToolNames.FinancialReportRag => await ExecuteRagToolAsync(approvedCall, symbol, input.GetValueOrDefault("query", question), toolTaskId, cancellationToken),
                 _ => BuildFailedOutcome(approvedCall, $"暂不支持工具 {approvedCall.Registration.ToolName} 的 live gate 执行。")
             };
         }
@@ -706,6 +839,113 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             0,
             warnings,
             Array.Empty<string>());
+        return new ToolExecutionOutcome(toolResult, executionMetric);
+    }
+
+    private async Task<ToolExecutionOutcome> ExecuteRagToolAsync(
+        ApprovedToolCall approvedCall, string symbol, string question,
+        string taskId, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var citations = await _mcpToolGateway.SearchFinancialReportRagAsync(symbol, question, 5, ct);
+        sw.Stop();
+
+        if (citations.Count == 0)
+        {
+            // Fire-and-forget: trigger PDF collection so next query can succeed
+            // Strip sh/sz prefix for worker API (same logic as StocksModule.NormalizeFinancialWorkerSymbol)
+            var workerSymbol = symbol;
+            if (workerSymbol.Length == 8
+                && (workerSymbol.StartsWith("sh", StringComparison.OrdinalIgnoreCase)
+                    || workerSymbol.StartsWith("sz", StringComparison.OrdinalIgnoreCase)))
+            {
+                workerSymbol = workerSymbol[2..];
+            }
+            if (!string.IsNullOrEmpty(workerSymbol))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var workerBaseUrl = _configuration["FinancialWorker:BaseUrl"] ?? "http://localhost:5120";
+                        var client = _httpClientFactory.CreateClient();
+                        client.Timeout = TimeSpan.FromMinutes(5);
+                        await client.PostAsync($"{workerBaseUrl}/api/pdf-collect/{Uri.EscapeDataString(workerSymbol)}", null);
+                        _logger.LogInformation("[RAG] Triggered PDF collection for {Symbol} (fire-and-forget)", workerSymbol);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[RAG] Failed to trigger PDF collection for {Symbol}", workerSymbol);
+                    }
+                });
+            }
+
+            var degradedWarnings = new[] { "财报RAG暂无数据，已触发后台索引，稍后重试可获取" };
+            var degradedResult = new StockCopilotToolResultDto(
+                approvedCall.CallId,
+                approvedCall.Registration.ToolName,
+                "completed",
+                null,
+                0,
+                0,
+                degradedWarnings,
+                Array.Empty<string>(),
+                Array.Empty<StockCopilotMcpEvidenceDto>(),
+                "财报RAG: 暂无数据，已触发后台索引");
+            var degradedMetric = new StockCopilotToolExecutionMetricDto(
+                approvedCall.CallId,
+                approvedCall.Registration.ToolName,
+                approvedCall.Registration.PolicyClass,
+                sw.ElapsedMilliseconds,
+                0,
+                0,
+                degradedWarnings,
+                Array.Empty<string>());
+            return new ToolExecutionOutcome(degradedResult, degradedMetric);
+        }
+
+        var evidence = citations.Select(c => new StockCopilotMcpEvidenceDto(
+            Point: c.Text.Length > 200 ? c.Text[..200] + "…" : c.Text,
+            Title: $"{c.ReportDate} {c.Section ?? c.BlockKind}",
+            Source: c.Source,
+            PublishedAt: null,
+            CrawledAt: null,
+            Url: null,
+            Excerpt: c.Text.Length > 300 ? c.Text[..300] : c.Text,
+            Summary: null,
+            ReadMode: "rag",
+            ReadStatus: "ok",
+            IngestedAt: null,
+            LocalFactId: null,
+            SourceRecordId: c.ChunkId,
+            Level: null,
+            Sentiment: null,
+            Target: symbol,
+            Tags: Array.Empty<string>())).ToList();
+
+        var summary = $"财报RAG: 找到{citations.Count}条相关证据";
+        var toolResult = new StockCopilotToolResultDto(
+            approvedCall.CallId,
+            approvedCall.Registration.ToolName,
+            "completed",
+            taskId,
+            evidence.Count,
+            0,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            evidence,
+            summary);
+
+        var executionMetric = new StockCopilotToolExecutionMetricDto(
+            approvedCall.CallId,
+            approvedCall.Registration.ToolName,
+            approvedCall.Registration.PolicyClass,
+            sw.ElapsedMilliseconds,
+            evidence.Count,
+            0,
+            Array.Empty<string>(),
+            Array.Empty<string>());
+
         return new ToolExecutionOutcome(toolResult, executionMetric);
     }
 
@@ -780,6 +1020,13 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         }
 
         builder.AppendLine($"- external_gated={string.Join(", ", externalGated)}");
+
+        builder.AppendLine();
+        builder.AppendLine("FinancialReportRag 使用指南：");
+        builder.AppendLine("- RAG 数据库包含已解析的上市公司年报/半年报/季报全文（利润表、资产负债表、现金流量表、管理层讨论与分析、公司治理、业务概述等章节）。");
+        builder.AppendLine("- query 参数应使用具体的财务术语（如'营业收入 净利润'、'应收账款 坏账准备'、'研发费用 比例'），而非用户原始问题。");
+        builder.AppendLine("- 每个角色应根据自身分析需要生成针对性查询，例如：基本面分析师应查询'营收增长 毛利率 ROE'，公司概览分析师应查询'主营业务 行业地位 竞争优势'。");
+        builder.AppendLine("- 支持多组查询：用分号分隔多个查询（如 query='营业收入 净利润; 资产负债率 现金流; 管理层分析 风险提示'），系统会分别搜索并合并结果。");
     }
 
     private static void AppendRoleConstraintSummary(StringBuilder builder, StockCopilotRoleContractChecklistDto checklist)
@@ -1094,6 +1341,39 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         return items.Length == 0 ? null : items;
+    }
+
+    private static string BuildStructuredConclusionConstraint(IntentType intentType)
+    {
+        if (intentType is not (IntentType.Valuation or IntentType.Risk
+            or IntentType.FinancialAnalysis or IntentType.PerformanceAttribution))
+            return "";
+
+        return """
+
+=== 输出格式要求 ===
+由于本次问题涉及财务分析，finalAnswerDraft 必须包含以下四个结构化段落（用 markdown 标题分隔）：
+
+### 结论
+简明扼要的核心判断（1-2句话）。
+
+### 依据
+支撑结论的关键数据点和事实，必须引用上方提供的财报证据或工具数据。每条依据标注来源。
+
+### 假设
+结论成立的前提条件。如果前提变化，结论可能失效。
+
+### 引用来源
+列出所有引用的数据来源（财报期间、数据源、工具名称）。
+
+如果上方没有提供足够的财报证据，在"依据"部分明确说明数据不足，不要编造数据。
+=== 格式要求结束 ===
+""";
+    }
+
+    private static string InjectEvidenceIntoPrompt(string prompt, string evidenceContext)
+    {
+        return prompt + "\n\n" + evidenceContext;
     }
 
     private static string BuildSessionTitle(string question)

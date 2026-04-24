@@ -1,6 +1,94 @@
 {
   "tasks": [
     {
+      "id": "v0.4.4-product-stabilization",
+      "title": "v0.4.4 产品级稳定性 milestone（占位）",
+      "status": "backlog",
+      "level": "M",
+      "notes": "来自 v0.4.0 全产品巡检 2026-04-22（CONDITIONAL_PASS 65/100），非 v0.4.x 财报路线图，待 v0.4.1~v0.4.3 完成后排期。包含 V044-P0-A 推荐状态语义、V044-P0-B 情绪轮动榜单空态、V044-P1-C 股票详情基本面 3 字段、V044-P1-D 主力净流入单位 bug、V044-P1-E Worker 日志 sink、V044-P1-F 失败按钮文案、V044-NIT N-1~N-4。详见 .automation/reports/v0.4.0-product-walk-2026-04-22.md 与 .automation/sprint.md「v0.4.4 Backlog」段。"
+    },
+    {
+      "id": "v0.4.1-pdf-compare-reparse",
+      "title": "v0.4.1 PDF 原件对照与手动重新解析 milestone",
+      "status": "in-progress",
+      "level": "L",
+      "notes": "目标：让用户在软件内直接看到 PDF 原件，并能把原件和解析结果并排对照，同时支持手动重新解析。硬约束（§9.1）：PDF 详情持久化模型每个解析单元必须落库 page_start / page_end / block_kind 三字段，为 v0.4.3 citation→PDF 跳转铺路。下挂 V041-S1..S8 共 8 个 Story（S1/S2/S3 活跃 TODO，S4..S8 BACKLOG）。计划书 docs/GOAL-v041-pdf-compare-and-reparse.md，看板 .automation/sprint.md。"
+    },
+    {
+      "id": "V041-S1",
+      "title": "后端 PDF 详情持久化模型 + 解析单元三字段",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "notes": "选 LiteDB 作为 PDF 详情持久化（轻量 embedded、无 EF migration 成本）；PdfFileDocument + PdfParseUnitBuilder + FinancialDbContext + PdfProcessingPipeline 接入；ParseUnit 必含 page_start / page_end / block_kind（narrative_section / table / figure_caption），page=0 拒收；Worker tests 4→20 全绿。硬约束来自 §9.1。遗留 V041-DEBT-1（BsonMapper.Global 并发 race）。"
+    },
+    {
+      "id": "V041-S2",
+      "title": "后端 4 个 PDF 正式接口 + 阶段日志扩展",
+      "status": "todo",
+      "level": "M",
+      "notes": "GET /api/stocks/financial/pdf-files 列表分页；GET /pdf-files/{id} 详情含解析单元三字段；GET /pdf-files/{id}/content PDF 二进制流；POST /pdf-files/{id}/reparse 同步触发并刷新；阶段日志扩展记录下载/提取/投票/解析/落库 5 阶段时长与错误。单元 + WebApplicationFactory 集成测试覆盖成功 / 不存在 / 重解析失败。依赖 V041-S1。注意 reparse 串行保护与 path traversal 防护。"
+    },
+    {
+      "id": "V041-S3",
+      "title": "前端 FinancialPdfViewer.vue 共享 PDF 内嵌预览组件",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "notes": "选用原生 <iframe> 渲染 PDF（WebView2 + Chromium 内置 PDF viewer 双端可用），不引入 pdfjs-dist 减少 bundle 体积与 packaged 模式 worker 路径风险；props pdfFileId + emits loaded/error，loading/error/空态完整；vitest 370→377 全绿。桌面 packaged 真机加载留待 V041-S5 接入对照模式时一并验收。依赖 V041-S2。"
+    },
+    {
+      "id": "V041-S4",
+      "title": "前端 FinancialPdfParsePreview.vue + FinancialPdfVotingPanel.vue",
+      "status": "backlog",
+      "level": "M",
+      "notes": "ParsePreview 按 block_kind 分类样式渲染解析单元，显示 page_start–page_end 锚点；VotingPanel 展示提取器候选 / 投票置信度 / 最终采用者；两组件消费 GET /pdf-files/{id} 结构，loading/error/空态完整；vitest 覆盖三类 block_kind + 投票排序 + 重解析后 props 刷新。依赖 V041-S2。"
+    },
+    {
+      "id": "V041-S5",
+      "title": "前端 FinancialReportComparePane.vue 双栏对照 + 财报中心抽屉接入",
+      "status": "backlog",
+      "level": "M",
+      "notes": "新建 ComparePane 左 PDF / 右切换（结构化三表 / 文本预览 / 投票信息）；FinancialDetailDrawer.vue 接入对照模式替换 v0.4.0 PDF 占位区；重新解析按钮触发 reparse 并自动刷新左右两栏；浏览器 packaged 验收看原件/切右栏/重解析全流程，console 0 error。依赖 V041-S3 + V041-S4。风险来自 §7 风险 3（重新采集 vs 重新解析必须 UI 区分）。"
+    },
+    {
+      "id": "V041-S6",
+      "title": "前端 股票详情 FinancialReportTab 轻量入口 + 重新解析按钮",
+      "status": "backlog",
+      "level": "S",
+      "notes": "FinancialReportTab.vue 在单股票视图新增「查看 PDF 原件 / 对照」入口，复用 V041-S5 的 ComparePane 与 reparse 调用，避免两套实现；vitest 覆盖入口可见性 / 跳转 / 重解析成功失败回写。依赖 V041-S5。保持轻量，不要把财报中心筛选分页全部搬入。"
+    },
+    {
+      "id": "V041-S7",
+      "title": "前端 阶段级失败可视化（5 阶段 timeline）",
+      "status": "backlog",
+      "level": "S",
+      "notes": "在 ComparePane 或详情抽屉补 5 阶段 timeline（下载 / 提取 / 投票 / 解析 / 落库），每阶段显示状态 + 耗时 + 失败摘要；数据源对接 V041-S2 阶段日志扩展；vitest 覆盖全成功 / 中段失败 / 全失败 3 快照。依赖 V041-S2。阶段口径必须与 Worker 现有日志层对齐。"
+    },
+    {
+      "id": "V041-S8",
+      "title": "v0.4.1 全链路验收（含页码锚点刷新与桌面/浏览器兼容）",
+      "status": "backlog",
+      "level": "M",
+      "notes": "Test Agent 后端 dotnet test + 前端 vitest 全绿；UI Designer 走查 ComparePane / timeline / 股票详情入口；User Representative 验收 6 项完成定义；硬条件页码锚点刷新验证（重新解析后 page_start/page_end/block_kind 全部刷新且非空，§9.2）；桌面 packaged + 浏览器双环境验证 PDF 内嵌预览（§7 风险 1）；写 v0.4.1 完成报告 + 更新 README.UserAgentTest.md + tasks.json。依赖 V041-S5 + V041-S6 + V041-S7。"
+    },
+    {
+      "id": "V041-DEBT-1",
+      "title": "FinancialDbContext 注入私有 BsonMapper 实例隔离测试（LiteDB BsonMapper.Global 并发 race）",
+      "status": "backlog",
+      "level": "S",
+      "notes": "V041-S1 实现当前共享 LiteDB BsonMapper.Global，并发跑 Worker tests 时存在映射注册竞态风险。需重构 FinancialDbContext 注入私有 BsonMapper 实例隔离测试与生产运行环境。优先级 v0.4.1 中。"
+    },
+    {
+      "id": "V040-S3",
+      "title": "财报中心前端页面骨架",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "commits": ["3597ada", "807bdf6", "8e17f8b", "fce6408"],
+      "notes": "UI Designer 二轮走查 PASS 98/100；vitest 52 + Browser MCP 8 cases；前端 build 0 error；console.error=0；路由用 ?tab=financial-center 与现有体系一致；遗留 V040-S3-FU-1 backlog（渠道配色抽样 + Unknown pill 设计）。"
+    },
+    {
       "id": "MANUAL-20260407-OLLAMA-BENCH-EXPANSION",
       "title": "Local Ollama benchmarking and runtime parameter expansion",
       "status": "done",
@@ -1185,6 +1273,66 @@
       "completedAt": "2026-04-22",
       "commits": ["9aa0230"],
       "notes": "EF InMemory 触发 ManyServiceProvidersCreatedWarning，导致全量回归时 14 案例 CreateDbContext 失败。修复：CreateDbContext 助手 ConfigureWarnings 忽略该警告。全量 607 全绿。"
+    },
+    {
+      "id": "V040-S1",
+      "title": "后端财报列表分页查询接口",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "commits": ["a911e33", "831c7c8"],
+      "notes": "新增 GET /api/stocks/financial/reports 分页 + GET /api/stocks/financial/reports/{id} 详情；排序支持 reportDate / updatedAt asc|desc；分页响应含 total/pageSize/page/items；12 单元测试覆盖空集 / 单页 / 多页 / 筛选 / 不存在 id；ParseSort 静默降级日志补齐。"
+    },
+    {
+      "id": "V040-DEBT-3",
+      "title": "引入 WebApplicationFactory 集成测试基础设施",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["aee132c"],
+      "notes": "引入 Microsoft.AspNetCore.Mvc.Testing 8.0.16；Program.cs 末尾追加 public partial class Program {}；新增 FinancialReportsEndpointTests.cs 通过 Stub 替换 IFinancialDataReadService 隔离外部依赖；新增集成测试 GetFinancialReports_WithFullQuery_BindsParametersAndReturns200；后端 dotnet test 608/0/0 全绿。"
+    },
+    {
+      "id": "V040-DEBT-2",
+      "title": "修复 10 个预存前端失败用例",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["b67584b"],
+      "notes": "MarketSentimentTab.spec.js 8 + StockCharts.spec.js 1 + TradingWorkbench.spec.js 1，全部为 A 类（测试期望未跟上重构）+ 1 处 echarts mock 缺 API；不改生产代码；vitest 316 passed / 0 failed / 2 skipped。"
+    },
+    {
+      "id": "V040-S4",
+      "title": "采集结果透明化（前端 UI 接入）",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["96d12a6"],
+      "notes": "FinancialDataTestPanel + FinancialReportTab 显示 6 新字段；新建 sourceChannelTag util；vitest 相关用例全绿（sourceChannelTag 10/10、FinancialFilterBar 13/13、FinancialReportTab 20/20）；frontend build 0 error；同步修复 4 处面向开发者文案为面向用户口吻；渠道 Tag 配色不一致归 V040-S3-FU-1。"
+    },
+    {
+      "id": "V040-S5",
+      "title": "财报中心详情抽屉（轻量版，不含 PDF 预览）",
+      "status": "done",
+      "level": "S",
+      "completedAt": "2026-04-22",
+      "commits": ["e187f8c"],
+      "notes": "新建 financialApi.js + financialFieldDictionary.js；重写 FinancialDetailDrawer.vue（500 行）覆盖标题 / loading / error / 重试 / 元数据 dl（含 sourceChannelTag）/ 三表概览 / sticky 重新采集 + 关闭 / PDF 占位；vitest 343/0/2 全绿（新增 30 cases）；frontend build 0 error。PDF 预览延后到 v0.4.1。"
+    },
+    {
+      "id": "V040-S6",
+      "title": "v0.4.0 全链路验收 + 收尾",
+      "status": "done",
+      "level": "M",
+      "completedAt": "2026-04-22",
+      "notes": "R1 REJECT 35/100：B-1 三表全空、B-2 keyword 失效、B-3 版本号 0.3.4。最小改动闭环：前端 financialFieldDictionary 扩中文键 + `*` 前缀剥离（B-1）；useFinancialCenterQuery 关键词模式临时把 pageSize 拉到 100、page 锁 1，前端二次过滤（B-2）；Directory.Build.props / package.json / windows-installer.iss / build-windows-installer.ps1 升 0.3.4→0.4.0（B-3）。R2 PASS 87/100；后端 608/0/0、前端 vitest 370/0/2；packaged 重打包 + 浏览器验收通过。遗留 backlog：V040-S6-FU-1（毛利润字段）/ V040-S6-FU-2（后端 keyword）/ V040-S3-FU-1（Tag 配色）。"
+    },
+    {
+      "id": "V040-MILESTONE",
+      "title": "v0.4.0 财报中心基础落地 milestone",
+      "status": "done",
+      "completedAt": "2026-04-22",
+      "notes": "v0.4.0 全部 6 个 Story（V040-S1..S6）+ 3 个技术债（V040-DEBT-1/2/3）完成。User Rep R2 PASS 87/100。打包 EXE/Installer 0.4.0 已生成。后端 608/0/0、前端 vitest 370/0/2。下一阶段 v0.4.1 主线：L-1 毛利润 → L-2 后端 keyword → N-1 PDF 占位 → D-2 Tag 配色。"
     }
   ]
 }

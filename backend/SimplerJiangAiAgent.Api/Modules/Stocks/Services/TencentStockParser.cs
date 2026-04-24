@@ -36,6 +36,8 @@ internal static class TencentStockParser
         var turnoverRate = ParseDecimal(GetField(fields, 38));
         var peRatio = ParseDecimal(GetField(fields, 39));
         var volumeRatio = ParseDecimal(GetField(fields, 43));
+        var floatMarketCapWan = ParseDecimal(GetField(fields, 45)); // 流通市值 in 万元
+        var floatMarketCap = floatMarketCapWan > 0 ? floatMarketCapWan * 10000m : 0m; // convert to 元
         var speed = ParseDecimal(GetField(fields, 49));
 
         return new StockQuoteDto(
@@ -52,7 +54,7 @@ internal static class TencentStockParser
             DateTime.UtcNow,
             Array.Empty<StockNewsDto>(),
             Array.Empty<StockIndicatorDto>(),
-            0m,
+            floatMarketCap,
             volumeRatio
         );
      }

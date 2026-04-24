@@ -176,6 +176,21 @@ public class FinancialDataReadService : IFinancialDataReadService
                 period.KeyMetrics["DebtToAssetRatio"] = Math.Round(tlD / taD, 4);
             }
 
+            // Computed: gross profit = TotalRevenue - TotalCost
+            if (!period.KeyMetrics.ContainsKey("GrossProfit")
+                && period.KeyMetrics.TryGetValue("TotalRevenue", out var trObj)
+                && period.KeyMetrics.TryGetValue("TotalCost", out var tcObj)
+                && trObj is double trD && tcObj is double tcD)
+            {
+                period.KeyMetrics["GrossProfit"] = Math.Round(trD - tcD, 2);
+            }
+
+            // THS data is stored in 万元; normalize monetary values to 元
+            if (period.SourceChannel == "ths")
+            {
+                NormalizeThsMonetaryValues(period.KeyMetrics);
+            }
+
             summary.Periods.Add(period);
         }
 
@@ -206,6 +221,15 @@ public class FinancialDataReadService : IFinancialDataReadService
             var revenue = SafeDouble(inc, "TOTAL_OPERATE_INCOME") ?? SafeDouble(inc, "营业总收入");
             var netProfit = SafeDouble(inc, "NETPROFIT") ?? SafeDouble(inc, "净利润");
             var totalAssets = SafeDouble(bs, "TOTAL_ASSETS") ?? SafeDouble(bs, "总资产");
+
+            // THS data is stored in 万元; normalize to 元
+            var sourceChannel = SafeString(doc, "SourceChannel");
+            if (sourceChannel == "ths")
+            {
+                if (revenue.HasValue) revenue = revenue.Value * 10000;
+                if (netProfit.HasValue) netProfit = netProfit.Value * 10000;
+                if (totalAssets.HasValue) totalAssets = totalAssets.Value * 10000;
+            }
 
             trend.Revenue.Add(new TrendPoint
             {
@@ -292,6 +316,14 @@ public class FinancialDataReadService : IFinancialDataReadService
         {
             pars[$"p{idx}"] = query.EndDate;
             parts.Add($"$.ReportDate <= @p{idx}");
+            idx++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Keyword))
+        {
+            var kw = query.Keyword.Trim();
+            pars[$"p{idx}"] = $"%{kw}%";
+            parts.Add($"$.Symbol LIKE @p{idx}");
             idx++;
         }
 
@@ -386,19 +418,34 @@ public class FinancialDataReadService : IFinancialDataReadService
             .ToList();
     }
 
-    private static (string Field, int Order) ParseSort(string? sort)
+    private (string Field, int Order) ParseSort(string? sort)
     {
-        var raw = string.IsNullOrWhiteSpace(sort) ? "reportDate:desc" : sort.Trim();
+        const string defaultKey = "reportDate";
+        var raw = string.IsNullOrWhiteSpace(sort) ? $"{defaultKey}:desc" : sort.Trim();
         var parts = raw.Split(':', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var key = parts.Length > 0 ? parts[0].ToLowerInvariant() : "reportdate";
+        var key = parts.Length > 0 ? parts[0].ToLowerInvariant() : defaultKey.ToLowerInvariant();
         var dir = parts.Length > 1 ? parts[1].ToLowerInvariant() : "desc";
 
-        var field = key switch
+        string field;
+        switch (key)
         {
-            "updatedat" => "$.UpdatedAt",
-            "collectedat" => "$.CollectedAt",
-            _ => "$.ReportDate",
-        };
+            case "updatedat":
+                field = "$.UpdatedAt";
+                break;
+            case "collectedat":
+                field = "$.CollectedAt";
+                break;
+            case "reportdate":
+                field = "$.ReportDate";
+                break;
+            default:
+                _logger.LogWarning(
+                    "FinancialReports query received unknown sort '{Sort}', falling back to default '{Default}'",
+                    sort,
+                    defaultKey);
+                field = "$.ReportDate";
+                break;
+        }
         var order = dir == "asc" ? Query.Ascending : Query.Descending;
         return (field, order);
     }
@@ -634,6 +681,30 @@ public class FinancialDataReadService : IFinancialDataReadService
                     metrics[outKey] = val.Value;
                     return;
                 }
+            }
+        }
+    }
+
+    private static readonly HashSet<string> ThsMonetaryKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "TotalAssets", "TotalLiabilities", "TotalEquity",
+        "CurrentAssets", "CurrentLiabilities",
+        "TotalRevenue", "Revenue", "NetProfit", "GrossProfit",
+        "OperatingProfit", "TotalCost",
+        "OperatingCashFlow", "InvestingCashFlow", "FinancingCashFlow", "NetCashFlow"
+    };
+
+    /// <summary>
+    /// THS data is stored in 万元 (×10,000 元). Multiply known monetary fields
+    /// by 10,000 so the frontend receives values in 元, consistent with other sources.
+    /// </summary>
+    private static void NormalizeThsMonetaryValues(Dictionary<string, object?> metrics)
+    {
+        foreach (var key in ThsMonetaryKeys)
+        {
+            if (metrics.TryGetValue(key, out var val) && val is double d)
+            {
+                metrics[key] = d * 10000;
             }
         }
     }

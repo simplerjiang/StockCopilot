@@ -1295,21 +1295,18 @@ const CHART_STRATEGIES = Object.freeze([
   }),
   createStrategyDefinition({
     id: 'retailHeat',
-    label: '散户热度',
+    label: '散户帖子数',
     category: 'signal',
     kind: 'indicator',
     accentColor: '#f59e0b',
     help: createHelp(
-      '⚠️ 这是一个反向指标！散户热度指数衡量 A 股论坛帖子增量相对于 20 日均值的偏离程度。',
-      '当帖子量暴增（hot/warm）：散户过度活跃是短期见顶信号，应考虑卖出。当帖子量骤降（cool/cold）：散户冷清可能是被忽视的买入机会（需排除 ST/垃圾股）。',
+      '散户论坛帖子数：直接显示各平台当日新增帖子数，帮助直观了解散户活跃度。',
+      '柱状图高度代表当日新增帖子数量，留空的日期表示当日无采集数据。',
       '数据来源：东方财富股吧、新浪股吧、淘股吧。'
     ),
     lineLegends: [
-      createLineLegend('#dc2626', '过热', '热度比 ≥ 3.0，散户情绪极度亢奋。'),
-      createLineLegend('#f59e0b', '偏热', '热度比 2.0–3.0，关注追高风险。'),
-      createLineLegend('#6b7280', '正常', '热度比 0.7–2.0，情绪平稳。'),
-      createLineLegend('#3b82f6', '偏冷', '热度比 0.5–0.7，关注低吸机会。'),
-      createLineLegend('#1d4ed8', '冷清', '热度比 < 0.5，散户兴趣极低。')
+      createLineLegend('#f59e0b', '日增帖', '当日各平台新增帖子数'),
+      createLineLegend('#9ca3af', '无数据', '该日期未采集到数据（留空）')
     ],
     supportedViews: ['day'],
     defaultVisible: false,
@@ -1320,9 +1317,9 @@ const CHART_STRATEGIES = Object.freeze([
           createIndicatorSpec({
             aggregateKey: 'RETAIL_HEAT',
             name: 'RETAIL_HEAT',
-            shortName: '热度',
+            shortName: '日增帖',
             paneId: RETAIL_HEAT_PANE_ID,
-            paneOptions: { id: RETAIL_HEAT_PANE_ID, height: 80, minHeight: 56 },
+            paneOptions: { id: RETAIL_HEAT_PANE_ID, height: 120, minHeight: 80 },
             isStack: true,
             order: 70
           })
@@ -1484,25 +1481,19 @@ function registerKdjVisualIndicator() {
 function registerRetailHeatIndicator() {
   registerIndicator({
     name: 'RETAIL_HEAT',
-    shortName: '热度',
-    precision: 2,
+    shortName: '日增帖',
+    precision: 0,
     calcParams: [],
     figures: [
       {
-        key: 'heatRatio',
-        title: '热度: ',
+        key: 'dailyCount',
+        title: '日增帖: ',
         type: 'bar',
-        baseValue: 1.0,
+        baseValue: 0,
         styles: (data) => {
-          const ratio = data.current?.indicatorData?.heatRatio
-          if (!Number.isFinite(ratio)) return {}
-          let color
-          if (ratio >= 3.0) color = '#dc2626'
-          else if (ratio >= 2.0) color = '#f59e0b'
-          else if (ratio >= 0.7) color = '#6b7280'
-          else if (ratio >= 0.5) color = '#3b82f6'
-          else color = '#1d4ed8'
-          return { color }
+          const val = data.current?.indicatorData?.dailyCount
+          if (!Number.isFinite(val) || val === 0) return {}
+          return { color: '#f59e0b' }
         }
       },
       {
@@ -1514,7 +1505,8 @@ function registerRetailHeatIndicator() {
     ],
     calc: dataList => dataList.map(item => {
       const heat = item._retailHeat
-      return heat ? { heatRatio: heat.heatRatio, platformCount: heat.platformCount } : {}
+      if (!heat || !heat.hasData) return {}
+      return { dailyCount: heat.dailyCount, platformCount: heat.platformCount }
     })
   })
 }

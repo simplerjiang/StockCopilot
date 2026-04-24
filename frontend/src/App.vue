@@ -9,6 +9,8 @@ import AdminLlmSettings from './modules/admin/AdminLlmSettings.vue'
 import SourceGovernanceDeveloperMode from './modules/admin/SourceGovernanceDeveloperMode.vue'
 import FinancialDataTestPanel from './modules/admin/FinancialDataTestPanel.vue'
 import FinancialWorkerPanel from './modules/admin/FinancialWorkerPanel.vue'
+import FinancialConfigPage from './modules/financial/FinancialConfigPage.vue'
+import FinancialCenterPage from './modules/financial/FinancialCenterPage.vue'
 import AppToast from './components/AppToast.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 
@@ -16,6 +18,7 @@ const mainTabs = [
   { key: 'stock-info', name: '股票信息', shortName: '股票', component: StockInfoTab },
   { key: 'market-sentiment', name: '情绪轮动', shortName: '情绪', component: MarketSentimentTab },
   { key: 'news-archive', name: '全量资讯库', shortName: '资讯', component: NewsArchiveTab },
+  { key: 'financial-center', name: '财报中心', shortName: '财报', component: FinancialCenterPage },
   { key: 'trade-log', name: '交易日志', shortName: '交易', component: TradeLogTab },
   { key: 'stock-recommend', name: '股票推荐', shortName: '推荐', component: StockRecommendTab }
 ]
@@ -24,7 +27,8 @@ const adminTabs = [
   { key: 'admin-llm', name: 'LLM 设置', shortName: 'LLM', component: AdminLlmSettings },
   { key: 'source-governance-dev', name: '治理开发者模式', shortName: '治理', component: SourceGovernanceDeveloperMode },
   { key: 'financial-data-test', name: '财务数据测试', shortName: '财务', component: FinancialDataTestPanel },
-  { key: 'financial-worker', name: '财务工作者监控', shortName: '工作者', component: FinancialWorkerPanel }
+  { key: 'financial-worker', name: '财务工作者监控', shortName: '工作者', component: FinancialWorkerPanel },
+  { key: 'financial-config', name: '财报采集设置', shortName: '采集设置', component: FinancialConfigPage }
 ]
 
 const tabs = [...mainTabs, ...adminTabs]
@@ -182,6 +186,13 @@ const handleNavigateTradeLog = (e) => {
   setActiveTab('trade-log')
 }
 
+const handleNavigateTab = (e) => {
+  const tabKey = e?.detail?.tab
+  if (tabKey && validTabKeys.has(tabKey)) {
+    setActiveTab(tabKey)
+  }
+}
+
 onMounted(async () => {
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
@@ -190,6 +201,7 @@ onMounted(async () => {
   document.addEventListener('click', closeSettings)
   window.addEventListener('navigate-stock', handleNavigateStock)
   window.addEventListener('navigate-trade-log', handleNavigateTradeLog)
+  window.addEventListener('navigate-tab', handleNavigateTab)
 
   try {
     const versionResponse = await fetch('/api/app/version')
@@ -211,6 +223,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', closeSettings)
   window.removeEventListener('navigate-stock', handleNavigateStock)
   window.removeEventListener('navigate-trade-log', handleNavigateTradeLog)
+  window.removeEventListener('navigate-tab', handleNavigateTab)
 })
 </script>
 
