@@ -555,5 +555,8 @@ public sealed class StockCopilotLiveGateServiceTests
 
         public Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+
+        public Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
+            => Task.FromResult(new List<RagCitationDto>());
     }
 }

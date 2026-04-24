@@ -654,6 +654,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             StockMcpToolNames.Strategy => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetStrategyAsync(symbol, "day", 60, null, null, taskId, null, ct), CompactJsonOptions)),
             StockMcpToolNames.News => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetNewsAsync(symbol, "stock", taskId, null, ct), CompactJsonOptions)),
             StockMcpToolNames.Search => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.SearchAsync(symbol, true, taskId, ct), CompactJsonOptions)),
+            StockMcpToolNames.FinancialReportRag => FormatRagToolResult(await _mcpGateway.SearchFinancialReportRagAsync(symbol, context.UserPrompt ?? "", 5, ct)),
             _ => throw new ArgumentException($"Unknown tool: {toolName}")
         };
     }
@@ -662,6 +663,13 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
     {
         var normalizedSymbol = StockSymbolNormalizer.Normalize(context.Symbol);
         return $"research:{context.SessionId}:{context.TurnId}:{normalizedSymbol}{ResearchToolTaskScopeSeparator}{toolName}";
+    }
+
+    private static string FormatRagToolResult(List<Models.RagCitationDto> citations)
+    {
+        if (citations.Count == 0)
+            return "[]";
+        return RagContextEnricher.FormatAsContext(citations);
     }
 
     private async Task<PromptGovernancePlan?> ResolvePromptGovernanceAsync(CancellationToken cancellationToken)

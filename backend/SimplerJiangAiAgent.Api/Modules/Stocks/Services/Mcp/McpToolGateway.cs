@@ -22,6 +22,7 @@ public interface IMcpToolGateway
     Task<WebReadResult> WebReadUrlAsync(string url, int maxChars = 8000, CancellationToken cancellationToken = default);
     Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
     Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
+    Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default);
 }
 
 public sealed class McpToolGateway : IMcpToolGateway
@@ -30,6 +31,7 @@ public sealed class McpToolGateway : IMcpToolGateway
     private readonly IMcpServiceRegistry _registry;
     private readonly IRoleToolPolicyService _roleToolPolicyService;
     private readonly IWebSearchService _webSearchService;
+    private readonly RagContextEnricher _ragContextEnricher;
     private readonly ILogger<McpToolGateway> _logger;
 
     public McpToolGateway(
@@ -37,12 +39,14 @@ public sealed class McpToolGateway : IMcpToolGateway
         IMcpServiceRegistry registry,
         IRoleToolPolicyService roleToolPolicyService,
         IWebSearchService webSearchService,
+        RagContextEnricher ragContextEnricher,
         ILogger<McpToolGateway> logger)
     {
         _stockCopilotMcpService = stockCopilotMcpService;
         _registry = registry;
         _roleToolPolicyService = roleToolPolicyService;
         _webSearchService = webSearchService;
+        _ragContextEnricher = ragContextEnricher;
         _logger = logger;
     }
 
@@ -175,6 +179,13 @@ public sealed class McpToolGateway : IMcpToolGateway
             _logger.LogWarning(ex, "MCP tool {Tool} failed for {Key} after {ElapsedMs}ms", toolName, key, sw.ElapsedMilliseconds);
             throw;
         }
+    }
+
+    public async Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
+    {
+        EnsureSystemToolAccess(StockMcpToolNames.FinancialReportRag);
+        return await ExecuteWithLoggingAsync(StockMcpToolNames.FinancialReportRag, symbol,
+            () => _ragContextEnricher.EnrichAsync(query, symbol, topK, cancellationToken));
     }
 
     private void EnsureSystemToolAccess(string toolName)

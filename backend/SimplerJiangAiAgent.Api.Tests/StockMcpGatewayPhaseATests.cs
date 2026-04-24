@@ -10,6 +10,14 @@ namespace SimplerJiangAiAgent.Api.Tests;
 public sealed class StockMcpGatewayPhaseATests
 {
     private static readonly IWebSearchService StubWebSearch = new StubWebSearchService();
+    private static RagContextEnricher CreateStubRagEnricher()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
+        return new RagContextEnricher(
+            new StubHttpClientFactory(),
+            config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<RagContextEnricher>.Instance);
+    }
     private static RoleToolPolicyService CreatePolicy()
     {
         return new RoleToolPolicyService(new McpServiceRegistry(), new StockAgentRoleContractRegistry());
@@ -39,7 +47,8 @@ public sealed class StockMcpGatewayPhaseATests
             item => Assert.Equal((StockMcpToolNames.WebSearchNews, "external_gated"), (item.ToolName, item.PolicyClass)),
             item => Assert.Equal((StockMcpToolNames.WebReadUrl, "external_gated"), (item.ToolName, item.PolicyClass)),
             item => Assert.Equal((StockMcpToolNames.FinancialReport, "local_required"), (item.ToolName, item.PolicyClass)),
-            item => Assert.Equal((StockMcpToolNames.FinancialTrend, "local_required"), (item.ToolName, item.PolicyClass)));
+            item => Assert.Equal((StockMcpToolNames.FinancialTrend, "local_required"), (item.ToolName, item.PolicyClass)),
+            item => Assert.Equal((StockMcpToolNames.FinancialReportRag, "local_required"), (item.ToolName, item.PolicyClass)));
     }
 
     [Fact]
@@ -93,7 +102,7 @@ public sealed class StockMcpGatewayPhaseATests
     [Fact]
     public async Task Gateway_ShouldDelegateToUnderlyingCopilotService()
     {
-        var gateway = new McpToolGateway(new RecordingStockCopilotMcpService(), new McpServiceRegistry(), CreatePolicy(), StubWebSearch, Microsoft.Extensions.Logging.Abstractions.NullLogger<McpToolGateway>.Instance);
+        var gateway = new McpToolGateway(new RecordingStockCopilotMcpService(), new McpServiceRegistry(), CreatePolicy(), StubWebSearch, CreateStubRagEnricher(), Microsoft.Extensions.Logging.Abstractions.NullLogger<McpToolGateway>.Instance);
 
         var result = await gateway.GetNewsAsync("sh600000", "stock", "task-gateway");
 
@@ -105,7 +114,7 @@ public sealed class StockMcpGatewayPhaseATests
     public async Task Gateway_ShouldDelegateToProductTool()
     {
         var service = new RecordingStockCopilotMcpService();
-        var gateway = new McpToolGateway(service, new McpServiceRegistry(), CreatePolicy(), StubWebSearch, Microsoft.Extensions.Logging.Abstractions.NullLogger<McpToolGateway>.Instance);
+        var gateway = new McpToolGateway(service, new McpServiceRegistry(), CreatePolicy(), StubWebSearch, CreateStubRagEnricher(), Microsoft.Extensions.Logging.Abstractions.NullLogger<McpToolGateway>.Instance);
 
         var result = await gateway.GetProductAsync("sz002594", "task-product", new StockCopilotMcpWindowOptions(1, 5));
 
@@ -118,7 +127,7 @@ public sealed class StockMcpGatewayPhaseATests
     [Fact]
     public async Task Gateway_ShouldDelegateToPhaseDTools()
     {
-        var gateway = new McpToolGateway(new RecordingStockCopilotMcpService(), new McpServiceRegistry(), CreatePolicy(), StubWebSearch, Microsoft.Extensions.Logging.Abstractions.NullLogger<McpToolGateway>.Instance);
+        var gateway = new McpToolGateway(new RecordingStockCopilotMcpService(), new McpServiceRegistry(), CreatePolicy(), StubWebSearch, CreateStubRagEnricher(), Microsoft.Extensions.Logging.Abstractions.NullLogger<McpToolGateway>.Instance);
 
         var marketContext = await gateway.GetMarketContextAsync("sh600000", "task-market-context");
         var socialSentiment = await gateway.GetSocialSentimentAsync("sh600000", "task-social-sentiment");
@@ -291,5 +300,10 @@ public sealed class StockMcpGatewayPhaseATests
 
         public WebSearchHealthStatus GetHealthStatus()
             => new("stub", false, false, false);
+    }
+
+    private sealed class StubHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
     }
 }
