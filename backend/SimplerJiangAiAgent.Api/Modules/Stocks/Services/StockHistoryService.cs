@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
@@ -78,7 +79,7 @@ public sealed class StockHistoryService : IStockHistoryService
         existing.Speed = speed;
         existing.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await DbRetryHelper.SaveChangesWithRetryAsync(_dbContext, ct: cancellationToken);
         return existing;
     }
 

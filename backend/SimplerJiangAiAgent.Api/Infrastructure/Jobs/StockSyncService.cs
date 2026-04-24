@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -65,7 +66,7 @@ public sealed class StockSyncService : IStockSyncService
         await UpsertCompanyProfileAsync(_dbContext, detail.Quote with { Symbol = symbol }, detail.FundamentalSnapshot, cancellationToken);
         await UpsertMessagesAsync(_dbContext, symbol, detail.Messages, cancellationToken);
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await DbRetryHelper.SaveChangesWithRetryAsync(_dbContext, ct: cancellationToken);
     }
 
     private static MarketIndexSnapshot MapMarket(MarketIndexDto dto)

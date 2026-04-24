@@ -78,7 +78,7 @@ else if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase) || provid
 {
     builder.Services.AddDbContext<AppDbContext>(options =>
         options.UseSqlite(connectionString)
-               .AddInterceptors(new SqliteBusyTimeoutInterceptor(5000)));
+               .AddInterceptors(new SqliteBusyTimeoutInterceptor(15000)));
 }
 else
 {
@@ -136,6 +136,15 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        context.Response.StatusCode = 500;
+        await context.Response.WriteAsJsonAsync(new { error = "Internal server error" });
+    });
+});
 
 app.UseHttpsRedirection();
 app.UseCors();
