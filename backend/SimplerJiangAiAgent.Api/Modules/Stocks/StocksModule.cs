@@ -653,6 +653,7 @@ public sealed class StocksModule : IModule
             string? to,
             IRetailHeatIndexService retailHeatService,
             IBackfillStatusTracker backfillStatusTracker,
+            IForumScrapingService forumScrapingService,
             IServiceProvider serviceProvider,
             CancellationToken ct) =>
         {
@@ -694,6 +695,40 @@ public sealed class StocksModule : IModule
             }
 
             var isBackfilling = backfillStatusTracker.IsBackfilling(result.Symbol);
+
+            // S1: 访问散户热度时自动加入自选股，确保后续自动采集
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = serviceProvider.CreateScope();
+                    var ws = scope.ServiceProvider.GetRequiredService<IActiveWatchlistService>();
+                    await ws.UpsertAsync(symbol.Trim(), null, "history");
+                }
+                catch { /* best-effort, don't block API response */ }
+            });
+
+            // S4: Auto-trigger today's collection if missing
+            var chinaToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+            if (chinaToday.DayOfWeek != DayOfWeek.Saturday && chinaToday.DayOfWeek != DayOfWeek.Sunday)
+            {
+                var todayStr = chinaToday.ToString("yyyy-MM-dd");
+                var hasTodayData = result.Data.Any(d => d.Date == todayStr && d.HasData);
+                if (!hasTodayData)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var scope = serviceProvider.CreateScope();
+                            var scraper = scope.ServiceProvider.GetRequiredService<IForumScrapingService>();
+                            await scraper.CollectSingleStockNowAsync(symbol.Trim(), CancellationToken.None);
+                        }
+                        catch { /* best-effort */ }
+                    });
+                }
+            }
+
             return Results.Ok(new { result.Symbol, result.Data, result.Latest, result.Description, Backfilling = isBackfilling });
         })
         .WithName("GetRetailHeatIndex")
@@ -733,6 +768,45 @@ public sealed class StocksModule : IModule
             return Results.Ok(new { message = "Backfill all completed" });
         })
         .WithName("BackfillAllRetailHeat")
+        .WithOpenApi();
+
+        // S2: Collection status endpoint
+        group.MapGet("/{symbol}/retail-heat/collection-status", async (
+            string symbol,
+            int? days,
+            IRetailHeatIndexService retailHeatService,
+            IActiveWatchlistService watchlistService,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            var status = await retailHeatService.GetCollectionStatusAsync(symbol, days ?? 30, ct);
+
+            var allWatchlist = await watchlistService.GetAllAsync(ct);
+            var normalizedSymbol = symbol.Trim();
+            var inWatchlist = allWatchlist.Any(w =>
+                w.Symbol.EndsWith(normalizedSymbol, StringComparison.OrdinalIgnoreCase) ||
+                normalizedSymbol.EndsWith(w.Symbol, StringComparison.OrdinalIgnoreCase));
+
+            return Results.Ok(status with { InWatchlist = inWatchlist });
+        })
+        .WithName("GetRetailHeatCollectionStatus")
+        .WithOpenApi();
+
+        // S3: Collect-now endpoint
+        group.MapPost("/{symbol}/retail-heat/collect-now", async (
+            string symbol,
+            IForumScrapingService forumScrapingService,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { message = "symbol 不能为空" });
+
+            var results = await forumScrapingService.CollectSingleStockNowAsync(symbol.Trim(), ct);
+            return Results.Ok(new { symbol = symbol.Trim(), results, collectedAt = DateTime.UtcNow });
+        })
+        .WithName("CollectRetailHeatNow")
         .WithOpenApi();
 
         group.MapGet("/mcp/kline", async (string symbol, string? interval, int? count, string? source, string? taskId, int? evidenceSkip, int? evidenceTake, IMcpToolGateway gateway, HttpContext httpContext) =>

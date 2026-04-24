@@ -7,6 +7,7 @@ public interface IForumScrapingService
 {
     Task ScrapeAsync(CancellationToken ct);
     Task InitialCollectAsync(CancellationToken ct);
+    Task<IReadOnlyList<SingleStockCollectResult>> CollectSingleStockNowAsync(string symbol, CancellationToken ct);
 }
 
 public sealed class ForumScrapingService : IForumScrapingService
@@ -168,6 +169,49 @@ public sealed class ForumScrapingService : IForumScrapingService
         }
 
         _logger.LogInformation("InitialCollect complete: {Success} succeeded, {Failed} failed", successCount, failCount);
+    }
+
+    public async Task<IReadOnlyList<SingleStockCollectResult>> CollectSingleStockNowAsync(string symbol, CancellationToken ct)
+    {
+        var chinaTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone);
+        var tradingDate = chinaTime.ToString("yyyy-MM-dd");
+        var sessionPhase = ResolveSessionPhase(chinaTime.TimeOfDay);
+
+        var scraperList = _scrapers.ToList();
+        var results = new List<SingleStockCollectResult>();
+
+        foreach (var scraper in scraperList)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var count = await scraper.GetPostCountAsync(symbol, ct);
+                if (count.HasValue)
+                {
+                    await UpsertPostCountAsync(symbol, scraper.Platform, tradingDate, sessionPhase, count.Value, ct);
+                    results.Add(new SingleStockCollectResult(scraper.Platform, true, count.Value, null));
+                }
+                else
+                {
+                    results.Add(new SingleStockCollectResult(scraper.Platform, false, null, "scraper returned null"));
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "CollectSingleStockNow failed: {Symbol} {Platform}", symbol, scraper.Platform);
+                results.Add(new SingleStockCollectResult(scraper.Platform, false, null, ex.Message));
+            }
+
+            // 反爬间隔
+            await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(2000, 4000)), ct);
+        }
+
+        _logger.LogInformation("CollectSingleStockNow: {Symbol}, results={Count}", symbol, results.Count);
+        return results;
     }
 
     private static string ResolveSessionPhase(TimeSpan timeOfDay)
