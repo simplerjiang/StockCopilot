@@ -20,6 +20,7 @@
 | v0.4.2 财报 RAG Lite | 2026-04-24 | 8/8 | 1147 tests, 0 fail | SQLite FTS5 / jieba 分词 / 三层切块 / BM25 检索 / REST API |
 | v0.4.3 | 2026-04-24 | S0–S9 全部 DONE | — | Hybrid Retrieval + AI 集成 |
 | v0.4.4 | 2026-04-24 | S0–S8 + HF-1 全部 DONE | 1158 tests, 0 fail | 推荐状态修复 / 情绪轮动恢复 / 基本面补全 / SQLite 稳定性 |
+| v0.4.5 | 2026-04-24 | S0–S5 全部 DONE | 1158 tests, 0 fail | 数值单位修复 / Worker 重启 / cninfo headers / 采集面板集成 |
 
 ---
 
@@ -33,26 +34,30 @@
 
 ---
 
-## v0.4.5 Sprint（数据质量与 Worker 稳定性）
+## v0.4.6 Sprint（多 Agent 路由与财报 RAG 闭环）
 
 ### Sprint 目标
-**修复财报数值单位不一致、cninfo 采集失败、Worker 自动关停问题，增加财报中心采集能力。**
+**让简单 prompt 自动路由到正确取证链路，子 Agent 真正接上财报 RAG，最终回答有可验证证据。**
 
-详细计划：[GOAL-v045-data-quality-and-worker-stability.md](../docs/GOAL-v045-data-quality-and-worker-stability.md)
+详细计划：[GOAL-v046-rag-agent-routing-evidence.md](../docs/GOAL-v046-rag-agent-routing-evidence.md)
 
-| Story | 来源 | 标题 | 分级 | 验收标准 | 状态 |
-|---|---|---|---|---|---|
-| S0 | Bug#1 | 财报数值单位审计与修复 | M | 同公司同年度不同渠道数值一致（<1%差异） | DONE |
-| S1 | Bug#5 | Worker 自动重启机制 | M | 异常退出 30s 内重启，连续失败 3 次告警 | DONE |
-| S2 | Bug#2 | cninfo PDF 采集修复 | M | PDF 下载成功率 ≥ 80% | DONE |
-| S3 | Bug#3 | 采集中心日期选择器修复 | S | 日期下拉可见可选 | DONE |
-| S4 | Bug#4 | 财报中心集成采集面板 | L | 财报中心可直接触发采集 | DONE |
-| S5 | — | 全链路验收 | S | dotnet test + vitest 全绿 + E2E 验证 | DONE |
+| Story | 标题 | 分级 | 验收标准 | 状态 |
+|---|---|---|---|---|
+| S0 | 问题意图分类器 | M | 10 个测试问题 ≥ 80% 正确分类 | TODO |
+| S1 | 路由决策表 | M | 路由覆盖所有意图类型 | TODO |
+| S2 | 注册财报 RAG 为 MCP 工具 | M | 子角色工具列表包含 SearchFinancialReport | TODO |
+| S3 | Research 子角色接入 RAG | M | Research 报告包含财报引用 | TODO |
+| S4 | Recommend 子流程接入 RAG | M | 推荐报告含财报 citation | TODO |
+| S5 | Evidence Pack 统一组装 | M | 3 条链路证据来源一致 | TODO |
+| S6 | 估值问题强制取证 | M | 估值回答含 ≥1 条财报引用 | TODO |
+| S7 | 结论格式标准化 | S | 输出含结论/依据/假设/引用 4 字段 | TODO |
+| S8 | 全链路验收 | S | tests 全绿 + 5 个 E2E 问题验证 | TODO |
 
 ---
 
 ## 历史归档
 
+- v0.4.5 数据质量与 Worker 稳定性 → 本看板"已完成 Sprint 摘要"
 - v0.4.4 产品质量修复 → 本看板"已完成 Sprint 摘要"
 - v0.4.2 RAG Lite → 本看板"已完成 Sprint 摘要"
 - v0.4.2N PDF 管线重构 → 本看板"已完成 Sprint 摘要"
