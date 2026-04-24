@@ -186,7 +186,7 @@ public sealed class McpToolGateway : IMcpToolGateway
     {
         EnsureSystemToolAccess(StockMcpToolNames.FinancialReportRag);
         return await ExecuteWithLoggingAsync(StockMcpToolNames.FinancialReportRag, symbol,
-            () => _ragContextEnricher.EnrichAsync(query, symbol, topK, cancellationToken));
+            () => _ragContextEnricher.EnrichAsync(query, symbol, topK, cancellationToken, sourceType: "financial_report"));
     }
 
     public async Task<List<RagCitationDto>> SearchAnnouncementRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)

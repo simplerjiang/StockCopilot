@@ -117,7 +117,8 @@ public class RagContextEnricher
             PageStart = r.PageStart,
             PageEnd = r.PageEnd,
             Text = r.Text,
-            Score = r.Score
+            Score = r.Score,
+            Source = sourceType == "announcement" ? "announcement-rag" : "financial-report-rag"
         }).ToList();
     }
 
