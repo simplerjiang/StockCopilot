@@ -53,6 +53,12 @@
 | S7 | 结论格式标准化 | S | 输出含结论/依据/假设/引用 4 字段 | DONE |
 | S8 | 全链路验收 | S | tests 全绿 + 5 个 E2E 问题验证 | DONE |
 
+### 验收记录
+- **一轮验收（User Rep）**：不通过 — LiveGate 返回计划草案而非真实分析
+- **P0-1 修复**：添加 SynthesizeAnalysisAsync 第二次 LLM 调用（commit `bf67a8c`）
+- **二轮验收（User Rep）**：通过 ✅ — B+ 评级，PE/PB/ROE 等真实数据，结构化分析
+- **遗留项**：FinancialTrendMcp LiveGate 适配、RAG 在部分场景失败、PE/PB 精确计算
+
 ---
 
 ## 历史归档
