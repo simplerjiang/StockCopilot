@@ -19,14 +19,13 @@
 | v0.4.2N PDF 管线重构 | 2026-04-24 | 8/8 | 1126 tests, 0 fail | 全文持久化 / 价格缩写 / 投票透明化 / cninfo 修复 |
 | v0.4.2 财报 RAG Lite | 2026-04-24 | 8/8 | 1147 tests, 0 fail | SQLite FTS5 / jieba 分词 / 三层切块 / BM25 检索 / REST API |
 | v0.4.3 | 2026-04-24 | S0–S9 全部 DONE | — | Hybrid Retrieval + AI 集成 |
+| v0.4.4 | 2026-04-24 | S0–S8 + HF-1 全部 DONE | 1158 tests, 0 fail | 推荐状态修复 / 情绪轮动恢复 / 基本面补全 / SQLite 稳定性 |
 
 ---
 
 ## Backlog（技术债）
 
-- ~~**V040-S6-FU-1**（高）：已在 v0.4.4 S6 修复。~~
-- ~~**V040-S6-FU-2**（高）：已在 v0.4.4 S7 修复。~~
-- **V040-S3-FU-1**（中）：渠道 Tag 配色不统一，需抽 `SOURCE_CHANNEL_STYLE` 全局 token。
+- ~~**V040-S3-FU-1**（中）：已在 v0.4.4 S5 修复。~~
 - **V040-DEBT-4**（候选）：`StockSearchService` 无排序无市场过滤。
 - **V041-DEBT-1**（中）：`FinancialDbContext` BsonMapper.Global 并发 race。
 - **V041-DEBT-2**（低）：Api vs Worker RuntimePaths 不一致。
@@ -34,28 +33,27 @@
 
 ---
 
-## v0.4.4 Sprint（产品质量修复）
+## v0.4.5 Sprint（数据质量与 Worker 稳定性）
 
 ### Sprint 目标
-**修复 P0/P1 产品 Bug + 高优技术债清理，提升产品可用性和数据准确性。**
+**修复财报数值单位不一致、cninfo 采集失败、Worker 自动关停问题，增加财报中心采集能力。**
+
+详细计划：[GOAL-v045-data-quality-and-worker-stability.md](../docs/GOAL-v045-data-quality-and-worker-stability.md)
 
 | Story | 来源 | 标题 | 分级 | 验收标准 | 状态 |
 |---|---|---|---|---|---|
-| S0 | V044-P0-A | Agent 推荐状态语义修复 | S | 失败/异常的推荐任务不标记为「完成」，显示正确的失败状态 | DONE |
-| S1 | V044-P0-B | 情绪轮动数据恢复 | M | 情绪轮动核心榜单有数据展示，不显示「数据不可用」 | DONE |
-| S2 | V044-P1-C | 股票详情基本面字段补全 | S | 股票详情页 3 个空字段有值显示 | DONE |
-| S3 | V044-P1-D | 主力净流入跨页数值一致性 | M | 列表页与详情页主力净流入数值一致 | DONE |
-| S4 | V044-P1-E | Worker 日志面板修复 | S | Worker 运行中时日志面板显示日志条目 | DONE |
-| S5 | V044-P1-F+NIT | UX 文案与样式统一 | S | 失败态按钮「再试一次」；渠道 Tag 统一；单位格式化；资讯英文翻译；加载态收敛 | DONE |
-| S6 | V040-S6-FU-1 | 财报毛利润补算 | S | 财报中心「毛利润」= 营业总收入 - 营业总成本，有值展示 | DONE |
-| S7 | V040-S6-FU-2 | 财报 keyword 搜索 | M | 搜索框按代码/名称模糊匹配，返回正确结果 | DONE |
-| S8 | — | 全链路验收 | S | dotnet test + vitest 全绿；浏览器验收关键页面 | DONE |
-| HF-1 | API 稳定性 | SQLite 并发写入崩溃修复 | S | busy_timeout 15s + DbRetryHelper + 全局异常处理 | DONE |
+| S0 | Bug#1 | 财报数值单位审计与修复 | M | 同公司同年度不同渠道数值一致（<1%差异） | TODO |
+| S1 | Bug#5 | Worker 自动重启机制 | M | 异常退出 30s 内重启，连续失败 3 次告警 | TODO |
+| S2 | Bug#2 | cninfo PDF 采集修复 | M | PDF 下载成功率 ≥ 80% | TODO |
+| S3 | Bug#3 | 采集中心日期选择器修复 | S | 日期下拉可见可选 | TODO |
+| S4 | Bug#4 | 财报中心集成采集面板 | L | 财报中心可直接触发采集 | TODO |
+| S5 | — | 全链路验收 | S | dotnet test + vitest 全绿 + E2E 验证 | TODO |
 
 ---
 
 ## 历史归档
 
+- v0.4.4 产品质量修复 → 本看板"已完成 Sprint 摘要"
 - v0.4.2 RAG Lite → 本看板"已完成 Sprint 摘要"
 - v0.4.2N PDF 管线重构 → 本看板"已完成 Sprint 摘要"
 - v0.4.2 必修 → 本看板"已完成 Sprint 摘要"
