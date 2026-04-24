@@ -355,6 +355,8 @@ const winRateClass = computed(() => {
   if (w < 0.4) return 'text-fall'
   return ''
 })
+// V048-S1 P0-2: 无交易时汇总字段不应渲染实数，返 null 让模板显示 "—"
+const hasSummaryTrades = computed(() => (state.summary?.totalTrades ?? 0) > 0)
 const exposureBarWidth = computed(() => `${Math.min(100, Math.max(0, (state.exposure?.combinedExposure ?? 0) * 100))}%`)
 const exposureBarClass = computed(() => (state.exposure?.combinedExposure ?? 0) > 0.8 ? 'bar-danger' : (state.exposure?.combinedExposure ?? 0) > 0.5 ? 'bar-warning' : 'bar-safe')
 const exposureBadgeClass = computed(() => (state.exposure?.combinedExposure ?? 0) > 0.8 ? 'badge-danger' : (state.exposure?.combinedExposure ?? 0) > 0.5 ? 'badge-warning' : 'badge-success')
@@ -1451,7 +1453,7 @@ onUnmounted(() => {
       <div class="behavior-header">
         <h4>🧘 交易健康度</h4>
         <span class="discipline-score" :class="disciplineScoreClass" title="满分100分。计划执行率<50%扣20分；连亏≥3笔扣15分；过度交易扣15分；追涨率>50%扣20分">
-          {{ state.behaviorStats.disciplineScore == null ? 'N/A' : state.behaviorStats.disciplineScore + ' 分' }}
+          {{ state.behaviorStats.disciplineScore == null ? '—' : state.behaviorStats.disciplineScore + ' 分' }}
         </span>
       </div>
       <div class="behavior-metrics">
@@ -1462,7 +1464,7 @@ onUnmounted(() => {
         <div class="behavior-metric">
           <span class="metric-label" title="有关联计划的交易占总交易的比例，越高越好">计划执行率</span>
           <span class="metric-value" :class="planRateClass">
-            {{ state.behaviorStats.planExecutionRate == null ? 'N/A' : formatPercent(state.behaviorStats.planExecutionRate) }}
+            {{ state.behaviorStats.planExecutionRate == null ? '—' : formatPercent(state.behaviorStats.planExecutionRate) }}
           </span>
         </div>
         <div class="behavior-metric">
@@ -1528,31 +1530,31 @@ onUnmounted(() => {
           <div class="summary-grid">
             <div class="summary-item">
               <span class="summary-label">总盈亏</span>
-              <span class="summary-value" :class="pnlClass(state.summary.totalPnL)">{{ formatPnL(state.summary.totalPnL) }}</span>
+              <span class="summary-value" :class="pnlClass(state.summary.totalPnL)">{{ hasSummaryTrades ? formatPnL(state.summary.totalPnL) : '—' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">胜率</span>
-              <span class="summary-value" :class="winRateClass">{{ formatPercent(state.summary.winRate) }}</span>
+              <span class="summary-value" :class="winRateClass">{{ hasSummaryTrades ? formatPercent(state.summary.winRate) : '—' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">盈亏比</span>
-              <span class="summary-value">{{ state.summary.profitLossRatio === -1 ? '全胜' : (state.summary.profitLossRatio?.toFixed(2) ?? '-') }}</span>
+              <span class="summary-value">{{ !hasSummaryTrades ? '—' : (state.summary.profitLossRatio === -1 ? '全胜' : (state.summary.profitLossRatio == null ? '—' : state.summary.profitLossRatio.toFixed(2))) }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">做T盈亏</span>
-              <span class="summary-value" :class="pnlClass(state.summary.dayTradePnL)">{{ formatPnL(state.summary.dayTradePnL) }}</span>
+              <span class="summary-value" :class="pnlClass(state.summary.dayTradePnL)">{{ hasSummaryTrades ? formatPnL(state.summary.dayTradePnL) : '—' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">计划执行率</span>
-              <span class="summary-value">{{ formatPercent(state.summary.plannedTradeCount / Math.max(1, state.summary.totalTrades)) }}</span>
+              <span class="summary-value">{{ state.behaviorStats?.planExecutionRate == null ? '—' : formatPercent(state.behaviorStats.planExecutionRate) }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Agent遵守率</span>
-              <span class="summary-value">{{ formatPercent(state.summary.complianceRate) }}</span>
+              <span class="summary-value">{{ !hasSummaryTrades || state.summary.complianceRate == null ? '—' : formatPercent(state.summary.complianceRate) }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">最大单笔亏损</span>
-              <span class="summary-value text-fall">{{ formatPnL(state.summary.maxSingleLoss) }}</span>
+              <span class="summary-value text-fall">{{ !hasSummaryTrades || state.summary.maxSingleLoss == null || state.summary.maxSingleLoss === 0 ? '—' : formatPnL(state.summary.maxSingleLoss) }}</span>
             </div>
           </div>
         </div>

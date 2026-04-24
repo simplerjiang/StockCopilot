@@ -9,6 +9,9 @@ public sealed class StockSearchService : IStockSearchService
     private static readonly Regex QuoteRegex = new("\"(?<payload>.*)\"", RegexOptions.Compiled);
     private static readonly Regex CodeRegex = new(@"(?<code>\d{6})", RegexOptions.Compiled);
     private static readonly Regex SymbolRegex = new(@"(?<symbol>(sh|sz)\d{6})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // V048-S1 P0-4：支持带市场前缀的查询（sh/sz/bj/hk/us.），归一后再送上游
+    private static readonly Regex PrefixedSymbolRegex = new(@"^(?<prefix>sh|sz|bj|hk)(?<code>\d{6})$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex UsPrefixedRegex = new(@"^us\.(?<ticker>[A-Za-z0-9\.\-]+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly HttpClient _httpClient;
 
     public StockSearchService(HttpClient httpClient)
@@ -23,7 +26,12 @@ public sealed class StockSearchService : IStockSearchService
             return Array.Empty<StockSearchResultDto>();
         }
 
-        var url = $"https://smartbox.gtimg.cn/s3/?q={Uri.EscapeDataString(query.Trim())}&t=all";
+        // V048-S1 P0-4：归一带市场前缀的查询——上游 Tencent smartbox 不识别 sh/sz 前缀，需要 strip 后再送
+        var trimmedQuery = query.Trim();
+        var upstreamQuery = StripMarketPrefix(trimmedQuery);
+        var preferredSymbol = trimmedQuery != upstreamQuery ? StockSymbolNormalizer.Normalize(trimmedQuery) : null;
+
+        var url = $"https://smartbox.gtimg.cn/s3/?q={Uri.EscapeDataString(upstreamQuery)}&t=all";
         var bytes = await _httpClient.GetByteArrayAsync(url, cancellationToken);
         var raw = DecodeContent(bytes);
         var payload = ExtractPayload(raw);
@@ -74,7 +82,45 @@ public sealed class StockSearchService : IStockSearchService
             }
         }
 
+        // V048-S1 P0-4：当查询带市场前缀时，把完全匹配的 symbol 置顶
+        if (preferredSymbol is not null && results.Count > 0)
+        {
+            var preferred = results
+                .Where(r => string.Equals(r.Symbol, preferredSymbol, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (preferred.Count > 0)
+            {
+                var others = results.Where(r => !string.Equals(r.Symbol, preferredSymbol, StringComparison.OrdinalIgnoreCase));
+                results = preferred.Concat(others).ToList();
+            }
+        }
+
         return results;
+    }
+
+    /// <summary>
+    /// V048-S1 P0-4：strip 市场前缀（sh/sz/bj/hk/us.），这样 Tencent smartbox 才能匹配到个股。
+    /// </summary>
+    private static string StripMarketPrefix(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return query;
+        }
+
+        var m = PrefixedSymbolRegex.Match(query);
+        if (m.Success)
+        {
+            return m.Groups["code"].Value;
+        }
+
+        var um = UsPrefixedRegex.Match(query);
+        if (um.Success)
+        {
+            return um.Groups["ticker"].Value;
+        }
+
+        return query;
     }
 
     private static string ExtractPayload(string raw)

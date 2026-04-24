@@ -37,10 +37,13 @@ public sealed class PortfolioSnapshotService : IPortfolioSnapshotService
         var totalMarketValue = positions.Sum(GetMarketValueOrCost);
         var totalUnrealizedPnL = positions.Sum(p => p.UnrealizedPnL ?? 0);
         // V048-S1 #89: availableCash = totalCapital - Σ(持仓成本) + Σ(已实现盈亏)
-        var realizedPnL = await _db.TradeExecutions
+        // SQLite 不支持 decimal 聚合 (SumAsync)，需要先 materialize 再在内存里 Sum
+        var realizedPnLs = await _db.TradeExecutions
             .AsNoTracking()
             .Where(t => t.Direction == TradeDirection.Sell && t.RealizedPnL != null)
-            .SumAsync(t => (decimal?)t.RealizedPnL) ?? 0m;
+            .Select(t => t.RealizedPnL)
+            .ToListAsync();
+        var realizedPnL = realizedPnLs.Sum(v => v ?? 0m);
         var availableCash = totalCapital - totalCost + realizedPnL;
         var totalPositionRatio = totalCapital > 0 ? totalCost / totalCapital : 0;
 
