@@ -63,7 +63,8 @@ public sealed class StockCopilotLiveGateServiceTests
         Assert.True(
             result.Prompt.IndexOf("question=看下浦发银行的本地新闻证据", StringComparison.Ordinal)
             < result.Prompt.IndexOf("工具注册表：", StringComparison.Ordinal));
-        Assert.Equal(LlmResponseFormats.Json, llm.LastRequest?.ResponseFormat);
+        Assert.Equal(LlmResponseFormats.Json, llm.Requests[0].ResponseFormat); // planner call
+        Assert.Null(llm.Requests[1].ResponseFormat); // synthesis call is free-text
     }
 
     [Fact]
@@ -105,9 +106,10 @@ public sealed class StockCopilotLiveGateServiceTests
         var turn = Assert.Single(result.Session.Turns);
         Assert.Equal("done", turn.FinalAnswer.Status);
         Assert.Single(turn.ToolResults);
-        Assert.Equal(2, llm.CallCount);
+        Assert.Equal(3, llm.CallCount); // initial + repair + synthesis
         Assert.Equal("llm-trace-repair", result.LlmTraceId);
-        Assert.All(llm.Requests, request => Assert.Equal(LlmResponseFormats.Json, request.ResponseFormat));
+        Assert.All(llm.Requests.Take(2), request => Assert.Equal(LlmResponseFormats.Json, request.ResponseFormat));
+        Assert.Null(llm.Requests[2].ResponseFormat); // synthesis call is free-text
         Assert.Contains("上次输出不是有效 JSON，现在只做一次 JSON repair。", llm.Requests[1].Prompt, StringComparison.Ordinal);
         Assert.Contains("必须字段：plannerSummary, governorSummary, finalAnswerDraft, toolCalls", llm.Requests[1].Prompt, StringComparison.Ordinal);
         Assert.Contains("上一次无效输出片段：", llm.Requests[1].Prompt, StringComparison.Ordinal);

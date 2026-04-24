@@ -77,11 +77,12 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         var prompt = BuildPrompt(normalizedSymbol, trimmedQuestion, request.AllowExternalSearch, marketContext, checklist);
 
         var intent = await intentTask;
+        string? evidenceContext = null;
         if (intent.RequiresRag || intent.RequiresFinancialData)
         {
             var evidencePack = await _evidencePackBuilder.BuildAsync(
                 normalizedSymbol, trimmedQuestion, intent.Type, cancellationToken);
-            var evidenceContext = _evidencePackBuilder.FormatAsPromptContext(evidencePack);
+            evidenceContext = _evidencePackBuilder.FormatAsPromptContext(evidencePack);
             var conclusionConstraint = BuildStructuredConclusionConstraint(intent.Type);
             if (!string.IsNullOrWhiteSpace(evidenceContext))
             {
@@ -128,8 +129,26 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         var validation = ValidateToolCalls(parsedPlan.ToolCalls, normalizedSymbol, trimmedQuestion, request.AllowExternalSearch);
         var execution = await ExecuteApprovedToolsAsync(normalizedSymbol, trimmedQuestion, request.TaskId, validation.ApprovedCalls, cancellationToken);
 
+        string finalAnswerText;
+        if (execution.ToolResults.Any(t => string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase)))
+        {
+            finalAnswerText = await SynthesizeAnalysisAsync(
+                provider,
+                request.Model,
+                normalizedSymbol,
+                trimmedQuestion,
+                parsedPlan.FinalAnswerDraft,
+                execution.ToolResults,
+                evidenceContext,
+                cancellationToken);
+        }
+        else
+        {
+            finalAnswerText = parsedPlan.FinalAnswerDraft;
+        }
+
         var finalAnswer = BuildFinalAnswer(
-            parsedPlan.FinalAnswerDraft,
+            finalAnswerText,
             llmTraceId,
             execution.ToolResults,
             validation.RejectedCalls,
@@ -189,6 +208,74 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             prompt,
             rawModelResponse,
             validation.RejectedCalls);
+    }
+
+    private async Task<string> SynthesizeAnalysisAsync(
+        string provider,
+        string? model,
+        string symbol,
+        string question,
+        string plannerDraft,
+        IReadOnlyList<StockCopilotToolResultDto> toolResults,
+        string? evidenceContext,
+        CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("你是一个专业的股票分析师。基于以下工具执行结果，为用户提供深度分析。");
+        sb.AppendLine($"\n## 目标股票: {symbol}");
+        sb.AppendLine($"## 用户问题: {question}");
+
+        if (!string.IsNullOrWhiteSpace(evidenceContext))
+        {
+            sb.AppendLine(evidenceContext);
+        }
+
+        sb.AppendLine("\n## 工具执行结果:");
+        foreach (var tool in toolResults.Where(t => string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase)))
+        {
+            sb.AppendLine($"\n### [{tool.ToolName}]");
+            if (tool.EvidenceCount > 0 && tool.Evidence?.Count > 0)
+            {
+                foreach (var ev in tool.Evidence.Take(10))
+                {
+                    sb.AppendLine($"- {ev.Point}");
+                    if (!string.IsNullOrWhiteSpace(ev.Excerpt))
+                        sb.AppendLine($"  摘要: {ev.Excerpt}");
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(tool.Summary))
+                sb.AppendLine($"工具摘要: {tool.Summary}");
+        }
+
+        if (evidenceContext?.Contains("输出格式要求") == true)
+        {
+            sb.AppendLine("\n请严格按照以下格式输出：");
+            sb.AppendLine("### 结论\n简明扼要的核心判断。");
+            sb.AppendLine("### 依据\n支撑结论的关键数据点，引用上方工具数据。");
+            sb.AppendLine("### 假设\n结论成立的前提条件。");
+            sb.AppendLine("### 引用来源\n列出所有引用的数据来源。");
+        }
+        else
+        {
+            sb.AppendLine("\n请基于以上数据提供深度分析，直接回答用户的问题。分析必须基于实际数据，不要凭空推测。");
+        }
+
+        var request = new LlmChatRequest(
+            sb.ToString(),
+            model,
+            Temperature: 0.3f,
+            TraceId: $"live-gate-synthesis-{symbol}",
+            MaxOutputTokens: 2048);
+
+        try
+        {
+            var result = await _llmService.ChatAsync(provider, request, ct);
+            return result?.Content ?? plannerDraft;
+        }
+        catch
+        {
+            return plannerDraft;
+        }
     }
 
     private async Task<(JsonElement? PlanJson, string RawResponse, string TraceId, string? ParseError)> RequestPlanWithRepairAsync(
