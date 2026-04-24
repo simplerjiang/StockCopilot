@@ -82,15 +82,16 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             var evidencePack = await _evidencePackBuilder.BuildAsync(
                 normalizedSymbol, trimmedQuestion, intent.Type, cancellationToken);
             var evidenceContext = _evidencePackBuilder.FormatAsPromptContext(evidencePack);
+            var conclusionConstraint = BuildStructuredConclusionConstraint(intent.Type);
             if (!string.IsNullOrWhiteSpace(evidenceContext))
             {
-                prompt = InjectEvidenceIntoPrompt(prompt, evidenceContext);
+                prompt = InjectEvidenceIntoPrompt(prompt, evidenceContext + conclusionConstraint);
             }
             else if (intent.Type is IntentType.Valuation or IntentType.Risk or IntentType.FinancialAnalysis)
             {
                 prompt = InjectEvidenceIntoPrompt(prompt,
                     "\n[系统提示：该问题需要财报数据支撑，但当前没有找到相关财报证据。" +
-                    "请在回答中明确说明缺少财报依据，建议用户先采集该股票的财报数据。]\n");
+                    "请在回答中明确说明缺少财报依据，建议用户先采集该股票的财报数据。]\n" + conclusionConstraint);
             }
         }
 
@@ -1121,6 +1122,34 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         return items.Length == 0 ? null : items;
+    }
+
+    private static string BuildStructuredConclusionConstraint(IntentType intentType)
+    {
+        if (intentType is not (IntentType.Valuation or IntentType.Risk
+            or IntentType.FinancialAnalysis or IntentType.PerformanceAttribution))
+            return "";
+
+        return """
+
+=== 输出格式要求 ===
+由于本次问题涉及财务分析，finalAnswerDraft 必须包含以下四个结构化段落（用 markdown 标题分隔）：
+
+### 结论
+简明扼要的核心判断（1-2句话）。
+
+### 依据
+支撑结论的关键数据点和事实，必须引用上方提供的财报证据或工具数据。每条依据标注来源。
+
+### 假设
+结论成立的前提条件。如果前提变化，结论可能失效。
+
+### 引用来源
+列出所有引用的数据来源（财报期间、数据源、工具名称）。
+
+如果上方没有提供足够的财报证据，在"依据"部分明确说明数据不足，不要编造数据。
+=== 格式要求结束 ===
+""";
     }
 
     private static string InjectEvidenceIntoPrompt(string prompt, string evidenceContext)

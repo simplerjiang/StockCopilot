@@ -105,6 +105,30 @@ public class QuestionIntentClassifierRuleTests
         Assert.Equal(SuggestedPipeline.Research, intent.Pipeline);
     }
 
+    [Theory]
+    [InlineData(IntentType.Valuation, true)]
+    [InlineData(IntentType.Risk, true)]
+    [InlineData(IntentType.FinancialAnalysis, true)]
+    [InlineData(IntentType.PerformanceAttribution, true)]
+    [InlineData(IntentType.TechnicalAnalysis, false)]
+    [InlineData(IntentType.MarketOverview, false)]
+    [InlineData(IntentType.StockPicking, false)]
+    [InlineData(IntentType.General, false)]
+    public void StructuredConclusionConstraint_AppliesToFinancialIntentsOnly(IntentType type, bool expectConstraint)
+    {
+        var rule = IntentRoutingTable.GetRule(type);
+        if (expectConstraint)
+        {
+            Assert.True(rule.RequiresRag || rule.RequiresFinancialData,
+                $"{type} should require evidence for structured conclusion");
+        }
+        else
+        {
+            Assert.False(rule.RequiresRag && rule.RequiresFinancialData,
+                $"{type} should not require both RAG and financial data");
+        }
+    }
+
     private static QuestionIntentClassifier CreateClassifier()
     {
         var loggerFactory = LoggerFactory.Create(_ => { });
