@@ -40,10 +40,6 @@ public sealed class ForumScrapingService : IForumScrapingService
             return;
         }
 
-        var chinaTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone);
-        var tradingDate = chinaTime.ToString("yyyy-MM-dd");
-        var sessionPhase = ResolveSessionPhase(chinaTime.TimeOfDay);
-
         var scraperList = _scrapers.ToList();
         var successCount = 0;
         var failCount = 0;
@@ -56,16 +52,20 @@ public sealed class ForumScrapingService : IForumScrapingService
 
                 try
                 {
-                    var count = await ScrapeWithRetryAsync(scraper, stock.Symbol, 3, ct);
-                    if (count.HasValue)
+                    var dailyCounts = await ScrapeWithRetryBreakdownAsync(scraper, stock.Symbol, 3, 3, ct);
+                    if (dailyCounts.Count > 0)
                     {
-                        await UpsertPostCountAsync(stock.Symbol, scraper.Platform, tradingDate, sessionPhase, count.Value, ct);
+                        foreach (var (date, count) in dailyCounts)
+                        {
+                            await UpsertPostCountAsync(stock.Symbol, scraper.Platform,
+                                date.ToString("yyyy-MM-dd"), "post_market", count, ct);
+                        }
                         successCount++;
                     }
                     else
                     {
                         failCount++;
-                        _logger.LogWarning("论坛帖子采集最终失败: {Symbol} {Platform} (3次重试均失败)", stock.Symbol, scraper.Platform);
+                        _logger.LogWarning("论坛帖子采集最终失败: {Symbol} {Platform} (返回空)", stock.Symbol, scraper.Platform);
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -75,7 +75,7 @@ public sealed class ForumScrapingService : IForumScrapingService
                 catch (Exception ex)
                 {
                     failCount++;
-                    _logger.LogWarning(ex, "论坛帖子采集异常: {Symbol} {Platform} (重试耗尽)", stock.Symbol, scraper.Platform);
+                    _logger.LogWarning(ex, "论坛帖子采集异常: {Symbol} {Platform}", stock.Symbol, scraper.Platform);
                 }
 
                 // Random delay 3-5 seconds between requests
@@ -84,8 +84,8 @@ public sealed class ForumScrapingService : IForumScrapingService
         }
 
         _logger.LogInformation(
-            "论坛帖子采集完成: 股票数={StockCount}, 成功={Success}, 失败={Fail}, 阶段={Phase}",
-            symbols.Count, successCount, failCount, sessionPhase);
+            "论坛帖子采集完成: 股票数={StockCount}, 成功={Success}, 失败={Fail}",
+            symbols.Count, successCount, failCount);
     }
 
     private async Task UpsertPostCountAsync(
@@ -131,10 +131,6 @@ public sealed class ForumScrapingService : IForumScrapingService
 
         _logger.LogInformation("首次采集建立基准线，后续每日采集将自动计算增量: {StockCount} stocks", stocks.Count);
 
-        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
-            DateTime.UtcNow, ChinaTimeZone));
-        var tradingDate = today.ToString("yyyy-MM-dd");
-
         var scraperList = _scrapers.ToList();
         int successCount = 0, failCount = 0;
 
@@ -146,22 +142,25 @@ public sealed class ForumScrapingService : IForumScrapingService
             {
                 try
                 {
-                    var count = await ScrapeWithRetryAsync(scraper, stock.Symbol, 3, ct);
-                    if (count.HasValue)
+                    var dailyCounts = await ScrapeWithRetryBreakdownAsync(scraper, stock.Symbol, 3, 3, ct);
+                    if (dailyCounts.Count > 0)
                     {
-                        await UpsertPostCountAsync(stock.Symbol, scraper.Platform, tradingDate,
-                            "post_market", count.Value, ct);
+                        foreach (var (date, count) in dailyCounts)
+                        {
+                            await UpsertPostCountAsync(stock.Symbol, scraper.Platform,
+                                date.ToString("yyyy-MM-dd"), "post_market", count, ct);
+                        }
                         successCount++;
                     }
                     else
                     {
                         failCount++;
-                        _logger.LogWarning("InitialCollect最终失败: {Symbol} {Platform} (3次重试均失败)", stock.Symbol, scraper.Platform);
+                        _logger.LogWarning("InitialCollect最终失败: {Symbol} {Platform} (返回空)", stock.Symbol, scraper.Platform);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "InitialCollect failed for {Symbol} on {Platform} (重试耗尽)", stock.Symbol, scraper.Platform);
+                    _logger.LogWarning(ex, "InitialCollect failed for {Symbol} on {Platform}", stock.Symbol, scraper.Platform);
                     failCount++;
                 }
 
@@ -175,10 +174,6 @@ public sealed class ForumScrapingService : IForumScrapingService
 
     public async Task<IReadOnlyList<SingleStockCollectResult>> CollectSingleStockNowAsync(string symbol, CancellationToken ct)
     {
-        var chinaTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone);
-        var tradingDate = chinaTime.ToString("yyyy-MM-dd");
-        var sessionPhase = ResolveSessionPhase(chinaTime.TimeOfDay);
-
         var scraperList = _scrapers.ToList();
         var results = new List<SingleStockCollectResult>();
 
@@ -187,15 +182,20 @@ public sealed class ForumScrapingService : IForumScrapingService
             ct.ThrowIfCancellationRequested();
             try
             {
-                var count = await ScrapeWithRetryAsync(scraper, symbol, 3, ct);
-                if (count.HasValue)
+                var dailyCounts = await ScrapeWithRetryBreakdownAsync(scraper, symbol, 3, 3, ct);
+                if (dailyCounts.Count > 0)
                 {
-                    await UpsertPostCountAsync(symbol, scraper.Platform, tradingDate, sessionPhase, count.Value, ct);
-                    results.Add(new SingleStockCollectResult(scraper.Platform, true, count.Value, null));
+                    foreach (var (date, count) in dailyCounts)
+                    {
+                        await UpsertPostCountAsync(symbol, scraper.Platform,
+                            date.ToString("yyyy-MM-dd"), "post_market", count, ct);
+                    }
+                    var totalPosts = dailyCounts.Values.Sum();
+                    results.Add(new SingleStockCollectResult(scraper.Platform, true, totalPosts, null));
                 }
                 else
                 {
-                    results.Add(new SingleStockCollectResult(scraper.Platform, false, null, "scraper returned null after 3 retries"));
+                    results.Add(new SingleStockCollectResult(scraper.Platform, false, null, "scraper returned empty"));
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -285,6 +285,40 @@ public sealed class ForumScrapingService : IForumScrapingService
         }
 
         return null; // All retries exhausted
+    }
+
+    private async Task<Dictionary<DateOnly, int>> ScrapeWithRetryBreakdownAsync(
+        IForumPostCountScraper scraper, string symbol, int maxPages, int maxRetries, CancellationToken ct)
+    {
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var result = await scraper.GetDailyBreakdownAsync(symbol, maxPages, ct);
+                if (result.Count > 0)
+                    return result;
+
+                if (attempt < maxRetries)
+                {
+                    _logger.LogDebug("论坛帖子采集(按日)重试: {Symbol} {Platform} 第{Attempt}/{Max}次 (返回空)",
+                        symbol, scraper.Platform, attempt, maxRetries);
+                    await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(5000, 10000)), ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                if (attempt < maxRetries)
+                {
+                    _logger.LogDebug(ex, "论坛帖子采集(按日)重试: {Symbol} {Platform} 第{Attempt}/{Max}次",
+                        symbol, scraper.Platform, attempt, maxRetries);
+                    await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(5000, 10000)), ct);
+                }
+                else throw;
+            }
+        }
+        return new Dictionary<DateOnly, int>();
     }
 
     private static TimeZoneInfo ResolveChinaTimeZone()

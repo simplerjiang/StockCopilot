@@ -122,4 +122,66 @@ public sealed partial class SinaGubaScraper : IForumPostCountScraper
 
     [GeneratedRegex(@"totalcount[""']?\s*[:=]\s*[""']?(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex TotalCountRegex();
+
+    [GeneratedRegex(@"<td>\s*(\d{2})月(\d{2})日\s*</td>")]
+    private static partial Regex SinaDateRegex();
+
+    public async Task<Dictionary<DateOnly, int>> GetDailyBreakdownAsync(string symbol, int maxPages, CancellationToken ct)
+    {
+        var prefixed = NormalizeToPrefixed(symbol);
+        if (string.IsNullOrEmpty(prefixed))
+            return new Dictionary<DateOnly, int>();
+
+        var dailyCounts = new Dictionary<DateOnly, int>();
+        using var client = _httpClientFactory.CreateClient("SinaGuba");
+        var chinaToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+
+        for (var page = 1; page <= maxPages; page++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var url = $"https://guba.sina.com.cn/?s=bar&name={prefixed}&page={page}";
+                var response = await client.GetAsync(url, ct);
+                response.EnsureSuccessStatusCode();
+
+                var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                var html = Encoding.GetEncoding("gbk").GetString(bytes);
+
+                // Parse dates: <td>04月13日</td>
+                var dateMatches = SinaDateRegex().Matches(html);
+                if (dateMatches.Count == 0) break;
+
+                foreach (Match m in dateMatches)
+                {
+                    if (int.TryParse(m.Groups[1].Value, out var month) && int.TryParse(m.Groups[2].Value, out var day))
+                    {
+                        // Year inference
+                        var year = chinaToday.Year;
+                        if (month > chinaToday.Month || (month == chinaToday.Month && day > chinaToday.Day))
+                            year--;
+
+                        try
+                        {
+                            var date = new DateOnly(year, month, day);
+                            dailyCounts.TryGetValue(date, out var existing);
+                            dailyCounts[date] = existing + 1;
+                        }
+                        catch { /* invalid date */ }
+                    }
+                }
+
+                if (page < maxPages)
+                    await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(1000, 2000)), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "新浪股吧 GetDailyBreakdown page {Page} failed: {Symbol}", page, symbol);
+                break;
+            }
+        }
+
+        return dailyCounts;
+    }
 }
