@@ -143,4 +143,50 @@ public sealed partial class TaogubaScraper : IForumPostCountScraper
             return TimeZoneInfo.CreateCustomTimeZone("China Standard Time", TimeSpan.FromHours(8), "China Standard Time", "China Standard Time");
         }
     }
+
+    public async Task<Dictionary<DateOnly, int>> GetDailyBreakdownAsync(string symbol, int maxPages, CancellationToken ct)
+    {
+        var prefixed = SinaGubaScraper.NormalizeToPrefixed(symbol);
+        if (string.IsNullOrEmpty(prefixed))
+            return new Dictionary<DateOnly, int>();
+
+        var dailyCounts = new Dictionary<DateOnly, int>();
+        using var client = _httpClientFactory.CreateClient("TaogubaGuba");
+
+        // Taoguba: typically only 1 page works, but try up to maxPages
+        for (var page = 1; page <= Math.Min(maxPages, 5); page++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var url = page == 1
+                    ? $"https://www.taoguba.com.cn/quotes/{prefixed}"
+                    : $"https://www.taoguba.com.cn/quotes/{prefixed}?pageNo={page}";
+
+                var html = await client.GetStringAsync(url, ct);
+                var dateMatches = PostDateRegex().Matches(html);
+                if (dateMatches.Count == 0) break;
+
+                foreach (Match m in dateMatches)
+                {
+                    if (DateOnly.TryParse(m.Groups[1].Value, out var date))
+                    {
+                        dailyCounts.TryGetValue(date, out var existing);
+                        dailyCounts[date] = existing + 1;
+                    }
+                }
+
+                if (page < maxPages)
+                    await Task.Delay(TimeSpan.FromMilliseconds(Random.Shared.Next(1000, 2000)), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "淘股吧 GetDailyBreakdown page {Page} failed: {Symbol}", page, symbol);
+                break;
+            }
+        }
+
+        return dailyCounts;
+    }
 }

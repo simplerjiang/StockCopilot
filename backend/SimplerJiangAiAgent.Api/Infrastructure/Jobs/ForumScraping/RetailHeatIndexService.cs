@@ -45,38 +45,17 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
                 "暂无散户论坛数据");
         }
 
-        // 按平台分组，每天取最新一条（按 CollectedAt DESC 已去重），计算相邻日增量
-        var platformGroups = rawRecords
-            .GroupBy(r => r.Platform)
-            .ToDictionary(g => g.Key, g => g.OrderBy(r => r.TradingDate).ToList());
-
-        var dailyDeltas = new SortedDictionary<string, (int DeltaSum, int PlatformCount)>();
-
-        foreach (var (platform, records) in platformGroups)
-        {
-            for (var i = 1; i < records.Count; i++)
-            {
-                var delta = records[i].PostCount - records[i - 1].PostCount;
-                if (delta < 0) delta = 0; // 异常重置时取 0
-
-                var date = records[i].TradingDate;
-                if (dailyDeltas.TryGetValue(date, out var existing))
-                    dailyDeltas[date] = (existing.DeltaSum + delta, existing.PlatformCount + 1);
-                else
-                    dailyDeltas[date] = (delta, 1);
-            }
-        }
-
-        // 汇总各平台原始 PostCount 用于直接展示
+        // 按日期汇总各平台的每日帖子数（PostCount 现在直接是当日发帖数）
+        var dailySums = new SortedDictionary<string, (int TotalCount, int PlatformCount)>();
         var datesWithData = new HashSet<string>();
-        var dailyPostCounts = new Dictionary<string, int>();
+
         foreach (var row in rawRecords)
         {
             datesWithData.Add(row.TradingDate);
-            if (dailyPostCounts.TryGetValue(row.TradingDate, out var existing))
-                dailyPostCounts[row.TradingDate] = existing + row.PostCount;
+            if (dailySums.TryGetValue(row.TradingDate, out var existing))
+                dailySums[row.TradingDate] = (existing.TotalCount + row.PostCount, existing.PlatformCount + 1);
             else
-                dailyPostCounts[row.TradingDate] = row.PostCount;
+                dailySums[row.TradingDate] = (row.PostCount, 1);
         }
 
         // 补零：确保从 extendedStart 到 endDate 之间每个工作日都有数据点
@@ -88,16 +67,16 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
                 if (current.DayOfWeek != DayOfWeek.Saturday && current.DayOfWeek != DayOfWeek.Sunday)
                 {
                     var dateStr = current.ToString("yyyy-MM-dd");
-                    if (!dailyDeltas.ContainsKey(dateStr))
+                    if (!dailySums.ContainsKey(dateStr))
                     {
-                        dailyDeltas[dateStr] = (0, 0);
+                        dailySums[dateStr] = (0, 0);
                     }
                 }
                 current = current.AddDays(1);
             }
         }
 
-        if (dailyDeltas.Count == 0)
+        if (dailySums.Count == 0)
         {
             return new RetailHeatTimeSeriesDto(
                 normalizedSymbol,
@@ -107,14 +86,14 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
         }
 
         // 计算 MA20 和 HeatRatio
-        var allDates = dailyDeltas.Keys.ToList();
+        var allDates = dailySums.Keys.ToList();
         var dataPoints = new List<RetailHeatDataPointDto>();
         var fromStr = startDate.ToString("yyyy-MM-dd");
 
         for (var i = 0; i < allDates.Count; i++)
         {
             var date = allDates[i];
-            var (deltaSum, platformCount) = dailyDeltas[date];
+            var (totalCount, platformCount) = dailySums[date];
 
             // MA20 窗口
             var windowStart = Math.Max(0, i - 19);
@@ -122,20 +101,20 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
             var windowCount = 0;
             for (var j = windowStart; j <= i; j++)
             {
-                ma20Sum += dailyDeltas[allDates[j]].DeltaSum;
+                ma20Sum += dailySums[allDates[j]].TotalCount;
                 windowCount++;
             }
             var ma20 = windowCount > 0 ? ma20Sum / windowCount : 0;
 
-            var heatRatio = ma20 > 0 ? deltaSum / ma20 : 0;
+            var heatRatio = ma20 > 0 ? totalCount / ma20 : 0;
             var signal = ClassifySignal(heatRatio);
 
             // 只输出请求范围内的数据
             if (string.Compare(date, fromStr, StringComparison.Ordinal) >= 0)
             {
                 dataPoints.Add(new RetailHeatDataPointDto(
-                    date, deltaSum, Math.Round(ma20, 1), Math.Round(heatRatio, 2), signal, platformCount,
-                    dailyPostCounts.GetValueOrDefault(date, 0),
+                    date, totalCount, Math.Round(ma20, 1), Math.Round(heatRatio, 2), signal, platformCount,
+                    dailySums.GetValueOrDefault(date).TotalCount,
                     datesWithData.Contains(date)));
             }
         }
