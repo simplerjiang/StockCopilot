@@ -22,6 +22,7 @@
 | v0.4.4 | 2026-04-24 | S0–S8 + HF-1 全部 DONE | 1158 tests, 0 fail | 推荐状态修复 / 情绪轮动恢复 / 基本面补全 / SQLite 稳定性 |
 | v0.4.5 | 2026-04-24 | S0–S5 全部 DONE | 1158 tests, 0 fail | 数值单位修复 / Worker 重启 / cninfo headers / 采集面板集成 |
 | v0.4.6 | 2026-04-24 | S0–S8 + HF-1 + HF-2 全部 DONE | — | 多 Agent 路由 / 财报 RAG 闭环 / LiveGate 合成 / 散户热度图表 / cninfo 修复 / 论坛重试 |
+| v0.4.7 | 2026-04-24 | S1–S5 全部 DONE | 768+466 tests, 0 fail | AI 分析 JSON 修复 / 公告 PDF 爬取+RAG / MCP 注册 |
 
 ---
 
@@ -71,11 +72,18 @@
 
 | Story | 标题 | 分级 | 验收标准 | 状态 |
 |---|---|---|---|---|
-| S1 | AI 分析 JSON 渲染修复 | S | AI 分析页面不再直接输出原始 JSON，嵌套 JSON 也能正确转义渲染 | TODO |
-| S2 | 东方财富公告 PDF 爬取 | M | 盘中消息带中"东方财富网公告"的 PDF 能自动下载入库 | TODO |
-| S3 | 公告 PDF RAG 入库 | M | 下载的公告 PDF 经过 embedding 进入 RAG 数据库，可被检索 | TODO |
-| S4 | 公告 RAG MCP 工具注册 | M | LLM 能通过 MCP 工具检索公告内容，回答引用公告来源 | TODO |
-| S5 | 全链路验收 | S | AI 分析无 JSON 泄漏 + 公告 RAG 可检索 + tests 全绿 | TODO |
+| S1 | AI 分析 JSON 渲染修复 | S | AI 分析页面不再直接输出原始 JSON，嵌套 JSON 也能正确转义渲染 | DONE |
+| S2 | 东方财富公告 PDF 爬取 | M | 盘中消息带中"东方财富网公告"的 PDF 能自动下载入库 | DONE |
+| S3 | 公告 PDF RAG 入库 | M | 下载的公告 PDF 经过 embedding 进入 RAG 数据库，可被检索 | DONE |
+| S4 | 公告 RAG MCP 工具注册 | M | LLM 能通过 MCP 工具检索公告内容，回答引用公告来源 | DONE |
+| S5 | 全链路验收 | S | AI 分析无 JSON 泄漏 + 公告 RAG 可检索 + tests 全绿 | DONE |
+
+### 验收记录
+- **S1 验收**：后端 StripMarkdownCodeFences + 前端 stripCodeFence/markdownToSafeHtml 增强，11+466 tests 通过
+- **S2 验收**：AnnouncementPdfCollector 双层 PDF URL 策略（直接构造+HTML 解析），90 tests 通过，目录遍历修复
+- **S3 验收**：AnnouncementPdfProcessor PdfPig 提取+段落切块+jieba 分词，source_type='announcement'，106 tests 通过
+- **S4 验收**：SearchAnnouncementRag MCP 注册到 Research/Recommend/LiveGate，sourceType 过滤+citation Source 修复，662 tests 通过
+- **S5 全链路**：768 后端 + 466 前端测试全绿，编译零错误，全链路贯通
 
 ---
 
