@@ -48,7 +48,8 @@ public class CninfoClient
                 {
                     Content = content
                 };
-                request.Headers.Add("Referer", "http://www.cninfo.com.cn/");
+                request.Headers.Add("Referer", "http://www.cninfo.com.cn/new/disclosure");
+                request.Headers.Add("Origin", "http://www.cninfo.com.cn");
                 request.Headers.Add("Accept", "application/json");
 
                 var response = await _httpClient.SendAsync(request, ct);
@@ -119,7 +120,11 @@ public class CninfoClient
         {
             try
             {
-                var response = await _httpClient.GetAsync(url, ct);
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Add("Referer", "http://www.cninfo.com.cn/");
+                request.Headers.Add("Accept", "*/*");
+
+                var response = await _httpClient.SendAsync(request, ct);
                 response.EnsureSuccessStatusCode();
 
                 var bytes = await response.Content.ReadAsByteArrayAsync(ct);
