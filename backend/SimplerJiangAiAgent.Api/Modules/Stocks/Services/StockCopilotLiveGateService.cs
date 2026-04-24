@@ -758,6 +758,15 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
                     approvedCall,
                     await _mcpToolGateway.SearchAsync(input.GetValueOrDefault("query", question), true, toolTaskId, cancellationToken),
                     envelope => $"外部搜索 provider={envelope.Data.Provider}，结果 {envelope.Data.ResultCount} 条。"),
+                StockMcpToolNames.FinancialReport => MapOutcome(
+                    approvedCall,
+                    await _mcpToolGateway.GetFinancialReportAsync(symbol, ParseInt(input, "periods", 4), toolTaskId, cancellationToken),
+                    envelope => $"财报数据: {envelope.Data?.PeriodCount ?? 0}期"),
+                StockMcpToolNames.FinancialTrend => MapOutcome(
+                    approvedCall,
+                    await _mcpToolGateway.GetFinancialTrendAsync(symbol, ParseInt(input, "periods", 8), toolTaskId, cancellationToken),
+                    envelope => $"财务趋势: {envelope.Data?.PeriodCount ?? 0}期"),
+                StockMcpToolNames.FinancialReportRag => await ExecuteRagToolAsync(approvedCall, symbol, question, toolTaskId, cancellationToken),
                 _ => BuildFailedOutcome(approvedCall, $"暂不支持工具 {approvedCall.Registration.ToolName} 的 live gate 执行。")
             };
         }
@@ -821,6 +830,62 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             0,
             warnings,
             Array.Empty<string>());
+        return new ToolExecutionOutcome(toolResult, executionMetric);
+    }
+
+    private async Task<ToolExecutionOutcome> ExecuteRagToolAsync(
+        ApprovedToolCall approvedCall, string symbol, string question,
+        string taskId, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var citations = await _mcpToolGateway.SearchFinancialReportRagAsync(symbol, question, 5, ct);
+        sw.Stop();
+
+        if (citations.Count == 0)
+            return BuildFailedOutcome(approvedCall, "未找到相关财报 RAG 证据");
+
+        var evidence = citations.Select(c => new StockCopilotMcpEvidenceDto(
+            Point: c.Text.Length > 200 ? c.Text[..200] + "…" : c.Text,
+            Title: $"{c.ReportDate} {c.Section ?? c.BlockKind}",
+            Source: c.Source,
+            PublishedAt: null,
+            CrawledAt: null,
+            Url: null,
+            Excerpt: c.Text.Length > 300 ? c.Text[..300] : c.Text,
+            Summary: null,
+            ReadMode: "rag",
+            ReadStatus: "ok",
+            IngestedAt: null,
+            LocalFactId: null,
+            SourceRecordId: c.ChunkId,
+            Level: null,
+            Sentiment: null,
+            Target: symbol,
+            Tags: Array.Empty<string>())).ToList();
+
+        var summary = $"财报RAG: 找到{citations.Count}条相关证据";
+        var toolResult = new StockCopilotToolResultDto(
+            approvedCall.CallId,
+            approvedCall.Registration.ToolName,
+            "completed",
+            taskId,
+            evidence.Count,
+            0,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            evidence,
+            summary);
+
+        var executionMetric = new StockCopilotToolExecutionMetricDto(
+            approvedCall.CallId,
+            approvedCall.Registration.ToolName,
+            approvedCall.Registration.PolicyClass,
+            sw.ElapsedMilliseconds,
+            evidence.Count,
+            0,
+            Array.Empty<string>(),
+            Array.Empty<string>());
+
         return new ToolExecutionOutcome(toolResult, executionMetric);
     }
 
