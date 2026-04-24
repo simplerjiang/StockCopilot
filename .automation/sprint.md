@@ -21,6 +21,7 @@
 | v0.4.3 | 2026-04-24 | S0–S9 全部 DONE | — | Hybrid Retrieval + AI 集成 |
 | v0.4.4 | 2026-04-24 | S0–S8 + HF-1 全部 DONE | 1158 tests, 0 fail | 推荐状态修复 / 情绪轮动恢复 / 基本面补全 / SQLite 稳定性 |
 | v0.4.5 | 2026-04-24 | S0–S5 全部 DONE | 1158 tests, 0 fail | 数值单位修复 / Worker 重启 / cninfo headers / 采集面板集成 |
+| v0.4.6 | 2026-04-24 | S0–S8 + HF-1 + HF-2 全部 DONE | — | 多 Agent 路由 / 财报 RAG 闭环 / LiveGate 合成 / 散户热度图表 / cninfo 修复 / 论坛重试 |
 
 ---
 
@@ -34,7 +35,7 @@
 
 ---
 
-## v0.4.6 Sprint（多 Agent 路由与财报 RAG 闭环）
+## v0.4.6 Sprint（多 Agent 路由与财报 RAG 闭环）✅ 已归档
 
 ### Sprint 目标
 **让简单 prompt 自动路由到正确取证链路，子 Agent 真正接上财报 RAG，最终回答有可验证证据。**
@@ -63,8 +64,24 @@
 
 ---
 
+## v0.4.7 Sprint（AI 分析质量 + 公告 PDF RAG 扩展）
+
+### Sprint 目标
+**修复 AI 分析页面 JSON 渲染问题；爬取东方财富个股公告 PDF 扩展 RAG 数据库。**
+
+| Story | 标题 | 分级 | 验收标准 | 状态 |
+|---|---|---|---|---|
+| S1 | AI 分析 JSON 渲染修复 | S | AI 分析页面不再直接输出原始 JSON，嵌套 JSON 也能正确转义渲染 | TODO |
+| S2 | 东方财富公告 PDF 爬取 | M | 盘中消息带中"东方财富网公告"的 PDF 能自动下载入库 | TODO |
+| S3 | 公告 PDF RAG 入库 | M | 下载的公告 PDF 经过 embedding 进入 RAG 数据库，可被检索 | TODO |
+| S4 | 公告 RAG MCP 工具注册 | M | LLM 能通过 MCP 工具检索公告内容，回答引用公告来源 | TODO |
+| S5 | 全链路验收 | S | AI 分析无 JSON 泄漏 + 公告 RAG 可检索 + tests 全绿 | TODO |
+
+---
+
 ## 历史归档
 
+- v0.4.6 多 Agent 路由与财报 RAG 闭环 → 本看板"已完成 Sprint 摘要"
 - v0.4.5 数据质量与 Worker 稳定性 → 本看板"已完成 Sprint 摘要"
 - v0.4.4 产品质量修复 → 本看板"已完成 Sprint 摘要"
 - v0.4.2 RAG Lite → 本看板"已完成 Sprint 摘要"
