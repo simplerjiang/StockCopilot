@@ -459,7 +459,12 @@ h3 { font-size: 15px; margin: 0 0 10px; color: #ccc; }
 .form-grid { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 10px; }
 .form-grid label { display: flex; align-items: center; gap: 6px; color: #bbb; font-size: 12px; }
 .form-grid select, .form-grid input[type="date"] {
-  padding: 3px 8px; background: #152030; border: 1px solid #3a4a5a; color: #fff; border-radius: 3px;
+  padding: 6px 8px; background: #152030; border: 1px solid #4a5568; color: #e2e8f0;
+  border-radius: 4px; font-size: 13px; min-width: 150px; cursor: pointer;
+}
+.form-grid input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+  cursor: pointer;
 }
 
 .form-actions { display: flex; align-items: center; gap: 10px; }
