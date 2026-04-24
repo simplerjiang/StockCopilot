@@ -34,6 +34,14 @@ public class RagContextEnricher
     {
         try
         {
+            // Normalize symbol: chunks are stored without sh/sz prefix
+            if (symbol != null && symbol.Length == 8 &&
+                (symbol.StartsWith("sh", StringComparison.OrdinalIgnoreCase) ||
+                 symbol.StartsWith("sz", StringComparison.OrdinalIgnoreCase)))
+            {
+                symbol = symbol[2..];
+            }
+
             var workerBaseUrl = _configuration["FinancialWorker:BaseUrl"] ?? "http://localhost:5120";
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(10);
@@ -49,7 +57,7 @@ public class RagContextEnricher
             var response = await client.PostAsJsonAsync($"{workerBaseUrl}/api/rag/search", request, ct);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogDebug("[RAG] Worker RAG search returned {Status}", response.StatusCode);
+                _logger.LogWarning("[RAG] Worker RAG search returned {Status} for symbol={Symbol} query={Query}", response.StatusCode, symbol, query);
                 return new();
             }
 
@@ -73,7 +81,7 @@ public class RagContextEnricher
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[RAG] Context enrichment failed for query: {Query}", query);
+            _logger.LogError(ex, "[RAG] Context enrichment failed for symbol={Symbol} query={Query}", symbol, query);
             return new();
         }
     }

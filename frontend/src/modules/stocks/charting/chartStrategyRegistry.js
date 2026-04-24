@@ -1300,12 +1300,12 @@ const CHART_STRATEGIES = Object.freeze([
     kind: 'indicator',
     accentColor: '#f59e0b',
     help: createHelp(
-      '散户论坛帖子数：直接显示各平台当日帖子总数，帮助直观了解散户活跃度。',
-      '柱状图高度代表帖子数量，留空的日期表示当日无采集数据。',
+      '散户论坛帖子数：直接显示各平台当日新增帖子数，帮助直观了解散户活跃度。',
+      '柱状图高度代表当日新增帖子数量，留空的日期表示当日无采集数据。',
       '数据来源：东方财富股吧、新浪股吧、淘股吧。'
     ),
     lineLegends: [
-      createLineLegend('#f59e0b', '帖子数', '当日各平台帖子总数'),
+      createLineLegend('#f59e0b', '日增帖', '当日各平台新增帖子数'),
       createLineLegend('#9ca3af', '无数据', '该日期未采集到数据（留空）')
     ],
     supportedViews: ['day'],
@@ -1317,9 +1317,9 @@ const CHART_STRATEGIES = Object.freeze([
           createIndicatorSpec({
             aggregateKey: 'RETAIL_HEAT',
             name: 'RETAIL_HEAT',
-            shortName: '帖子',
+            shortName: '日增帖',
             paneId: RETAIL_HEAT_PANE_ID,
-            paneOptions: { id: RETAIL_HEAT_PANE_ID, height: 80, minHeight: 56 },
+            paneOptions: { id: RETAIL_HEAT_PANE_ID, height: 120, minHeight: 80 },
             isStack: true,
             order: 70
           })
@@ -1481,17 +1481,17 @@ function registerKdjVisualIndicator() {
 function registerRetailHeatIndicator() {
   registerIndicator({
     name: 'RETAIL_HEAT',
-    shortName: '帖子',
+    shortName: '日增帖',
     precision: 0,
     calcParams: [],
     figures: [
       {
-        key: 'postCount',
-        title: '帖子数: ',
+        key: 'dailyCount',
+        title: '日增帖: ',
         type: 'bar',
         baseValue: 0,
         styles: (data) => {
-          const val = data.current?.indicatorData?.postCount
+          const val = data.current?.indicatorData?.dailyCount
           if (!Number.isFinite(val) || val === 0) return {}
           return { color: '#f59e0b' }
         }
@@ -1506,7 +1506,7 @@ function registerRetailHeatIndicator() {
     calc: dataList => dataList.map(item => {
       const heat = item._retailHeat
       if (!heat || !heat.hasData) return {}
-      return { postCount: heat.postCount, platformCount: heat.platformCount }
+      return { dailyCount: heat.dailyCount, platformCount: heat.platformCount }
     })
   })
 }
