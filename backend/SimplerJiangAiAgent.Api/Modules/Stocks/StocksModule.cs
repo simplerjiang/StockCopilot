@@ -155,6 +155,9 @@ public sealed class StocksModule : IModule
         // v0.4.3 S6: RAG context enrichment
         services.AddSingleton<RagContextEnricher>();
 
+        // v0.4.6 S5: Evidence Pack unified assembly
+        services.AddScoped<IEvidencePackBuilder, EvidencePackBuilder>();
+
         // FinancialWorker process supervisor
         services.AddSingleton<FinancialWorkerSupervisorService>();
         services.AddSingleton<IFinancialWorkerSupervisor>(sp => sp.GetRequiredService<FinancialWorkerSupervisorService>());
