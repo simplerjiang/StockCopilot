@@ -66,6 +66,18 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
             }
         }
 
+        // 汇总各平台原始 PostCount 用于直接展示
+        var datesWithData = new HashSet<string>();
+        var dailyPostCounts = new Dictionary<string, int>();
+        foreach (var row in rawRecords)
+        {
+            datesWithData.Add(row.TradingDate);
+            if (dailyPostCounts.TryGetValue(row.TradingDate, out var existing))
+                dailyPostCounts[row.TradingDate] = existing + row.PostCount;
+            else
+                dailyPostCounts[row.TradingDate] = row.PostCount;
+        }
+
         // 补零：确保从 extendedStart 到 endDate 之间每个工作日都有数据点
         // 包含 extendedStart 范围以保证 MA20 窗口完整
         {
@@ -121,7 +133,9 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
             if (string.Compare(date, fromStr, StringComparison.Ordinal) >= 0)
             {
                 dataPoints.Add(new RetailHeatDataPointDto(
-                    date, deltaSum, Math.Round(ma20, 1), Math.Round(heatRatio, 2), signal, platformCount));
+                    date, deltaSum, Math.Round(ma20, 1), Math.Round(heatRatio, 2), signal, platformCount,
+                    dailyPostCounts.GetValueOrDefault(date, 0),
+                    datesWithData.Contains(date)));
             }
         }
 

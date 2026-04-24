@@ -449,7 +449,9 @@ const mergeRetailHeat = (records, heatData) => {
   if (!heatData?.data?.length) return
   const heatMap = new Map()
   for (const point of heatData.data) {
-    heatMap.set(point.date, point)
+    if (point.hasData) {
+      heatMap.set(point.date, point)
+    }
   }
   for (const record of records) {
     const d = new Date(record.timestamp)

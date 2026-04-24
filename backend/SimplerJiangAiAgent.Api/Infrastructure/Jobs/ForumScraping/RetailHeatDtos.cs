@@ -13,5 +13,7 @@ public sealed record RetailHeatDataPointDto(
     double Ma20,
     double HeatRatio,
     string Signal,
-    int PlatformCount
+    int PlatformCount,
+    int PostCount,
+    bool HasData
 );
