@@ -11,6 +11,18 @@ namespace SimplerJiangAiAgent.Api.Tests;
 
 public sealed class OpenAiProviderTests
 {
+    [Theory]
+    [InlineData("```json\n{\"key\":\"value\"}\n```", "{\"key\":\"value\"}")]
+    [InlineData("```\nplain text\n```", "plain text")]
+    [InlineData("normal response without fences", "normal response without fences")]
+    [InlineData("```JSON\n{\"a\":1}\n```", "{\"a\":1}")]
+    [InlineData("mixed content with ```json\n{}\n``` in middle", "mixed content with ```json\n{}\n``` in middle")]
+    public void StripMarkdownCodeFences_HandlesVariants(string input, string expected)
+    {
+        var result = OpenAiProvider.StripMarkdownCodeFences(input);
+        Assert.Equal(expected, result);
+    }
+
     [Fact]
     public async Task ChatAsync_IncludesSystemPromptWhenProvided()
     {

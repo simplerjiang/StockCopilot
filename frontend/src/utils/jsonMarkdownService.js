@@ -464,6 +464,18 @@ export const ensureMarkdown = input => {
 
 export const markdownToSafeHtml = markdown => {
   if (!markdown) return ''
+  // 如果整段文本被 ```json 或 ``` 包裹，提取内部内容
+  const codeFenceMatch = markdown.match(/^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/)
+  if (codeFenceMatch) {
+    const inner = codeFenceMatch[1].trim()
+    try {
+      JSON.parse(inner)
+      // 有效 JSON，走结构化渲染
+      return markdownToSafeHtml(ensureMarkdown(inner))
+    } catch {
+      // 不是有效 JSON，继续正常 markdown 渲染
+    }
+  }
   return DOMPurify.sanitize(marked.parse(markdown, { breaks: true }))
 }
 

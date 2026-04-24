@@ -89,7 +89,23 @@ public sealed class OpenAiProvider : ILlmProvider
         var content = choices[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
         LogInfo($"response provider=openai model={model} status=ok", request.TraceId);
         LogResponse("openai", model, content, request.TraceId);
-        return new LlmChatResult(content.Trim());
+        return new LlmChatResult(StripMarkdownCodeFences(content.Trim()));
+    }
+
+    /// <summary>
+    /// 如果 LLM 返回的文本整体被 markdown 代码块包裹，则提取内部内容。
+    /// </summary>
+    internal static string StripMarkdownCodeFences(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return text;
+
+        var trimmed = text.Trim();
+        var match = System.Text.RegularExpressions.Regex.Match(
+            trimmed,
+            @"^```(?:\w+)?\s*\n([\s\S]*?)\n\s*```\s*$",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        return match.Success ? match.Groups[1].Value.Trim() : text;
     }
 
     internal static bool ShouldUseGeminiInternet(string baseUrl, string model)
@@ -229,7 +245,7 @@ public sealed class OpenAiProvider : ILlmProvider
         var text = parts[0].GetProperty("text").GetString() ?? string.Empty;
         LogInfo($"response provider=gemini model={model} status=ok", request.TraceId);
         LogResponse("gemini", model, text, request.TraceId);
-        return new LlmChatResult(text.Trim());
+        return new LlmChatResult(StripMarkdownCodeFences(text.Trim()));
     }
 
     public async IAsyncEnumerable<string> StreamChatAsync(

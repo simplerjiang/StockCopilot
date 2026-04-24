@@ -65,8 +65,13 @@ const getSnapshotRoleStates = snapshot => Array.isArray(snapshot?.roleStates)
 /** Strip markdown code fences (```json ... ```) from LLM output strings */
 const stripCodeFence = (str) => {
   if (typeof str !== 'string') return str
-  const m = str.match(/^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/)
-  return m ? m[1] : str
+  // 先尝试匹配整体被代码块包裹的情况（宽松正则）
+  const m = str.match(/^\s*```(?:\w+)?\s*\n?([\s\S]*?)\n?\s*```\s*$/)
+  if (m) return m[1].trim()
+  // 处理 "内容: ```json\n{...}\n```" 格式
+  const m2 = str.match(/^[^`]*```(?:\w+)?\s*\n([\s\S]*?)\n\s*```\s*$/)
+  if (m2) return m2[1].trim()
+  return str
 }
 
 const parseDirectorOutput = turn => {
