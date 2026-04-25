@@ -66,11 +66,17 @@ public sealed class LlmService : ILlmService
             var result = await target.ChatAsync(settings, finalRequest, cancellationToken);
             stopwatch.Stop();
 
+            // Strip markdown code fences uniformly for all providers
+            var strippedContent = OpenAiProvider.StripMarkdownCodeFences(result.Content);
+            var finalResult = ReferenceEquals(strippedContent, result.Content)
+                ? result
+                : result with { Content = strippedContent };
+
             WriteAudit(
                 $"traceId={traceId} stage=response provider={resolvedProvider} providerType={providerType} model={resolvedModel} elapsedMs={stopwatch.ElapsedMilliseconds} " +
-                $"content={EscapeForLog(result.Content)}");
+                $"content={EscapeForLog(finalResult.Content)}");
 
-            return result with { TraceId = traceId };
+            return finalResult with { TraceId = traceId };
         }
         catch (Exception ex)
         {

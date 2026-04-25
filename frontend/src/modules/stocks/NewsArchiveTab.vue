@@ -27,6 +27,7 @@ const sentiment = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const pendingTotal = ref(0)
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
@@ -283,11 +284,19 @@ const primaryArchiveActionLabel = computed(() => {
   }
 
   if (currentArchiveJobState.value === 'running') {
-    return activeArchiveJobStatus.value?.rounds > 0 ? '后台清洗进行中' : '等待首轮结果'
+    const status = activeArchiveJobStatus.value
+    if (status?.rounds > 0) {
+      return `清洗中：已处理 ${status.processed.total} 条，剩余 ${status.remaining.total} 条（第 ${status.rounds} 轮）`
+    }
+    return '后台清洗启动中...'
   }
 
   if (hasResumableArchiveWork.value) {
     return '继续后台清洗'
+  }
+
+  if (pendingTotal.value > 0) {
+    return `批量清洗待处理（${pendingTotal.value}）`
   }
 
   return '批量清洗待处理'
@@ -359,6 +368,7 @@ const fetchArchive = async ({ resetPage = false } = {}) => {
     const text = await response.text()
     const payload = (text && text.trim()) ? JSON.parse(text) : null
     total.value = Number(payload?.total ?? payload?.Total ?? 0)
+    pendingTotal.value = Number(payload?.pendingTotal ?? payload?.PendingTotal ?? 0)
     items.value = Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items).map(normalizeArchiveItem) : []
   } catch (err) {
     items.value = []

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
 
@@ -156,6 +157,8 @@ public sealed class RecommendationSessionService : IRecommendationSessionService
         var clamped = Math.Clamp(pageSize, 1, 100);
         return await _db.RecommendationSessions
             .AsNoTracking()
+            .Where(s => s.LastUserIntent == null
+                || (!s.LastUserIntent.StartsWith("runtimeclean") && !s.LastUserIntent.StartsWith("debug")))
             .OrderByDescending(s => s.CreatedAt)
             .Skip((page - 1) * clamped)
             .Take(clamped)
@@ -237,7 +240,7 @@ public sealed class RecommendationSessionService : IRecommendationSessionService
                         state.RunIndex,
                         state.Status.ToString(),
                         state.ErrorCode,
-                        state.ErrorMessage,
+                        ErrorSanitizer.SanitizeErrorMessage(state.ErrorMessage),
                         state.LlmTraceId,
                         state.OutputContentJson,
                         state.StartedAt,

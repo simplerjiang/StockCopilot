@@ -8,8 +8,8 @@ public sealed record BatchStockQuoteDto(
     decimal ChangePercent,
     decimal High,
     decimal Low,
-    decimal TurnoverRate,
-    decimal PeRatio,
+    decimal? TurnoverRate,
+    decimal? PeRatio,
     decimal TurnoverAmount,
     decimal VolumeRatio,
     DateTime Timestamp);
@@ -34,7 +34,7 @@ public sealed record MarketCapitalFlowSnapshotDto(
     IReadOnlyList<MarketCapitalFlowPointDto> Points);
 
 public sealed record NorthboundFlowPointDto(
-    TimeSpan Time,
+    DateTime Timestamp,
     decimal ShanghaiNetInflow,
     decimal ShanghaiBalance,
     decimal ShenzhenNetInflow,
@@ -71,4 +71,5 @@ public sealed record MarketRealtimeOverviewDto(
     IReadOnlyList<BatchStockQuoteDto> Indices,
     MarketCapitalFlowSnapshotDto? MainCapitalFlow,
     NorthboundFlowSnapshotDto? NorthboundFlow,
-    MarketBreadthDistributionDto? Breadth);
+    MarketBreadthDistributionDto? Breadth,
+    bool IsStale = false);

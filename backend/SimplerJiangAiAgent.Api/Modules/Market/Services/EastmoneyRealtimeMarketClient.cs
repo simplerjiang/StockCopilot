@@ -174,6 +174,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
         }
 
         var points = new List<NorthboundFlowPointDto>();
+        var tradingDate = ParseMonthDayDate(label);
         foreach (var item in s2nNode.EnumerateArray())
         {
             if (item.ValueKind != JsonValueKind.String)
@@ -181,7 +182,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
                 continue;
             }
 
-            var point = ParseNorthboundPoint(item.GetString());
+            var point = ParseNorthboundPoint(item.GetString(), tradingDate);
             if (point is not null)
             {
                 points.Add(point);
@@ -194,9 +195,8 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
         }
 
         var latest = points[^1];
-        var snapshotTime = CombineTradingDateAndTime(label, latest.Time);
         return new NorthboundFlowSnapshotDto(
-            snapshotTime,
+            latest.Timestamp,
             label,
             "亿元",
             latest.ShanghaiNetInflow,
@@ -409,7 +409,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             ToHundredMillion(parts[5], YuanPerHundredMillion));
     }
 
-    private static NorthboundFlowPointDto? ParseNorthboundPoint(string? raw)
+    private static NorthboundFlowPointDto? ParseNorthboundPoint(string? raw, DateOnly tradingDate)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
@@ -422,8 +422,9 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             return null;
         }
 
+        var timestamp = tradingDate.ToDateTime(TimeOnly.FromTimeSpan(time));
         return new NorthboundFlowPointDto(
-            time,
+            timestamp,
             ToHundredMillion(parts[1], TenThousandPerHundredMillion),
             ToHundredMillion(parts[2], TenThousandPerHundredMillion),
             ToHundredMillion(parts[3], TenThousandPerHundredMillion),
@@ -473,15 +474,15 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             : DateOnly.FromDateTime(DateTime.Today);
     }
 
-    private static DateTime CombineTradingDateAndTime(string monthDay, TimeSpan time)
+    private static DateOnly ParseMonthDayDate(string monthDay)
     {
         var year = DateTime.Today.Year;
         if (DateOnly.TryParseExact($"{year}-{monthDay}", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
         {
-            return date.ToDateTime(TimeOnly.FromTimeSpan(time));
+            return date;
         }
 
-        return DateTime.Today.Date.Add(time);
+        return DateOnly.FromDateTime(DateTime.Today);
     }
 
     private static string FormatBreadthLabel(int bucket)

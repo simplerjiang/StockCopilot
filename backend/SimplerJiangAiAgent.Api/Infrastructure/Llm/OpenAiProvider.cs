@@ -94,18 +94,37 @@ public sealed class OpenAiProvider : ILlmProvider
 
     /// <summary>
     /// 如果 LLM 返回的文本整体被 markdown 代码块包裹，则提取内部内容。
+    /// 支持 ```json\n{...}\n``` 和 ```\n{...}\n``` 两种格式，
+    /// 以及缺少结尾 ``` 的容错情况。
     /// </summary>
-    internal static string StripMarkdownCodeFences(string text)
+    public static string StripMarkdownCodeFences(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
         var trimmed = text.Trim();
+
+        // Case 1: full fence with closing ```
         var match = System.Text.RegularExpressions.Regex.Match(
             trimmed,
-            @"^```(?:\w+)?\s*\n([\s\S]*?)\n\s*```\s*$",
+            @"^```(?:\w+)?\s*\n?([\s\S]*?)\n?\s*```\s*$",
             System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (match.Success)
+            return match.Groups[1].Value.Trim();
 
-        return match.Success ? match.Groups[1].Value.Trim() : text;
+        // Case 2: opening fence without closing ``` (LLM truncation)
+        var match2 = System.Text.RegularExpressions.Regex.Match(
+            trimmed,
+            @"^```(?:\w+)?\s*\n([\s\S]+)$",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (match2.Success)
+        {
+            var inner = match2.Groups[1].Value.Trim();
+            // Only strip if the inner content looks like JSON or meaningful text
+            if (inner.Length > 0 && !inner.StartsWith("```"))
+                return inner;
+        }
+
+        return text;
     }
 
     internal static bool ShouldUseGeminiInternet(string baseUrl, string model)

@@ -3,9 +3,9 @@ import { computed } from 'vue'
 
 const props = defineProps({
   buckets: { type: Array, default: () => [] },
-  advancers: { type: Number, default: 0 },
-  decliners: { type: Number, default: 0 },
-  flatCount: { type: Number, default: 0 },
+  advancers: { type: Number, default: null },
+  decliners: { type: Number, default: null },
+  flatCount: { type: Number, default: null },
   timestamp: { type: String, default: '' },
   unavailable: { type: Boolean, default: false }
 })
@@ -14,6 +14,7 @@ const maxCount = computed(() => {
   if (!props.buckets.length) return 1
   return Math.max(1, ...props.buckets.map(b => b.count || 0))
 })
+const fmtCount = value => Number.isFinite(Number(value)) ? Number(value) : '—'
 
 const barColor = bucket => {
   const lbl = bucket.label || bucket.changeBucket || ''
@@ -41,11 +42,11 @@ const timeHHmmss = computed(() => {
         <span class="bc-na">数据不可用</span>
       </template>
       <template v-else>
-        <span class="bc-up market-rise">涨 {{ advancers }}</span>
+        <span class="bc-up market-rise">涨 {{ fmtCount(advancers) }}</span>
         <span class="bc-sep">|</span>
-        <span class="bc-fl">平 {{ flatCount }}</span>
+        <span class="bc-fl">平 {{ fmtCount(flatCount) }}</span>
         <span class="bc-sep">|</span>
-        <span class="bc-dn market-fall">跌 {{ decliners }}</span>
+        <span class="bc-dn market-fall">跌 {{ fmtCount(decliners) }}</span>
       </template>
     </div>
     <div v-if="unavailable" class="bc-empty">数据不可用</div>

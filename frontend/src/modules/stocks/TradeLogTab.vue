@@ -103,6 +103,7 @@ const state = reactive({
 
   behaviorStats: null,
   behaviorStatsLoading: false,
+  behaviorStatsError: '',
 
   reviewMenuOpen: false,
   reviewGenerating: false,
@@ -741,6 +742,8 @@ async function loadPortfolioSnapshot() {
     const res = await fetchBackendGet('/api/portfolio/snapshot')
     if (res.ok) {
       state.snapshot = await res.json()
+    } else {
+      state.snapshotError = '加载持仓信息失败'
     }
   } catch {
     state.snapshotError = '加载持仓信息失败'
@@ -755,6 +758,8 @@ async function loadExposure() {
     const res = await fetchBackendGet('/api/portfolio/exposure')
     if (res.ok) {
       state.exposure = await res.json()
+    } else {
+      state.exposureError = '加载暴露数据失败'
     }
   } catch {
     state.exposureError = '加载暴露数据失败'
@@ -764,13 +769,16 @@ async function loadExposure() {
 
 async function loadBehaviorStats() {
   state.behaviorStatsLoading = true
+  state.behaviorStatsError = ''
   try {
     const res = await fetchBackendGet('/api/trades/behavior-stats')
     if (res.ok) {
       state.behaviorStats = await res.json()
+    } else {
+      state.behaviorStatsError = '加载健康度数据失败'
     }
   } catch {
-    // silent
+    state.behaviorStatsError = '加载健康度数据失败'
   }
   state.behaviorStatsLoading = false
 }
@@ -1447,6 +1455,7 @@ onUnmounted(() => {
       </div>
     </div>
     <div v-else-if="state.exposureLoading" class="card loading-state" style="padding:0.5rem">加载暴露数据中...</div>
+    <div v-else-if="state.exposureError" class="card text-danger" style="padding:0.5rem">{{ state.exposureError }}</div>
 
     <!-- 交易健康度 -->
     <div class="behavior-dashboard card" v-if="state.behaviorStats">
@@ -1488,6 +1497,7 @@ onUnmounted(() => {
       </div>
     </div>
     <div v-else-if="state.behaviorStatsLoading" class="card loading-state" style="padding:0.5rem">加载健康度数据中...</div>
+    <div v-else-if="state.behaviorStatsError" class="card text-danger" style="padding:0.5rem">{{ state.behaviorStatsError }}</div>
 
     <div class="trade-workspace">
       <div class="trade-workspace-main">

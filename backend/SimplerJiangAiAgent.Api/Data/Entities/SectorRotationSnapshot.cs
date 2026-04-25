@@ -16,7 +16,7 @@ public sealed class SectorRotationSnapshot
     public decimal SmallNetInflow { get; set; }
     public decimal TurnoverAmount { get; set; }
     public decimal TurnoverShare { get; set; }
-    public decimal BreadthScore { get; set; }
+    public decimal? BreadthScore { get; set; }
     public decimal ContinuityScore { get; set; }
     public decimal StrengthScore { get; set; }
     public string NewsSentiment { get; set; } = "中性";
@@ -34,11 +34,11 @@ public sealed class SectorRotationSnapshot
     public decimal StrengthAvg5d { get; set; }
     public decimal StrengthAvg10d { get; set; }
     public decimal StrengthAvg20d { get; set; }
-    public decimal DiffusionRate { get; set; }
-    public int AdvancerCount { get; set; }
-    public int DeclinerCount { get; set; }
-    public int FlatMemberCount { get; set; }
-    public int LimitUpMemberCount { get; set; }
+    public decimal? DiffusionRate { get; set; }
+    public int? AdvancerCount { get; set; }
+    public int? DeclinerCount { get; set; }
+    public int? FlatMemberCount { get; set; }
+    public int? LimitUpMemberCount { get; set; }
     public decimal LeaderStabilityScore { get; set; }
     public decimal MainlineScore { get; set; }
     public bool IsMainline { get; set; }

@@ -169,7 +169,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(0, firstRun.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（每个层级最多 12 条），已保存部分结果。", firstRun.StopReason);
         Assert.NotNull(firstRun.Continuation);
-        Assert.True(firstRun.Continuation!.MayContinueAutomatically);
+        Assert.False(firstRun.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", firstRun.Continuation.ReasonCode);
 
         var secondRun = await service.ProcessPendingBatchAsync();
@@ -242,7 +242,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(8, summary.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（每个层级最多 5 条），已保存部分结果。", summary.StopReason);
         Assert.NotNull(summary.Continuation);
-        Assert.True(summary.Continuation!.MayContinueAutomatically);
+        Assert.False(summary.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", summary.Continuation.ReasonCode);
         Assert.Equal(2, llmService.CallCount);
         Assert.All(llmService.BatchSizes, size => Assert.InRange(size, 1, 5));
@@ -329,7 +329,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(4, summary.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（最多 20 条），已保存部分结果。", summary.StopReason);
         Assert.NotNull(summary.Continuation);
-        Assert.True(summary.Continuation!.MayContinueAutomatically);
+        Assert.False(summary.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", summary.Continuation.ReasonCode);
         Assert.Equal(1, llmService.CallCount);
         Assert.Equal([20], llmService.BatchSizes);
@@ -388,7 +388,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(5, summary.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（最多 20 条），已保存部分结果。", summary.StopReason);
         Assert.NotNull(summary.Continuation);
-        Assert.True(summary.Continuation!.MayContinueAutomatically);
+        Assert.False(summary.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", summary.Continuation.ReasonCode);
         Assert.Equal(1, llmService.CallCount);
         Assert.Equal([20], llmService.BatchSizes);

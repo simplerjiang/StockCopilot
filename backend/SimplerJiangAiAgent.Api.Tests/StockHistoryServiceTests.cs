@@ -56,6 +56,7 @@ public class StockHistoryServiceTests
             1200m,
             0.5m));
 
+        Assert.NotNull(stored);
         Assert.Equal("sh600519", stored.Symbol);
         Assert.Equal("贵州茅台", stored.Name);
         Assert.Equal(1234m, stored.Price);

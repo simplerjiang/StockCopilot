@@ -6,7 +6,7 @@ public sealed class BaiduStockCrawler : IStockCrawlerSource
 {
     public string SourceName => "百度";
 
-    public Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         // TODO: 接入公开接口并解析数据
         var quote = new StockQuoteDto(

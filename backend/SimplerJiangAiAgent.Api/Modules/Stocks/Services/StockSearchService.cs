@@ -75,6 +75,13 @@ public sealed class StockSearchService : IStockSearchService
                 continue;
             }
 
+            // Bug #19: relevance filter — skip results that don't match the query
+            var pinyin = parts.Length >= 4 ? parts[3].Trim() : string.Empty;
+            if (!IsRelevantResult(upstreamQuery, code, name, pinyin))
+            {
+                continue;
+            }
+
             results.Add(new StockSearchResultDto(symbol, name, code, market));
             if (results.Count >= limit)
             {
@@ -196,5 +203,33 @@ public sealed class StockSearchService : IStockSearchService
         }
 
         return BuildSymbol(code, market);
+    }
+
+    /// <summary>
+    /// Bug #19: Filter out irrelevant search results from upstream fuzzy matching.
+    /// </summary>
+    private static bool IsRelevantResult(string query, string code, string name, string pinyin)
+    {
+        if (ContainsChinese(query))
+        {
+            return name.Contains(query, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Alphanumeric/numeric query: code prefix or pinyin prefix must match
+        return code.StartsWith(query, StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrEmpty(pinyin) && pinyin.StartsWith(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ContainsChinese(string text)
+    {
+        foreach (var c in text)
+        {
+            if (c >= '\u4e00' && c <= '\u9fff')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

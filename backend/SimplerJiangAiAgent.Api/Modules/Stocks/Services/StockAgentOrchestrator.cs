@@ -133,6 +133,11 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         CancellationToken cancellationToken)
     {
         var quote = await _dataService.GetQuoteAsync(symbol, source);
+        if (quote is null)
+        {
+            throw new InvalidOperationException($"未找到股票 {symbol} 的行情数据");
+        }
+
         var kLines = await _dataService.GetKLineAsync(symbol, interval, count, source);
         var minuteLines = await _dataService.GetMinuteLineAsync(symbol, source);
         var messages = await _dataService.GetIntradayMessagesAsync(symbol, source);

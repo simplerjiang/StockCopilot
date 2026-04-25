@@ -87,7 +87,7 @@ describe('App', () => {
 
     expect(wrapper.text()).not.toContain('首次启动还未配置 LLM Key')
     expect(window.location.search).not.toContain('onboarding=1')
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('stores pending trade-log navigation before switching to the trade log tab', async () => {

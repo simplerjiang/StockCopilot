@@ -38,6 +38,11 @@ public sealed class StockSyncService : IStockSyncService
 
             var target = StockSymbolNormalizer.Normalize(symbol.Trim());
             var quote = await _crawler.GetQuoteAsync(target, cancellationToken);
+            if (quote is null)
+            {
+                continue;
+            }
+
             var kline = await _crawler.GetKLineAsync(target, "day", 60, cancellationToken);
             var minute = await _crawler.GetMinuteLineAsync(target, cancellationToken);
             var messages = await _crawler.GetIntradayMessagesAsync(target, cancellationToken);

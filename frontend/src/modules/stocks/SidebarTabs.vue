@@ -1,5 +1,6 @@
 <script setup>
-import { usePersistedRef } from './useLayoutPersistence'
+import { onActivated } from 'vue'
+import { usePersistedRef, readLayoutValue } from './useLayoutPersistence'
 
 const props = defineProps({
   hasUnreadAlerts: { type: Boolean, default: false }
@@ -14,6 +15,14 @@ const tabs = [
 ]
 
 const activeTab = usePersistedRef('sidebar_active_tab', 'plans')
+
+// Bug #58: keep-alive re-activation — restore sidebar tab from localStorage
+onActivated(() => {
+  const stored = readLayoutValue('sidebar_active_tab', 'plans')
+  if (stored !== activeTab.value) {
+    activeTab.value = stored
+  }
+})
 </script>
 
 <template>

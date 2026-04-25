@@ -381,6 +381,18 @@ const reportTypeLabel = (raw) => {
   return REPORT_TYPE_LABEL[key] || raw
 }
 
+const reportScopeLabel = computed(() => {
+  const v = view.value
+  if (!v) return '口径未确认'
+  const rawType = String(v.reportType || v.ReportType || '').toLowerCase()
+  const rawDate = String(v.reportDate || v.ReportDate || '')
+  if (rawType.includes('annual') || rawType.includes('年报') || /-12-31$/.test(rawDate)) return '年度'
+  if (rawType.includes('q1') || rawType.includes('一季') || /-03-31$/.test(rawDate)) return '一季度累计(YTD)'
+  if (rawType.includes('q2') || rawType.includes('mid') || rawType.includes('中报') || rawType.includes('半年度') || /-06-30$/.test(rawDate)) return '半年度累计(YTD)'
+  if (rawType.includes('q3') || rawType.includes('三季') || /-09-30$/.test(rawDate)) return '三季度累计(YTD)'
+  return '口径未确认'
+})
+
 const view = computed(() => detail.value || props.item || null)
 
 const headerTitle = computed(() => {
@@ -410,7 +422,10 @@ const buildRows = (dictKeyLower, fields) => {
   return fields.map(f => {
     const raw = pickFieldValue(dict, f)
     if (f.key === 'epsBasic') {
-      return { key: f.key, label: f.label, display: formatFieldValue(raw), fullValue: '' }
+      // 基本每股收益单位为 元/股，formatFieldValue 只输出数值，追加 " 元" 避免与比率/百分比混淆
+      const formatted = formatFieldValue(raw)
+      const display = formatted === '—' ? '—' : `${formatted} 元`
+      return { key: f.key, label: f.label, display, fullValue: '' }
     }
     const money = formatMoneyDisplay(raw)
     return { key: f.key, label: f.label, display: money.display, fullValue: money.full }
@@ -466,6 +481,10 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
                 <div class="fc-drawer-row">
                   <dt>报告类型</dt>
                   <dd>{{ reportTypeLabel(view?.reportType || view?.ReportType) }}</dd>
+                </div>
+                <div class="fc-drawer-row">
+                  <dt>数据口径</dt>
+                  <dd><span class="fc-drawer-tag">{{ reportScopeLabel }}</span></dd>
                 </div>
                 <div class="fc-drawer-row">
                   <dt>来源渠道</dt>

@@ -378,7 +378,7 @@ const buildRoleEtaInfo = (info) => {
   const max = Number(info.maxToolCalls) || 0
   const toolText = max > 0 ? `🔧 ${used}/${max}` : (used > 0 ? `🔧 ${used}` : '')
   const elapsedText = elapsedSec != null ? `⏱️ ${elapsedSec}s` : ''
-  const overTime = elapsedSec != null && elapsedSec > 180
+  const overTime = elapsedSec != null && elapsedSec > 300
   const overTool = max > 0 && used / max >= 0.8
   const warn = overTime || overTool
   return {
@@ -387,7 +387,7 @@ const buildRoleEtaInfo = (info) => {
     elapsedSec,
     warn,
     warnLabel: warn
-      ? (overTime && overTool ? '已超时且接近工具上限' : (overTime ? '运行超 3 分钟' : '工具使用接近上限'))
+      ? (overTime && overTool ? '⏳ 已超过预期时间且接近工具上限' : (overTime ? '⏳ 已超过预期时间' : '工具使用接近上限'))
       : ''
   }
 }

@@ -146,6 +146,14 @@ const createDeferredResponse = () => {
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
+  vi.stubGlobal('EventSource', vi.fn(() => ({
+    onmessage: null,
+    onerror: null,
+    onopen: null,
+    close: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })))
 })
 
 afterEach(() => {
@@ -212,29 +220,26 @@ describe('StockRecommendTab', () => {
     expect(wrapper.text()).toContain('主力 +12.34 亿')
   })
 
-  it('renders tab bar with three tabs', async () => {
+  it('renders the no-session guide instead of tabs when idle', async () => {
     vi.stubGlobal('fetch', defaultFetchMock())
     const wrapper = mount(StockRecommendTab)
     await flushPromises()
 
-    const tabs = wrapper.findAll('.tab-btn')
-    expect(tabs.length).toBe(3)
-    expect(tabs[0].text()).toBe('推荐报告')
-    expect(tabs[1].text()).toBe('辩论过程')
-    expect(tabs[2].text()).toBe('团队进度')
+    expect(wrapper.find('.recommend-empty-guide').exists()).toBe(true)
+    expect(wrapper.text()).toContain('智能选股推荐')
+    expect(wrapper.text()).toContain('在下方输入你的投资问题，或点击快捷按钮开始分析。')
+    expect(wrapper.findAll('.tab-btn')).toHaveLength(0)
   })
 
-  it('switches tabs on click', async () => {
+  it('keeps report tab content hidden while showing the no-session guide', async () => {
     vi.stubGlobal('fetch', defaultFetchMock())
     const wrapper = mount(StockRecommendTab)
     await flushPromises()
 
-    const tabs = wrapper.findAll('.tab-btn')
-    await tabs[1].trigger('click')
-    expect(tabs[1].classes()).toContain('active')
-
-    await tabs[2].trigger('click')
-    expect(tabs[2].classes()).toContain('active')
+    expect(wrapper.find('.recommend-empty-guide').exists()).toBe(true)
+    expect(wrapper.text()).toContain('系统将调度 13 个 AI 角色，通过多阶段辩论为你筛选优质标的。')
+    expect(wrapper.text()).not.toContain('推荐报告尚未生成')
+    expect(wrapper.findAll('.tab-btn')).toHaveLength(0)
   })
 
   it('shows follow-up quick action buttons', async () => {
@@ -450,12 +455,14 @@ describe('StockRecommendTab', () => {
     wrapper.unmount()
   })
 
-  it('renders report empty state when no session', async () => {
+  it('renders recommendation empty guide when no session', async () => {
     vi.stubGlobal('fetch', defaultFetchMock())
     const wrapper = mount(StockRecommendTab)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('推荐报告尚未生成')
+    expect(wrapper.find('.recommend-empty-guide').exists()).toBe(true)
+    expect(wrapper.text()).toContain('智能选股推荐')
+    expect(wrapper.text()).not.toContain('推荐报告尚未生成')
   })
 
   it('hides market snapshot when toggle clicked', async () => {

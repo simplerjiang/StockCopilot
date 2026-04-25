@@ -79,7 +79,8 @@ public sealed record LocalNewsArchivePageDto(
     string? Keyword,
     string? Level,
     string? Sentiment,
-    IReadOnlyList<LocalNewsArchiveItemDto> Items
+    IReadOnlyList<LocalNewsArchiveItemDto> Items,
+    int PendingTotal = 0
 );
 
 public sealed record StockAgentQueryPolicyDto(

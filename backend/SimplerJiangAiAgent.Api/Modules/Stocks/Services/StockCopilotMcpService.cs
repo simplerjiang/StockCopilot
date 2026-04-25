@@ -141,13 +141,14 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var overviewFacts = snapshotResolution.Snapshot?.Facts ?? ConvertFacts(localFacts.FundamentalFacts);
         var mainBusiness = TryResolveFactValue(overviewFacts, "主营业务");
         var businessScope = TryResolveFactValue(overviewFacts, "经营范围");
-        var shareholderCount = quote.ShareholderCount
+        var shareholderCount = quote?.ShareholderCount
             ?? TryResolveShareholderCount(snapshotResolution.Snapshot?.Facts)
             ?? TryResolveShareholderCount(localFacts.FundamentalFacts);
+        var effectiveQuote = quote ?? new StockQuoteDto(normalizedSymbol, normalizedSymbol, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, DateTime.UtcNow, Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>());
         var warnings = BuildWarnings(snapshotResolution.Warning);
         var degradedFlags = BuildDegradedFlags(snapshotResolution.DegradedFlag);
         var evidence = ApplyWindow(
-            BuildCompanyOverviewEvidence(normalizedSymbol, quote, localFacts, snapshotResolution.UpdatedAt, shareholderCount, mainBusiness, businessScope),
+            BuildCompanyOverviewEvidence(normalizedSymbol, effectiveQuote, localFacts, snapshotResolution.UpdatedAt, shareholderCount, mainBusiness, businessScope),
             windowOptions.EvidenceSkip,
             windowOptions.EvidenceTake);
 
@@ -308,7 +309,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var snapshotResolution = await ResolveFundamentalSnapshotAsync(normalizedSymbol, localFacts, cancellationToken);
         var allFacts = snapshotResolution.Snapshot?.Facts ?? ConvertFacts(localFacts.FundamentalFacts);
         var shareholderFacts = FilterShareholderFacts(allFacts).ToList();
-        var shareholderCount = quote.ShareholderCount
+        var shareholderCount = quote?.ShareholderCount
             ?? TryResolveShareholderCount(allFacts)
             ?? TryResolveShareholderCount(localFacts.FundamentalFacts);
 
@@ -2576,7 +2577,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
         return new SymbolBundleExecutionResult(
             new SymbolDataBundle(
-                await quoteTask,
+                await quoteTask ?? new StockQuoteDto(symbol, symbol, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, DateTime.UtcNow, Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>()),
                 await kLineTask,
                 await minuteTask,
                 await messagesTask,
@@ -2725,7 +2726,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         try
         {
             var quote = await _dataService.GetQuoteAsync(symbol, null, cancellationToken);
-            sectorNameHint = quote.SectorName;
+            sectorNameHint = quote?.SectorName;
         }
         catch
         {

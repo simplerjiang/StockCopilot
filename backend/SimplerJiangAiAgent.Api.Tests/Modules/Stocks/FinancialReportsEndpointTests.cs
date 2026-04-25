@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Contracts;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
@@ -50,9 +51,20 @@ public class FinancialReportsEndpointTests : IClassFixture<FinancialReportsEndpo
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            var dataRoot = Path.Combine(Path.GetTempPath(), "sjai-tests", nameof(FinancialReportsEndpointTests), Guid.NewGuid().ToString("N"));
+
             builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Database:DataRootPath"] = dataRoot
+                });
+            });
             builder.ConfigureServices(services =>
             {
+                ApiTestDatabaseIsolation.UseIsolatedSqlite(services, dataRoot);
+
                 var existing = services.Where(d => d.ServiceType == typeof(IFinancialDataReadService)).ToList();
                 foreach (var d in existing)
                 {

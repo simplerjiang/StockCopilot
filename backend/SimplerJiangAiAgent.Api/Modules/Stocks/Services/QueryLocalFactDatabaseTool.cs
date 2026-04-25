@@ -675,6 +675,7 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             .ToArray();
 
         var total = orderedItems.Length;
+        var pendingTotal = orderedItems.Count(item => !item.IsAiProcessed);
         var pagedItems = orderedItems
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -687,7 +688,8 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             normalizedKeyword,
             normalizedLevel,
             normalizedSentiment,
-            pagedItems);
+            pagedItems,
+            pendingTotal);
     }
 
     private static string? NormalizeArchiveLevel(string? level)

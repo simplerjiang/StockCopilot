@@ -5,15 +5,15 @@ import MetricCell from './MetricCell.vue'
 const props = defineProps({
   mainCapitalFlow: { type: Object, default: null },
   northboundFlow: { type: Object, default: null },
-  diffusionScore: { type: Number, default: 0 },
-  continuationScore: { type: Number, default: 0 },
-  top3SectorTurnoverShare: { type: Number, default: 0 },
-  top10SectorTurnoverShare: { type: Number, default: 0 },
-  top3SectorTurnoverShare5dAvg: { type: Number, default: 0 },
-  top10SectorTurnoverShare5dAvg: { type: Number, default: 0 },
+  diffusionScore: { type: Number, default: null },
+  continuationScore: { type: Number, default: null },
+  top3SectorTurnoverShare: { type: Number, default: null },
+  top10SectorTurnoverShare: { type: Number, default: null },
+  top3SectorTurnoverShare5dAvg: { type: Number, default: null },
+  top10SectorTurnoverShare5dAvg: { type: Number, default: null },
   totalTurnover: { type: Number, default: 0 },
-  advancers: { type: Number, default: 0 },
-  decliners: { type: Number, default: 0 },
+  advancers: { type: Number, default: null },
+  decliners: { type: Number, default: null },
   mainFlowUnavailable: { type: Boolean, default: false },
   northboundUnavailable: { type: Boolean, default: false },
   diffusionUnavailable: { type: Boolean, default: false },
@@ -50,8 +50,10 @@ const northTrend = computed(() => {
   const v = props.northboundFlow.totalNetInflow
   return v > 0 ? 'up' : v < 0 ? 'down' : 'flat'
 })
-const adRatio = computed(() => `${props.advancers}:${props.decliners}`)
+const fmtCount = value => Number.isFinite(Number(value)) ? Number(value) : '—'
+const adRatio = computed(() => `${fmtCount(props.advancers)}:${fmtCount(props.decliners)}`)
 const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
+const fmtScore = v => Number.isFinite(Number(v)) ? Number(v).toFixed(1) : '—'
 </script>
 
 <template>
@@ -78,13 +80,13 @@ const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
       <!-- Row 3 -->
       <MetricCell
         label="扩散指数"
-        :value="diffusionUnavailable ? '数据不可用' : diffusionScore.toFixed(1)"
+        :value="diffusionUnavailable ? '数据不可用' : fmtScore(diffusionScore)"
         :status="diffusionUnavailable ? 'unavailable' : 'ok'"
         :style="diffusionUnavailable ? null : { color: scoreColor(diffusionScore) }"
       />
       <MetricCell
         label="持续指数"
-        :value="continuationUnavailable ? '数据不可用' : continuationScore.toFixed(1)"
+        :value="continuationUnavailable ? '数据不可用' : fmtScore(continuationScore)"
         :status="continuationUnavailable ? 'unavailable' : 'ok'"
         :style="continuationUnavailable ? null : { color: scoreColor(continuationScore) }"
       />
@@ -95,8 +97,8 @@ const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
         <span class="cp-avg">(5日均 数据不可用)</span>
       </template>
       <template v-else>
-        热门板块TOP3占比 {{ top3SectorTurnoverShare.toFixed(1) }}%
-        <span class="cp-avg">(5日均 {{ top3SectorTurnoverShare5dAvg.toFixed(1) }}%)</span>
+        热门板块TOP3占比 {{ fmtScore(top3SectorTurnoverShare) }}%
+        <span class="cp-avg">(5日均 {{ fmtScore(top3SectorTurnoverShare5dAvg) }}%)</span>
       </template>
     </div>
   </div>

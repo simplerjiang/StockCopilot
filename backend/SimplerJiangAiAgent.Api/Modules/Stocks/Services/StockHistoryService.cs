@@ -32,7 +32,7 @@ public sealed class StockHistoryService : IStockHistoryService
             cancellationToken);
     }
 
-    public async Task<StockQueryHistory> RecordAsync(StockHistoryRecordRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<StockQueryHistory?> RecordAsync(StockHistoryRecordRequestDto request, CancellationToken cancellationToken = default)
     {
         return await UpsertCoreAsync(
             request.Symbol,
@@ -47,7 +47,7 @@ public sealed class StockHistoryService : IStockHistoryService
             cancellationToken);
     }
 
-    private async Task<StockQueryHistory> UpsertCoreAsync(
+    private async Task<StockQueryHistory?> UpsertCoreAsync(
         string symbolValue,
         string name,
         decimal price,
@@ -59,6 +59,9 @@ public sealed class StockHistoryService : IStockHistoryService
         decimal speed,
         CancellationToken cancellationToken)
     {
+        if (!StockSymbolNormalizer.IsValid(symbolValue))
+            return null;
+
         var symbol = StockSymbolNormalizer.Normalize(symbolValue);
         var existing = await _dbContext.StockQueryHistories
             .FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
@@ -99,6 +102,11 @@ public sealed class StockHistoryService : IStockHistoryService
         foreach (var item in list)
         {
             var quote = await _dataService.GetQuoteAsync(item.Symbol, source, cancellationToken);
+            if (quote is null)
+            {
+                continue;
+            }
+
             item.Name = quote.Name;
             item.Price = quote.Price;
             item.ChangePercent = quote.ChangePercent;

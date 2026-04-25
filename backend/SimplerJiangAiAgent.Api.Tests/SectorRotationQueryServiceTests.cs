@@ -68,7 +68,8 @@ public sealed class SectorRotationQueryServiceTests
         Assert.NotNull(result);
         Assert.Equal(new DateTime(2026, 4, 7, 6, 36, 0, DateTimeKind.Utc), result!.SnapshotTime);
         Assert.Equal("同步不完整", result.StageLabelV2);
-        Assert.True(result.IsDegraded);
+        // Bug #6: query-side override — LimitDownCount=1 means hasCoreData=true → isDegraded=false
+        Assert.False(result.IsDegraded);
         Assert.Equal("market_breadth_unavailable", result.DegradeReason);
     }
 

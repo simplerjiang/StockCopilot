@@ -58,16 +58,35 @@ const updateClock = () => {
 
 /* ── 连接状态 ── */
 const backendOnline = ref(null) // null=unknown, true=online, false=offline
+const lastHealthCheckedAt = ref('')
+const lastHealthError = ref('')
 let healthTimer = null
+const formatHealthCheckedAt = value => {
+  if (!value) return '尚未检查'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
 const checkHealth = async () => {
+  lastHealthCheckedAt.value = new Date().toISOString()
   try {
     const r = await fetch('/api/app/version', { signal: AbortSignal.timeout(5000) })
-    backendOnline.value = r.ok
-  } catch {
+    if (!r.ok) throw new Error(`版本接口返回 ${r.status}`)
+    const data = await r.json()
+    if (typeof data?.version !== 'string' || !data.version.trim()) throw new Error('版本接口未返回有效版本号')
+    appVersion.value = data.version
+    backendOnline.value = true
+    lastHealthError.value = ''
+  } catch (err) {
+    appVersion.value = ''
     backendOnline.value = false
+    lastHealthError.value = err?.name === 'TimeoutError' ? '版本检查超时' : (err?.message || '版本检查失败')
   }
 }
 const connectionLabel = computed(() => backendOnline.value === null ? '检测中' : backendOnline.value ? '已连接' : '离线')
+const connectionTitle = computed(() => {
+  const parts = [`状态：${connectionLabel.value}`, `最近检查：${formatHealthCheckedAt(lastHealthCheckedAt.value)}`]
+  if (lastHealthError.value) parts.push(`错误：${lastHealthError.value}`)
+  return parts.join('\n')
+})
 
 /* ── Tab 指示线 ── */
 const tabNavRef = ref(null)
@@ -99,6 +118,11 @@ const onboardingStatus = ref({
   recommendedTabKey: 'admin-llm'
 })
 const appVersion = ref('')
+const versionBadgeTitle = computed(() => {
+  const parts = [`版本：${appVersion.value || '未知'}`, `连接：${connectionLabel.value}`, `最近版本检查：${formatHealthCheckedAt(lastHealthCheckedAt.value)}`]
+  if (lastHealthError.value) parts.push(`错误：${lastHealthError.value}`)
+  return parts.join('\n')
+})
 
 const getTabFromLocation = () => {
   const tab = new URLSearchParams(window.location.search).get('tab')
@@ -196,22 +220,12 @@ const handleNavigateTab = (e) => {
 onMounted(async () => {
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
-  checkHealth()
-  healthTimer = setInterval(checkHealth, 300000)
+  await checkHealth()
+  healthTimer = setInterval(checkHealth, 60000)
   document.addEventListener('click', closeSettings)
   window.addEventListener('navigate-stock', handleNavigateStock)
   window.addEventListener('navigate-trade-log', handleNavigateTradeLog)
   window.addEventListener('navigate-tab', handleNavigateTab)
-
-  try {
-    const versionResponse = await fetch('/api/app/version')
-    if (versionResponse.ok) {
-      const versionData = await versionResponse.json()
-      appVersion.value = versionData.version || ''
-    }
-  } catch {
-    appVersion.value = ''
-  }
 
   await loadOnboardingStatus({ allowAutoRedirect: true })
   nextTick(updateIndicator)
@@ -235,7 +249,7 @@ onBeforeUnmount(() => {
           <path d="M8 1L14.5 8L8 15L1.5 8L8 1Z" fill="currentColor"/>
         </svg>
         <span class="brand-text">SimplerJiang AI Agent</span>
-        <span v-if="appVersion" class="version-badge">v{{ appVersion }}</span>
+        <span v-if="appVersion" class="version-badge" :title="versionBadgeTitle">v{{ appVersion }}</span>
       </div>
       <nav ref="tabNavRef" class="nav-tabs">
         <button
@@ -251,7 +265,7 @@ onBeforeUnmount(() => {
         <div class="nav-indicator" :style="indicatorStyle" />
       </nav>
       <div class="header-status">
-        <span class="connection-indicator" :class="{ online: backendOnline === true, offline: backendOnline === false }" :title="connectionLabel">
+        <span class="connection-indicator" :class="{ online: backendOnline === true, offline: backendOnline === false }" :title="connectionTitle">
           <span class="connection-dot" />
           <span class="connection-label">{{ connectionLabel }}</span>
         </span>

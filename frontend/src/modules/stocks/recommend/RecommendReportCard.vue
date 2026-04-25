@@ -346,14 +346,14 @@ const formatValidity = raw => {
 
 <template>
   <div class="report-card">
-    <div v-if="!report && !degradedReport" class="report-empty">
+    <div v-if="!report && (!degradedReport || !isSessionTerminal)" class="report-empty">
       <p v-if="isSessionTerminal" class="report-error-hint">
         {{ terminalFallbackMessage }}
       </p>
       <p v-else class="muted">推荐报告尚未生成，请等待分析完成。</p>
     </div>
-    <!-- Degraded report when Director output unavailable but stage data exists -->
-    <div v-else-if="!report && degradedReport" class="degraded-report">
+    <!-- Degraded report when Director output unavailable but stage data exists (only shown for terminal sessions) -->
+    <div v-else-if="!report && degradedReport && isSessionTerminal" class="degraded-report">
       <div class="degraded-banner">
         ⚠️ 推荐总监未产出结构化报告，以下是各阶段分析摘要
       </div>

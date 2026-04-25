@@ -1,8 +1,8 @@
 <script setup>
 const props = defineProps({
   indices: { type: Array, default: () => [] },
-  limitUpCount: { type: Number, default: 0 },
-  limitDownCount: { type: Number, default: 0 },
+  limitUpCount: { type: Number, default: null },
+  limitDownCount: { type: Number, default: null },
   brokenBoardCount: { type: Number, default: 0 },
   brokenBoardRate: { type: Number, default: 0 },
   maxLimitUpStreak: { type: Number, default: 0 },
@@ -21,6 +21,7 @@ const fmtOneDecimal = v => {
   const n = Number(v ?? 0)
   return Number.isFinite(n) ? n.toFixed(1) : '--'
 }
+const fmtCount = v => Number.isFinite(Number(v)) ? Number(v) : '--'
 </script>
 
 <template>
@@ -37,12 +38,12 @@ const fmtOneDecimal = v => {
     <!-- Zone 2: Limit stats -->
     <div class="is-cell">
       <span class="is-lbl">涨停</span>
-      <span class="is-val rise">{{ limitUpCount }}</span>
+      <span class="is-val rise">{{ limitUpUnavailable ? '--' : fmtCount(limitUpCount) }}</span>
       <span class="is-sub">5日均 {{ limitUpUnavailable ? '--' : fmtOneDecimal(limitUpCount5dAvg) }}</span>
     </div>
     <div class="is-cell">
       <span class="is-lbl">跌停</span>
-      <span class="is-val fall">{{ limitDownCount }}</span>
+      <span class="is-val fall">{{ limitUpUnavailable ? '--' : fmtCount(limitDownCount) }}</span>
       <span class="is-sub">连板王 {{ maxStreakUnavailable ? '--' : maxLimitUpStreak }}</span>
     </div>
     <div class="is-cell">

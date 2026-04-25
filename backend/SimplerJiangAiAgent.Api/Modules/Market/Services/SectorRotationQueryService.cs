@@ -344,7 +344,17 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
     }
 
     private static MarketSnapshotStatus ReadSnapshotStatus(Data.Entities.MarketSentimentSnapshot item)
-        => ReadSnapshotStatus(item.SourceTag, item.RawJson);
+    {
+        var status = ReadSnapshotStatus(item.SourceTag, item.RawJson);
+        // Bug #6: override isDegraded when core data is actually present.
+        // Handles old snapshots that were written with overly aggressive isDegraded=true.
+        if (status.IsDegraded
+            && (item.Advancers > 0 || item.Decliners > 0 || item.LimitUpCount > 0 || item.LimitDownCount > 0))
+        {
+            return new MarketSnapshotStatus(false, status.IsCriticalSummaryIncomplete, status.DegradeReason);
+        }
+        return status;
+    }
 
     private static MarketSnapshotStatus ReadSnapshotStatus(string? sourceTag, string? rawJson)
     {
@@ -465,7 +475,7 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
         {
             "change" => rows.OrderByDescending(x => x.ChangePercent).ThenBy(x => x.RankNo),
             "flow" => rows.OrderByDescending(x => x.MainNetInflow).ThenBy(x => x.RankNo),
-            "breadth" => rows.OrderByDescending(x => x.BreadthScore).ThenBy(x => x.RankNo),
+            "breadth" => rows.OrderByDescending(x => x.BreadthScore ?? -1m).ThenBy(x => x.RankNo),
             "continuity" => rows.OrderByDescending(x => x.ContinuityScore).ThenBy(x => x.RankNo),
             "mainline" => rows.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.MainlineScore).ThenBy(x => x.RankNo),
             _ => rows.OrderByDescending(x => x.StrengthScore).ThenBy(x => x.RankNo)

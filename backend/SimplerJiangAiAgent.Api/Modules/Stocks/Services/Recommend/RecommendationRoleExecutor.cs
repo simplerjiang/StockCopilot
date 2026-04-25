@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 using Microsoft.Extensions.Logging;
@@ -202,14 +203,16 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
             _sessionLogger?.LogRoleLlmError(context.SessionId, context.TurnId, context.RoleId,
                 ex.GetType().Name, ex.Message);
 
+            var sanitized = ErrorSanitizer.SanitizeErrorMessage(ex.Message);
+
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.RoleFailed, context.SessionId, context.TurnId,
                 context.StageId, context.StageType, context.RoleId, null,
-                $"角色 {context.RoleId} 执行失败: {ex.Message}", null, DateTime.UtcNow));
+                $"角色 {context.RoleId} 执行失败: {sanitized}", null, DateTime.UtcNow));
 
             return new RecommendRoleExecutionResult(
                 context.RoleId, Success: false, OutputJson: null,
-                ErrorCode: "LLM_ERROR", ErrorMessage: ex.Message,
+                ErrorCode: "LLM_ERROR", ErrorMessage: sanitized,
                 LlmTraceId: null, ToolCallCount: 0);
         }
     }

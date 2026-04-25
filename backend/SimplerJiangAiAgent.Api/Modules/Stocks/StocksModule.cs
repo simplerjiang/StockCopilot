@@ -29,6 +29,10 @@ public sealed class StocksModule : IModule
 {
     private static readonly SemaphoreSlim _concurrentTurns = new(5, 5);
     private static readonly ConcurrentDictionary<long, CancellationTokenSource> _turnCancellationSources = new();
+    private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private static readonly TimeSpan FinancialWorkerProxyTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FinancialWorkerCollectProxyTimeout = TimeSpan.FromSeconds(60);
     // V041-S8-FU-1: PDF 采集（下载 + 提取 + 投票 + 解析 + 持久化）耗时较长，单独放宽到 5 分钟。
@@ -606,15 +610,23 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // 查询单个股票信息（包含新闻与指标）
-        group.MapGet("/quote", async (string symbol, string? source, IStockDataService dataService) =>
+        group.MapGet("/quote", async (string? symbol, string? source, IStockDataService dataService) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
             {
-                return Results.BadRequest(new { message = "symbol 不能为空" });
+                return Results.BadRequest(new { error = "missing_symbol", message = "请提供股票代码" });
             }
 
-            var result = await dataService.GetQuoteAsync(symbol.Trim(), source);
-            return Results.Ok(result);
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                var msg = StockSymbolNormalizer.IsForeignMarket(symbol)
+                    ? "暂不支持美股/港股/外盘查询"
+                    : "无效的股票代码格式";
+                return Results.BadRequest(new { error = "invalid_symbol", message = msg });
+            }
+
+            var result = await dataService.GetQuoteAsync(StockSymbolNormalizer.Normalize(symbol), source);
+            return result is null ? Results.NotFound(new { error = "not_found", message = "未找到该股票数据" }) : Results.Ok(result);
         })
         .WithName("GetStockQuote")
         .WithOpenApi();
@@ -626,7 +638,12 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var result = await fundamentalSnapshotService.GetSnapshotAsync(symbol.Trim(), httpContext.RequestAborted);
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var result = await fundamentalSnapshotService.GetSnapshotAsync(StockSymbolNormalizer.Normalize(symbol), httpContext.RequestAborted);
             return result is null ? Results.NotFound() : Results.Ok(result);
         })
         .WithName("GetStockFundamentalSnapshot")
@@ -729,7 +746,8 @@ public sealed class StocksModule : IModule
                 }
             }
 
-            return Results.Ok(new { result.Symbol, result.Data, result.Latest, result.Description, Backfilling = isBackfilling });
+            var fullSymbol = StockSymbolNormalizer.Normalize(symbol);
+            return Results.Ok(new { Symbol = fullSymbol, result.Data, result.Latest, result.Description, Backfilling = isBackfilling });
         })
         .WithName("GetRetailHeatIndex")
         .WithOpenApi();
@@ -1053,7 +1071,11 @@ public sealed class StocksModule : IModule
             }
 
             var result = await realtimeService.GetBatchQuotesAsync(items, httpContext.RequestAborted);
-            return Results.Ok(result);
+            // Null out stock-specific metrics for index symbols
+            var cleaned = result.Select(q => StockSymbolNormalizer.IsIndex(q.Symbol)
+                ? q with { TurnoverRate = null, PeRatio = null }
+                : q).ToArray();
+            return Results.Ok(cleaned);
         })
         .WithName("GetBatchStockQuotes")
         .WithOpenApi();
@@ -1092,7 +1114,12 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var data = await dataService.GetKLineAsync(symbol.Trim(), interval ?? "day", count ?? 60, source);
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var data = await dataService.GetKLineAsync(StockSymbolNormalizer.Normalize(symbol), interval ?? "day", count ?? 60, source);
             return Results.Ok(data);
         })
         .WithName("GetKLine")
@@ -1106,7 +1133,12 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var data = await dataService.GetMinuteLineAsync(symbol.Trim(), source);
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var data = await dataService.GetMinuteLineAsync(StockSymbolNormalizer.Normalize(symbol), source);
             return Results.Ok(data);
         })
         .WithName("GetMinuteLine")
@@ -1119,7 +1151,12 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var target = symbol.Trim();
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var target = StockSymbolNormalizer.Normalize(symbol);
             var selectedInterval = interval ?? "day";
             var take = count ?? 60;
             var cancellationToken = httpContext.RequestAborted;
@@ -1127,7 +1164,7 @@ public sealed class StocksModule : IModule
             var shouldIncludeMinute = includeMinute ?? true;
 
             var klineTask = dataService.GetKLineAsync(target, selectedInterval, take, source, cancellationToken);
-            Task<StockQuoteDto>? quoteTask = shouldIncludeQuote
+            Task<StockQuoteDto?>? quoteTask = shouldIncludeQuote
                 ? dataService.GetQuoteAsync(target, source, cancellationToken)
                 : null;
             Task<IReadOnlyList<MinuteLinePointDto>>? minuteTask = shouldIncludeMinute
@@ -1166,8 +1203,17 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var data = await dataService.GetIntradayMessagesAsync(symbol.Trim(), source);
-            return Results.Ok(data);
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var data = await dataService.GetIntradayMessagesAsync(StockSymbolNormalizer.Normalize(symbol), source);
+            var deduplicated = data
+                .GroupBy(m => (m.Title, m.PublishedAt))
+                .Select(g => g.First())
+                .ToList();
+            return Results.Ok(deduplicated);
         })
         .WithName("GetIntradayMessages")
         .WithOpenApi();
@@ -1180,8 +1226,18 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var target = symbol.Trim();
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var target = StockSymbolNormalizer.Normalize(symbol);
             var quote = await dataService.GetQuoteAsync(target, source);
+            if (quote is null)
+            {
+                return Results.NotFound(new { error = "not_found", message = "未找到该股票数据" });
+            }
+
             var messages = await dataService.GetIntradayMessagesAsync(target, source);
             var impact = impactService.Evaluate(target, quote.Name, messages);
             return Results.Ok(impact);
@@ -1284,8 +1340,18 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var target = symbol.Trim();
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var target = StockSymbolNormalizer.Normalize(symbol);
             var quote = await dataService.GetQuoteAsync(target, source);
+            if (quote is null)
+            {
+                return Results.NotFound(new { error = "not_found", message = "未找到该股票数据" });
+            }
+
             var kline = await dataService.GetKLineAsync(target, "day", 60, source);
             var minute = await dataService.GetMinuteLineAsync(target, source);
             var messages = await dataService.GetIntradayMessagesAsync(target, source);
@@ -1307,13 +1373,23 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
+            if (!StockSymbolNormalizer.IsValid(request.Symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
             if (request.Capital <= 0)
             {
                 return Results.BadRequest(new { message = "capital 必须大于0" });
             }
 
-            var target = request.Symbol.Trim();
+            var target = StockSymbolNormalizer.Normalize(request.Symbol);
             var quote = await dataService.GetQuoteAsync(target, request.Source);
+            if (quote is null)
+            {
+                return Results.NotFound(new { error = "not_found", message = "未找到该股票数据" });
+            }
+
             var kline = await dataService.GetKLineAsync(target, "day", 60, request.Source);
             var minute = await dataService.GetMinuteLineAsync(target, request.Source);
             var messages = await dataService.GetIntradayMessagesAsync(target, request.Source);
@@ -1352,7 +1428,12 @@ public sealed class StocksModule : IModule
                 return Results.BadRequest(new { message = "symbol 不能为空" });
             }
 
-            var target = symbol.Trim();
+            if (!StockSymbolNormalizer.IsValid(symbol))
+            {
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+            }
+
+            var target = StockSymbolNormalizer.Normalize(symbol);
             var cancellationToken = httpContext.RequestAborted;
             var quoteTask = dataService.GetQuoteAsync(target, source, cancellationToken);
             var messagesTask = dataService.GetIntradayMessagesAsync(target, source, cancellationToken);
@@ -1371,6 +1452,11 @@ public sealed class StocksModule : IModule
             }
 
             var quote = await quoteTask;
+            if (quote is null)
+            {
+                return Results.NotFound(new { error = "not_found", message = "未找到该股票数据" });
+            }
+
             var messages = await messagesTask;
             var fundamentalSnapshot = fundamentalSnapshotTask is null ? null : await fundamentalSnapshotTask;
             var detail = new StockDetailSummaryDto(quote, messages, fundamentalSnapshot);
@@ -1666,6 +1752,8 @@ public sealed class StocksModule : IModule
             }
 
             var item = await historyService.RecordAsync(request);
+            if (item is null)
+                return Results.BadRequest(new { message = "无效的股票代码" });
             return Results.Ok(item);
         })
         .WithName("RecordStockHistory")
@@ -1836,7 +1924,7 @@ public sealed class StocksModule : IModule
         group.MapGet("/research/active-session", async (string symbol, IResearchSessionService researchService, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
-                return Results.BadRequest(new { message = "symbol 不能为空" });
+                return Results.BadRequest(new { error = "missing_symbol", message = "股票代码不能为空" });
 
             var dto = await researchService.GetActiveSessionAsync(symbol.Trim(), ct);
             return Results.Ok(dto);
@@ -1855,7 +1943,7 @@ public sealed class StocksModule : IModule
         group.MapGet("/research/sessions", async (string symbol, int? limit, IResearchSessionService researchService, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(symbol))
-                return Results.BadRequest(new { message = "symbol 不能为空" });
+                return Results.BadRequest(new { error = "missing_symbol", message = "股票代码不能为空" });
 
             var list = await researchService.ListSessionsAsync(symbol.Trim(), limit ?? 20, ct);
             return Results.Ok(list);
@@ -1947,6 +2035,85 @@ public sealed class StocksModule : IModule
         .WithName("CancelResearchSession")
         .WithOpenApi();
 
+        group.MapPost("/research/sessions/{sessionId:long}/retry-from-stage", async (long sessionId,
+            RecommendRetryFromStageRequestDto request,
+            AppDbContext db, IServiceScopeFactory scopeFactory, CancellationToken ct) =>
+        {
+            var session = await db.ResearchSessions
+                .Include(s => s.Turns)
+                .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
+            if (session is null)
+                return Results.NotFound(new { message = "Research session not found" });
+
+            var latestTurn = session.Turns
+                .OrderByDescending(t => t.TurnIndex)
+                .FirstOrDefault();
+            if (latestTurn is null)
+                return Results.BadRequest(new { message = "No turns found in session" });
+
+            if (latestTurn.Status == ResearchTurnStatus.Running)
+                return Results.Conflict(new { message = "Turn is already running" });
+
+            var fromStage = request.FromStageIndex;
+            if (fromStage < 0 || fromStage > 5)
+                return Results.BadRequest(new { message = "fromStageIndex must be between 0 and 5" });
+
+            var turnId = latestTurn.Id;
+
+            // Reset turn for partial rerun
+            latestTurn.Status = ResearchTurnStatus.Queued;
+            latestTurn.ContinuationMode = ResearchContinuationMode.PartialRerun;
+            latestTurn.RerunScope = fromStage.ToString();
+            latestTurn.StopReason = null;
+            latestTurn.CompletedAt = null;
+            session.Status = ResearchSessionStatus.Running;
+            session.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+
+            if (!_concurrentTurns.Wait(0))
+                return Results.StatusCode(429);
+
+            var cts = new CancellationTokenSource();
+            _turnCancellationSources.TryAdd(turnId, cts);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var scopedRunner = scope.ServiceProvider.GetRequiredService<IResearchRunner>();
+                    try
+                    {
+                        await scopedRunner.RunTurnAsync(turnId, cts.Token);
+                    }
+                    catch (Exception ex)
+                    {
+                        var logger = scope.ServiceProvider.GetService<ILogger<StocksModule>>();
+                        logger?.LogError(ex, "Research retry-from-stage turn {TurnId} from stage {Stage} failed", turnId, fromStage);
+                        try
+                        {
+                            var eventBus = scope.ServiceProvider.GetService<IRecommendEventBus>();
+                            eventBus?.Publish(new RecommendEvent(
+                                RecommendEventType.TurnFailed, 0, turnId, null, null, null, null,
+                                $"研究重试流水线启动失败: {ex.Message}", null, DateTime.UtcNow));
+                            eventBus?.MarkTurnTerminal(turnId);
+                        }
+                        catch { /* best-effort */ }
+                    }
+                }
+                finally
+                {
+                    _turnCancellationSources.TryRemove(turnId, out var removed);
+                    removed?.Dispose();
+                    _concurrentTurns.Release();
+                }
+            });
+
+            return Results.Ok(new { TurnId = turnId, FromStageIndex = fromStage });
+        })
+        .WithName("RetryResearchFromStage")
+        .WithOpenApi();
+
         // ── R5: Structured artifact endpoints ──────────────────────────────
 
         group.MapGet("/research/turns/{turnId:long}/artifacts", async (long turnId, IResearchArtifactService artifactService, CancellationToken ct) =>
@@ -2011,13 +2178,16 @@ public sealed class StocksModule : IModule
             if (!_concurrentTurns.Wait(0))
                 return Results.StatusCode(429);
 
+            var cts = new CancellationTokenSource();
+            _turnCancellationSources.TryAdd(turnId, cts);
+
             _ = Task.Run(async () =>
             {
                 try
                 {
                     using var scope = scopeFactory.CreateScope();
                     var scopedRunner = scope.ServiceProvider.GetRequiredService<IRecommendationRunner>();
-                    try { await scopedRunner.RunTurnAsync(turnId, CancellationToken.None); }
+                    try { await scopedRunner.RunTurnAsync(turnId, cts.Token); }
                     catch (Exception ex)
                     {
                         var logger = scope.ServiceProvider.GetService<ILogger<StocksModule>>();
@@ -2035,6 +2205,8 @@ public sealed class StocksModule : IModule
                 }
                 finally
                 {
+                    _turnCancellationSources.TryRemove(turnId, out var removed);
+                    removed?.Dispose();
                     _concurrentTurns.Release();
                 }
             });
@@ -2138,13 +2310,16 @@ public sealed class StocksModule : IModule
                     if (!_concurrentTurns.Wait(0))
                         return Results.StatusCode(429);
 
+                    var cts = new CancellationTokenSource();
+                    _turnCancellationSources.TryAdd(turnId, cts);
+
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             using var scope = scopeFactory.CreateScope();
                             var scopedRunner = scope.ServiceProvider.GetRequiredService<IRecommendationRunner>();
-                            try { await scopedRunner.RunPartialTurnAsync(turnId, fromStage, CancellationToken.None); }
+                            try { await scopedRunner.RunPartialTurnAsync(turnId, fromStage, cts.Token); }
                             catch (Exception ex)
                             {
                                 var logger = scope.ServiceProvider.GetService<ILogger<StocksModule>>();
@@ -2162,6 +2337,8 @@ public sealed class StocksModule : IModule
                         }
                         finally
                         {
+                            _turnCancellationSources.TryRemove(turnId, out var removed);
+                            removed?.Dispose();
                             _concurrentTurns.Release();
                         }
                     });
@@ -2173,13 +2350,16 @@ public sealed class StocksModule : IModule
                     if (!_concurrentTurns.Wait(0))
                         return Results.StatusCode(429);
 
+                    var cts = new CancellationTokenSource();
+                    _turnCancellationSources.TryAdd(turnId, cts);
+
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             using var scope = scopeFactory.CreateScope();
                             var scopedRunner = scope.ServiceProvider.GetRequiredService<IRecommendationRunner>();
-                            try { await scopedRunner.RunTurnAsync(turnId, CancellationToken.None); }
+                            try { await scopedRunner.RunTurnAsync(turnId, cts.Token); }
                             catch (Exception ex)
                             {
                                 var logger = scope.ServiceProvider.GetService<ILogger<StocksModule>>();
@@ -2197,6 +2377,8 @@ public sealed class StocksModule : IModule
                         }
                         finally
                         {
+                            _turnCancellationSources.TryRemove(turnId, out var removed);
+                            removed?.Dispose();
                             _concurrentTurns.Release();
                         }
                     });
@@ -2237,6 +2419,9 @@ public sealed class StocksModule : IModule
             if (!_concurrentTurns.Wait(0))
                 return Results.StatusCode(429);
 
+            var cts = new CancellationTokenSource();
+            _turnCancellationSources.TryAdd(turnId, cts);
+
             _ = Task.Run(async () =>
             {
                 try
@@ -2245,7 +2430,7 @@ public sealed class StocksModule : IModule
                     var scopedRunner = scope.ServiceProvider.GetRequiredService<IRecommendationRunner>();
                     try
                     {
-                        await scopedRunner.RunPartialTurnAsync(turnId, fromStage, CancellationToken.None);
+                        await scopedRunner.RunPartialTurnAsync(turnId, fromStage, cts.Token);
                     }
                     catch (Exception ex)
                     {
@@ -2264,6 +2449,8 @@ public sealed class StocksModule : IModule
                 }
                 finally
                 {
+                    _turnCancellationSources.TryRemove(turnId, out var removed);
+                    removed?.Dispose();
                     _concurrentTurns.Release();
                 }
             });
@@ -2271,6 +2458,42 @@ public sealed class StocksModule : IModule
             return Results.Ok(new { TurnId = turnId, FromStageIndex = fromStage });
         })
         .WithName("RetryFromStage")
+        .WithOpenApi();
+
+        recGroup.MapPost("/sessions/{id:long}/cancel", async (long id,
+            IRecommendationSessionService sessionService, AppDbContext db, CancellationToken ct) =>
+        {
+            var session = await sessionService.GetSessionDetailAsync(id, ct);
+            if (session is null) return Results.NotFound();
+
+            var activeTurn = session.Turns.FirstOrDefault(t => t.Status == "Running" || t.Status == "Queued");
+            if (activeTurn is null)
+                return Results.Ok(new { cancelled = false, reason = "no_active_turn" });
+
+            if (_turnCancellationSources.TryRemove(activeTurn.Id, out var cts))
+            {
+                cts.Cancel();
+                cts.Dispose();
+            }
+
+            // Mark turn as cancelled in DB
+            var turnEntity = await db.RecommendationTurns.FindAsync(new object[] { activeTurn.Id }, ct);
+            if (turnEntity is not null && turnEntity.Status == RecommendTurnStatus.Running)
+            {
+                turnEntity.Status = RecommendTurnStatus.Cancelled;
+                turnEntity.CompletedAt = DateTime.UtcNow;
+                var sessionEntity = await db.RecommendationSessions.FindAsync(new object[] { id }, ct);
+                if (sessionEntity is not null)
+                {
+                    sessionEntity.Status = RecommendSessionStatus.Completed;
+                    sessionEntity.UpdatedAt = DateTime.UtcNow;
+                }
+                await db.SaveChangesAsync(ct);
+            }
+
+            return Results.Ok(new { cancelled = true, turnId = activeTurn.Id });
+        })
+        .WithName("CancelRecommendSession")
         .WithOpenApi();
 
         recGroup.MapGet("/sessions/{id:long}/events", async (long id,
@@ -2417,7 +2640,7 @@ public sealed class StocksModule : IModule
 
             async Task WriteJsonEventAsync(string eventId, object payload, CancellationToken cancellationToken)
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var json = System.Text.Json.JsonSerializer.Serialize(payload, SseJsonOptions);
                 await httpContext.Response.WriteAsync($"id: {eventId}\n", cancellationToken);
                 await httpContext.Response.WriteAsync($"data: {json}\n\n", cancellationToken);
                 await httpContext.Response.Body.FlushAsync(cancellationToken);
@@ -2703,7 +2926,8 @@ public sealed class StocksModule : IModule
         var normalized = StockSymbolNormalizer.Normalize(symbol);
         if (normalized.Length == 8
             && (normalized.StartsWith("sh", StringComparison.OrdinalIgnoreCase)
-                || normalized.StartsWith("sz", StringComparison.OrdinalIgnoreCase)))
+                || normalized.StartsWith("sz", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith("bj", StringComparison.OrdinalIgnoreCase)))
         {
             return normalized[2..];
         }
@@ -2919,14 +3143,16 @@ public sealed class StocksModule : IModule
         bool includeCollectErrorFields,
         string fallbackMessage)
     {
-        var error = ExtractJsonString(responseText, "error")
+        var error = ErrorSanitizer.SanitizeErrorMessage(
+            ExtractJsonString(responseText, "error")
             ?? ExtractJsonString(responseText, "message")
             ?? ExtractJsonString(responseText, "errorMessage")
-            ?? fallbackMessage;
-        var detail = ExtractJsonString(responseText, "detail");
-        var errorMessage = ExtractJsonString(responseText, "errorMessage")
+            ?? fallbackMessage);
+        var detail = ErrorSanitizer.SanitizeErrorMessage(ExtractJsonString(responseText, "detail"));
+        var errorMessage = ErrorSanitizer.SanitizeErrorMessage(
+            ExtractJsonString(responseText, "errorMessage")
             ?? ExtractJsonString(responseText, "ErrorMessage")
-            ?? error;
+            ?? error);
         var status = ExtractJsonString(responseText, "status") ?? fallbackStatus;
 
         if (string.IsNullOrWhiteSpace(detail) && !string.IsNullOrWhiteSpace(responseText) && !LooksLikeJson(responseText))

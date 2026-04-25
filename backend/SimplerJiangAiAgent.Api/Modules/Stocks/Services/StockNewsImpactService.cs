@@ -126,21 +126,21 @@ public sealed class StockNewsImpactService : IStockNewsImpactService
             .ThenByDescending(item => Math.Abs(item.ImpactScore))
             .First();
 
-        var avgScore = (int)Math.Round(group.Average(item => item.ImpactScore));
-        var category = avgScore >= 20
+        var maxScore = group.OrderByDescending(item => Math.Abs(item.ImpactScore)).First().ImpactScore;
+        var category = maxScore >= 20
             ? "利好"
-            : avgScore <= -20
+            : maxScore <= -20
                 ? "利空"
                 : "中性";
 
         var avgTypeWeight = Math.Round((decimal)group.Average(item => (double)item.TypeWeight), 2);
         var avgSourceCredibility = Math.Round((decimal)group.Average(item => (double)item.SourceCredibility), 2);
         var sources = string.Join("/", group.Select(item => item.Source).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().Take(3));
-        var reason = $"同主题合并:{group.Count}条；均分:{avgScore}；来源:{sources}";
+        var reason = $"同主题合并:{group.Count}条；最强信号:{maxScore}；来源:{sources}";
 
         return representative with
         {
-            ImpactScore = avgScore,
+            ImpactScore = maxScore,
             Category = category,
             MergedCount = group.Count,
             TypeWeight = avgTypeWeight,

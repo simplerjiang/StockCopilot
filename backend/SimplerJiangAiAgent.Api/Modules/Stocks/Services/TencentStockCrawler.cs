@@ -22,7 +22,7 @@ public sealed class TencentStockCrawler : IStockCrawlerSource
 
     public string SourceName => "腾讯";
 
-    public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var normalized = StockSymbolNormalizer.Normalize(symbol);
         var quoteSymbol = ResolveQuoteSymbol(normalized);

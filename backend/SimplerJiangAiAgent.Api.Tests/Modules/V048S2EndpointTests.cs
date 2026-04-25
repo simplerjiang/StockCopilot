@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Modules.Market;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
@@ -12,7 +13,7 @@ namespace SimplerJiangAiAgent.Api.Tests;
 /// <summary>
 /// V048-S2 #71 + #78 集成测试：
 ///   #71 — /api/* 未命中应返 404，而不是被 SPA fallback 吞成 index.html (200)
-///   #78 — /api/market/sync 并发请求应立刻返 409 而不是 30s 阻塞
+///   #78 — /api/market/sync 并发请求应立刻返 429 而不是 30s 阻塞
 /// </summary>
 public sealed class V048S2EndpointTests : IClassFixture<V048S2EndpointTests.Factory>
 {
@@ -44,7 +45,7 @@ public sealed class V048S2EndpointTests : IClassFixture<V048S2EndpointTests.Fact
     }
 
     [Fact]
-    public async Task MarketSync_ConcurrentRequests_OneSucceeds_OthersReturn409Immediately()
+    public async Task MarketSync_ConcurrentRequests_OneSucceeds_OthersReturn429Immediately()
     {
         // 用 stub 模拟较慢的 SyncAsync（200ms），让 5 路并发能命中并发窗口
         var stub = new SlowStubSectorRotationIngestionService(TimeSpan.FromMilliseconds(300));
@@ -64,16 +65,16 @@ public sealed class V048S2EndpointTests : IClassFixture<V048S2EndpointTests.Fact
             $"5 路并发耗时 {sw.Elapsed.TotalSeconds:F2}s 超过 5s 上限");
 
         var okCount = responses.Count(r => r.StatusCode == HttpStatusCode.OK);
-        var conflictCount = responses.Count(r => r.StatusCode == HttpStatusCode.Conflict);
+        var throttledCount = responses.Count(r => r.StatusCode == HttpStatusCode.TooManyRequests);
 
-        // 恰好 1 个 200，其余 4 个 409
+        // 恰好 1 个 200，其余 4 个 429
         Assert.Equal(1, okCount);
-        Assert.Equal(4, conflictCount);
+        Assert.Equal(4, throttledCount);
 
-        // 409 响应体应包含 throttled 标识
-        var conflictBody = await responses.First(r => r.StatusCode == HttpStatusCode.Conflict)
+        // 429 响应体应包含 throttled 标识
+        var throttledBody = await responses.First(r => r.StatusCode == HttpStatusCode.TooManyRequests)
             .Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("throttled", conflictBody.GetProperty("status").GetString());
+        Assert.Equal("throttled", throttledBody.GetProperty("status").GetString());
     }
 
     [Fact]
@@ -98,9 +99,20 @@ public sealed class V048S2EndpointTests : IClassFixture<V048S2EndpointTests.Fact
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            var dataRoot = Path.Combine(Path.GetTempPath(), "sjai-tests", nameof(V048S2EndpointTests), Guid.NewGuid().ToString("N"));
+
             builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Database:DataRootPath"] = dataRoot
+                });
+            });
             builder.ConfigureServices(services =>
             {
+                ApiTestDatabaseIsolation.UseIsolatedSqlite(services, dataRoot);
+
                 // 始终替换为可控 stub，按测试时间点读取 IngestionStub 字段（默认 50ms 延迟）
                 var existing = services.Where(d => d.ServiceType == typeof(ISectorRotationIngestionService)).ToList();
                 foreach (var d in existing) services.Remove(d);

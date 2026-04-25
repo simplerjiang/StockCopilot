@@ -6,6 +6,7 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 internal static class SinaCompanyNewsParser
 {
+    private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
     public static IReadOnlyList<IntradayMessageDto> ParseCompanyNews(string html)
     {
         if (string.IsNullOrWhiteSpace(html))
@@ -50,15 +51,16 @@ internal static class SinaCompanyNewsParser
             return DateTime.UtcNow;
         }
 
-        if (DateTime.TryParse(timeText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed))
+        if (DateTime.TryParse(timeText, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
         {
-            return parsed;
+            return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified), ChinaTimeZone);
         }
 
         if (TimeSpan.TryParse(timeText, CultureInfo.InvariantCulture, out var time))
         {
-            var today = DateTime.Today;
-            return new DateTime(today.Year, today.Month, today.Day, time.Hours, time.Minutes, 0);
+            var today = DateTime.UtcNow.Date;
+            var local = new DateTime(today.Year, today.Month, today.Day, time.Hours, time.Minutes, 0, DateTimeKind.Unspecified);
+            return TimeZoneInfo.ConvertTimeToUtc(local, ChinaTimeZone);
         }
 
         return DateTime.UtcNow;

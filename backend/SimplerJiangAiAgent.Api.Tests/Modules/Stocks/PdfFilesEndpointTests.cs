@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Contracts;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
@@ -365,9 +366,20 @@ public class PdfFilesEndpointTests : IClassFixture<PdfFilesEndpointTests.Factory
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            var dataRoot = Path.Combine(Path.GetTempPath(), "sjai-tests", nameof(PdfFilesEndpointTests), Guid.NewGuid().ToString("N"));
+
             builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Database:DataRootPath"] = dataRoot
+                });
+            });
             builder.ConfigureServices(services =>
             {
+                ApiTestDatabaseIsolation.UseIsolatedSqlite(services, dataRoot);
+
                 foreach (var d in services.Where(s => s.ServiceType == typeof(IPdfFileQueryService)).ToList())
                 {
                     services.Remove(d);

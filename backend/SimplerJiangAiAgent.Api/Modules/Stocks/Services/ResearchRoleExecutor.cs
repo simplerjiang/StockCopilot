@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Diagnostics;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
@@ -566,15 +567,17 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         _sessionLogger?.LogRoleLlmError(context.SessionId, context.TurnId, context.RoleId,
             lastLlmException?.GetType().Name ?? "Unknown", lastLlmException?.Message ?? "Unknown error");
 
+        var sanitizedMsg = ErrorSanitizer.SanitizeErrorMessage(lastLlmException?.Message);
+
         _eventBus.Publish(new ResearchEvent(
             ResearchEventType.RoleFailed,
             context.SessionId, context.TurnId, context.StageId,
             context.RoleId, null,
-            $"Role {context.RoleId} LLM failed after {MaxLlmRetries + 1} attempts: {lastLlmException?.Message}",
+            $"Role {context.RoleId} LLM failed after {MaxLlmRetries + 1} attempts: {sanitizedMsg}",
             null, DateTime.UtcNow));
 
         return new RoleExecutionResult(context.RoleId, ResearchRoleStatus.Failed,
-            null, null, degradedFlags, "LLM_FAILED", lastLlmException?.Message,
+            null, null, degradedFlags, "LLM_FAILED", sanitizedMsg,
             JsonSerializer.Serialize(toolOutputRefs, RelaxedJsonOptions));
     }
 

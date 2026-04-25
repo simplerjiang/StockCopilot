@@ -289,7 +289,10 @@ public class FinancialDataReadService : IFinancialDataReadService
         var pars = new BsonDocument();
         var idx = 0;
 
-        var symbols = ParseCsv(query.Symbol);
+        var symbols = ParseCsv(query.Symbol)
+            .SelectMany(s => BuildSymbolAliases(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (symbols.Count > 0)
         {
             pars[$"p{idx}"] = new BsonArray(symbols.Select(s => (BsonValue)s));
@@ -366,18 +369,88 @@ public class FinancialDataReadService : IFinancialDataReadService
         var doc = col.FindById(objId);
         if (doc is null) return null;
 
+        var sourceChannel = SafeNullableString(doc, "SourceChannel");
+        var balanceSheet = BsonDocToDict(SafeDoc(doc, "BalanceSheet"));
+        var incomeStatement = BsonDocToDict(SafeDoc(doc, "IncomeStatement"));
+        var cashFlow = BsonDocToDict(SafeDoc(doc, "CashFlow"));
+
+        // Bug #35 fix: THS 通道在 LiteDB 中以"万元"为基准存储三大表的金额字段，
+        // 但前端（及其他消费者）按"元"渲染。历史上 GetKeyMetricsSummary / GetTrendSummary
+        // 已做过 ×10000 归一化，但 GetReportById 漏掉了，导致财报详情抽屉把
+        // 茅台 2025 年报总资产 3038.35 亿元 显示成 "3038.35万"（差 10000 倍）。
+        // 统一在返回前把 THS 原始字典里的金额字段乘以 10000。
+        if (string.Equals(sourceChannel, "ths", StringComparison.OrdinalIgnoreCase))
+        {
+            NormalizeThsRawDictToYuan(balanceSheet);
+            NormalizeThsRawDictToYuan(incomeStatement);
+            NormalizeThsRawDictToYuan(cashFlow);
+        }
+
         return new FinancialReportDetail(
             objId.ToString(),
             SafeString(doc, "Symbol"),
             SafeString(doc, "ReportDate"),
             SafeString(doc, "ReportType"),
             SafeInt32(doc, "CompanyType"),
-            SafeNullableString(doc, "SourceChannel"),
+            sourceChannel,
             TryGetDateTime(doc, "CollectedAt"),
             TryGetDateTime(doc, "UpdatedAt"),
-            BsonDocToDict(SafeDoc(doc, "BalanceSheet")),
-            BsonDocToDict(SafeDoc(doc, "IncomeStatement")),
-            BsonDocToDict(SafeDoc(doc, "CashFlow")));
+            balanceSheet,
+            incomeStatement,
+            cashFlow);
+    }
+
+    /// <summary>
+    /// 把 THS 原始字典中的"金额"字段从 万元 归一化成 元（×10000）。
+    /// 排除规则（按保守 allow-by-default + 例外跳过原则，避免错误地缩放比率/百分比/每股类字段）：
+    ///   - key 以 "_同比" 结尾（YoY 百分比）
+    ///   - key 包含 "每股"（每股收益等，单位已是 元/股）
+    ///   - key 包含 "率"（毛利率、ROE 等百分比）
+    ///   - key 以 "%" 结尾
+    /// 其他数值字段一律视为金额，从万元乘以 10000 转换成元。
+    /// </summary>
+    internal static void NormalizeThsRawDictToYuan(Dictionary<string, object?> dict)
+    {
+        if (dict is null || dict.Count == 0) return;
+
+        // 先拷贝 key 列表，避免遍历中修改字典
+        var keys = new List<string>(dict.Keys);
+        foreach (var key in keys)
+        {
+            if (string.IsNullOrEmpty(key)) continue;
+            if (IsThsNonMonetaryKey(key)) continue;
+
+            var val = dict[key];
+            if (val is double d && double.IsFinite(d))
+            {
+                dict[key] = d * 10000.0;
+            }
+            else if (val is float f && float.IsFinite(f))
+            {
+                dict[key] = (double)f * 10000.0;
+            }
+            else if (val is long l)
+            {
+                dict[key] = (double)l * 10000.0;
+            }
+            else if (val is int i)
+            {
+                dict[key] = (double)i * 10000.0;
+            }
+            else if (val is decimal m)
+            {
+                dict[key] = m * 10000m;
+            }
+        }
+    }
+
+    private static bool IsThsNonMonetaryKey(string key)
+    {
+        if (key.EndsWith("_同比", StringComparison.Ordinal)) return true;
+        if (key.EndsWith("%", StringComparison.Ordinal)) return true;
+        if (key.Contains("每股", StringComparison.Ordinal)) return true;
+        if (key.Contains("率", StringComparison.Ordinal)) return true;
+        return false;
     }
 
     private static FinancialReportListItem MapListItem(BsonDocument doc)

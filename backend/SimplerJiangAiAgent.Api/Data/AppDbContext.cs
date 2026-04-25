@@ -554,11 +554,15 @@ public sealed class AppDbContext : DbContext
             .HasIndex(x => x.UpdatedAt);
         modelBuilder.Entity<RecommendationSession>()
             .Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        modelBuilder.Entity<RecommendationSession>()
+            .Property(x => x.LastUserIntent).IsUnicode();
 
         modelBuilder.Entity<RecommendationTurn>()
             .HasIndex(x => new { x.SessionId, x.TurnIndex }).IsUnique();
         modelBuilder.Entity<RecommendationTurn>()
             .Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        modelBuilder.Entity<RecommendationTurn>()
+            .Property(x => x.UserPrompt).IsUnicode();
         modelBuilder.Entity<RecommendationTurn>()
             .HasOne(x => x.Session).WithMany(x => x.Turns)
             .HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);

@@ -32,7 +32,7 @@ public sealed class StockDataService : IStockDataService
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
     }
 
-    public async Task<StockQuoteDto> GetQuoteAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+    public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
     {
         var crawler = ResolveSource(source);
         var cacheKey = $"quote:{crawler.SourceName}:{symbol}";
@@ -42,7 +42,7 @@ public sealed class StockDataService : IStockDataService
             return await crawler.GetQuoteAsync(symbol, cancellationToken);
         });
 
-        return result ?? new StockQuoteDto(symbol, symbol, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, DateTime.UtcNow, Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>());
+        return result;
     }
 
     public async Task<MarketIndexDto> GetMarketIndexAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
@@ -73,7 +73,12 @@ public sealed class StockDataService : IStockDataService
 
                 if (result is { Count: > 0 })
                 {
-                    return result;
+                    // 过滤掉 High==0 && Low==0 的无效 K 线条目
+                    var filtered = result.Where(k => !(k.High == 0m && k.Low == 0m)).ToList();
+                    if (filtered.Count > 0)
+                    {
+                        return filtered;
+                    }
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

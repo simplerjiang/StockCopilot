@@ -22,17 +22,20 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
 
     private readonly AppDbContext _dbContext;
     private readonly IEastmoneySectorRotationClient _client;
+    private readonly IEastmoneyRealtimeMarketClient _realtimeClient;
     private readonly SectorRotationOptions _options;
     private readonly ILogger<SectorRotationIngestionService> _logger;
 
     public SectorRotationIngestionService(
         AppDbContext dbContext,
         IEastmoneySectorRotationClient client,
+        IEastmoneyRealtimeMarketClient realtimeClient,
         IOptions<SectorRotationOptions> options,
         ILogger<SectorRotationIngestionService> logger)
     {
         _dbContext = dbContext;
         _client = client;
+        _realtimeClient = realtimeClient;
         _options = options.Value;
         _logger = logger;
     }
@@ -103,7 +106,43 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             }
 
             var allRows = boardFetchResults.SelectMany(pair => pair.Value.Value).ToList();
+            var breadthSucceeded = breadthTask.Result.Succeeded;
             var breadthSnapshot = breadthTask.Result.Value;
+            var breadthFallbackUsed = false;
+            // Fallback: when push2/clist breadth fails (commonly 502 / RemoteDisconnected),
+            // try push2ex/getTopicZDFenBu which aggregates advancers/decliners/flat by change bucket.
+            // This preserves the top-panel diffusion/continuation/涨跌分布 metrics instead of
+            // collapsing the whole snapshot into "同步不完整".
+            if (!breadthSucceeded)
+            {
+                try
+                {
+                    var fallbackBreadth = await _realtimeClient.GetBreadthDistributionAsync(cancellationToken);
+                    if (fallbackBreadth is not null
+                        && (fallbackBreadth.Advancers + fallbackBreadth.Decliners + fallbackBreadth.FlatCount) > 0)
+                    {
+                        // getTopicZDFenBu does not return turnover; keep 0m so totalTurnover falls back to sector-sum.
+                        breadthSnapshot = new EastmoneyMarketBreadthSnapshot(
+                            fallbackBreadth.Advancers,
+                            fallbackBreadth.Decliners,
+                            fallbackBreadth.FlatCount,
+                            0m);
+                        breadthSucceeded = true;
+                        breadthFallbackUsed = true;
+                        _logger.LogWarning(
+                            "GOAL-009 市场广度主源 (push2/clist) 失败，已切换到 push2ex/getTopicZDFenBu 备用源: advancers={A}, decliners={D}, flat={F}, limitUp={LU}, limitDown={LD}",
+                            fallbackBreadth.Advancers,
+                            fallbackBreadth.Decliners,
+                            fallbackBreadth.FlatCount,
+                            fallbackBreadth.LimitUpCount,
+                            fallbackBreadth.LimitDownCount);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "GOAL-009 市场广度备用源 push2ex/getTopicZDFenBu 亦不可用");
+                }
+            }
             var limitUpCount = limitUpTask.Result.Value;
             var limitDownCount = limitDownTask.Result.Value;
             var brokenBoardCount = brokenBoardTask.Result.Value;
@@ -117,13 +156,24 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 : totalTurnoverBase;
             var degradedFlags = BuildDegradedFlags(
                 boardFetchResults,
-                breadthTask.Result.Succeeded,
+                breadthSucceeded,
                 limitUpTask.Result.Succeeded,
                 limitDownTask.Result.Succeeded,
                 brokenBoardTask.Result.Succeeded,
                 maxStreakTask.Result.Succeeded,
                 resolvedTotalTurnover);
-            var isCriticalSummaryIncomplete = !breadthTask.Result.Succeeded || resolvedTotalTurnover <= 0;
+            if (breadthFallbackUsed)
+            {
+                // Mark fallback path explicitly so /api/market/audit shows that the snapshot
+                // was saved via the secondary breadth source rather than collapsing.
+                degradedFlags.Add("market_breadth_clist_fallback_topic_zdfenbu");
+            }
+            var isCriticalSummaryIncomplete = !breadthSucceeded || resolvedTotalTurnover <= 0;
+            // Bug #6/#79: isDegraded should only be true when core data is ALL missing.
+            // When advancers/decliners/limitUp/limitDown have actual values, the snapshot is usable.
+            var hasCoreData = breadthSnapshot.Advancers > 0 || breadthSnapshot.Decliners > 0
+                || limitUpCount > 0 || limitDownCount > 0;
+            var isDegraded = degradedFlags.Count > 0 && !hasCoreData;
             var (top3Share, top10Share) = ComputeTurnoverConcentration(allRows, resolvedTotalTurnover);
             var brokenBoardRate = limitUpCount > 0
                 ? brokenBoardCount / (decimal)Math.Max(1, limitUpCount) * 100m
@@ -159,7 +209,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 Top10SectorTurnoverShare = top10Share,
                 StageLabelV2 = isCriticalSummaryIncomplete ? PartialStageLabel : string.Empty,
                 StageConfidence = isCriticalSummaryIncomplete ? 0m : 0m,
-                SourceTag = degradedFlags.Count > 0 ? PartialSourceTag : DefaultSourceTag,
+                SourceTag = isDegraded ? PartialSourceTag : DefaultSourceTag,
                 RawJson = JsonSerializer.Serialize(new
                 {
                     breadth = breadthSnapshot,
@@ -169,7 +219,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                     maxStreak = maxLimitUpStreak,
                     status = new
                     {
-                        isDegraded = degradedFlags.Count > 0,
+                        isDegraded,
                         isCriticalSummaryIncomplete,
                         degradeReason,
                         degradedFlags,
@@ -185,7 +235,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
 
             var shouldApplyMarketRollingMetrics = ShouldApplyMarketRollingMetrics(
                 marketSnapshot,
-                breadthTask.Result.Succeeded,
+                breadthSucceeded,
                 limitUpTask.Result.Succeeded,
                 limitDownTask.Result.Succeeded,
                 brokenBoardTask.Result.Succeeded,
@@ -196,7 +246,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                 _logger.LogWarning(
                     "MarketSentimentSnapshot 以 fresh partial 模式落库：关键市场数据抓取不完整。reasons={Reasons}, breadth={BreadthSucceeded}, turnover={TotalTurnover}, sectorRows={SectorRowCount}",
                     degradeReason,
-                    breadthTask.Result.Succeeded,
+                    breadthSucceeded,
                     marketSnapshot.TotalTurnover,
                     allRows.Count);
             }
@@ -223,21 +273,22 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
                         $"板块龙头 {row.SectorCode}")).Value.ToList();
                     var leaders = members.Take(Math.Max(1, _options.LeaderTake)).ToList();
                 var newsInsight = BuildNewsInsight(row.SectorName, reports);
-                    var advancerCount = members.Count(x => x.ChangePercent > 0);
-                    var declinerCount = members.Count(x => x.ChangePercent < 0);
-                    var flatMemberCount = Math.Max(0, members.Count - advancerCount - declinerCount);
-                    var limitUpMemberCount = members.Count(x => x.IsLimitUp);
-                    var diffusionRate = members.Count > 0
-                        ? decimal.Round(advancerCount / (decimal)members.Count * 100m, 2)
-                        : 50m;
-                    var breadthScore = members.Count > 0
-                        ? decimal.Round((advancerCount + limitUpMemberCount * 0.5m) / members.Count * 100m, 2)
-                    : 50m;
+                    var hasMemberData = members.Count > 0;
+                    int? advancerCount = hasMemberData ? members.Count(x => x.ChangePercent > 0) : null;
+                    int? declinerCount = hasMemberData ? members.Count(x => x.ChangePercent < 0) : null;
+                    int? flatMemberCount = hasMemberData ? Math.Max(0, members.Count - advancerCount!.Value - declinerCount!.Value) : null;
+                    int? limitUpMemberCount = hasMemberData ? members.Count(x => x.IsLimitUp) : null;
+                    decimal? diffusionRate = hasMemberData
+                        ? decimal.Round(advancerCount!.Value / (decimal)members.Count * 100m, 2)
+                        : null;
+                    decimal? breadthScore = hasMemberData
+                        ? decimal.Round((advancerCount!.Value + limitUpMemberCount!.Value * 0.5m) / members.Count * 100m, 2)
+                    : null;
                 var continuityScore = decimal.Round(Clamp(50m + row.ChangePercent * 5m + (leaders.FirstOrDefault()?.ChangePercent ?? 0m) * 2m, 0m, 100m), 2);
                 var flowScore = resolvedTotalTurnover > 0
                     ? Clamp(row.MainNetInflow / resolvedTotalTurnover * 1000m + 50m, 0m, 100m)
                     : 50m;
-                var strengthScore = decimal.Round(Clamp(breadthScore * 0.35m + continuityScore * 0.35m + flowScore * 0.30m, 0m, 100m), 2);
+                var strengthScore = decimal.Round(Clamp((breadthScore ?? 50m) * 0.35m + continuityScore * 0.35m + flowScore * 0.30m, 0m, 100m), 2);
 
                     var snapshot = new SectorRotationSnapshot
                 {
@@ -309,7 +360,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
             var degradedSnapshot = degradedFlags.ToArray();
             var businessComplete = degradedSnapshot.Length == 0;
             var sourceHealthy = boardFetchResults.Values.All(result => result.Succeeded)
-                && breadthTask.Result.Succeeded
+                && breadthSucceeded
                 && totalTurnoverTask.Result.Succeeded
                 && limitUpTask.Result.Succeeded
                 && limitDownTask.Result.Succeeded
@@ -335,7 +386,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
         catch (Exception ex)
         {
             _logger.LogError(ex, "同步 GOAL-009-R1 市场情绪与板块轮动快照失败");
-            throw;
+            // 不 rethrow：已 SaveChangesAsync 的部分数据保留，端点返回降级响应而非 500
         }
         finally
         {
@@ -708,7 +759,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
     {
         var rankScore = Clamp(50m + snapshot.RankChange10d * 6m, 0m, 100m);
         var value = snapshot.StrengthAvg10d * 0.30m
-            + snapshot.DiffusionRate * 0.20m
+            + (snapshot.DiffusionRate ?? 50m) * 0.20m
             + snapshot.ContinuityScore * 0.15m
             + snapshot.LeaderStabilityScore * 0.15m
             + rankScore * 0.20m;
@@ -719,7 +770,7 @@ public sealed class SectorRotationIngestionService : ISectorRotationIngestionSer
     {
         var total = Math.Max(1, marketSnapshot.Advancers + marketSnapshot.Decliners + marketSnapshot.FlatCount);
         var marketBreadth = Clamp(50m + (marketSnapshot.Advancers - marketSnapshot.Decliners) / (decimal)total * 50m, 0m, 100m);
-        var sectorDiffusion = RoundAverage(topSectors.Select(item => item.DiffusionRate)) ?? 50m;
+        var sectorDiffusion = RoundAverage(topSectors.Where(item => item.DiffusionRate.HasValue).Select(item => item.DiffusionRate!.Value)) ?? 50m;
         return decimal.Round(Clamp(marketBreadth * 0.55m + sectorDiffusion * 0.45m, 0m, 100m), 2);
     }
 

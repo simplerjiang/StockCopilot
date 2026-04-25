@@ -15,9 +15,17 @@ public sealed class StockSignalService : IStockSignalService
         var trendScore = CalculateTrendScore(detail.KLines, detail.Quote.ChangePercent);
         var alignmentScore = CalculateAlignmentScore(eventImpactScore, trendScore);
         var confidence = Math.Clamp((Math.Abs(eventImpactScore) + Math.Abs(trendScore) + alignmentScore) / 3, 0, 100);
+
+        // 最小样本量保护：证据过少时 cap 置信度上限
+        var totalEvidenceCount = impact.Summary.Positive + impact.Summary.Negative;
+        if (totalEvidenceCount < 3)
+            confidence = Math.Min(confidence, 20);
+        else if (totalEvidenceCount < 5)
+            confidence = Math.Min(confidence, 35);
+
         var recommendation = BuildRecommendation(eventImpactScore, trendScore, alignmentScore);
 
-        var evidence = BuildEvidence(detail, impact, trendScore, alignmentScore);
+        var evidence = BuildEvidence(detail, impact, trendScore, alignmentScore, totalEvidenceCount);
         var counterEvidence = BuildCounterEvidence(detail, impact, trendScore, alignmentScore);
         var signals = BuildSignals(recommendation, eventImpactScore, trendScore, alignmentScore);
 
@@ -102,9 +110,17 @@ public sealed class StockSignalService : IStockSignalService
         return list;
     }
 
-    private static IReadOnlyList<string> BuildEvidence(StockDetailDto detail, StockNewsImpactDto impact, int trendScore, int alignmentScore)
+    private static IReadOnlyList<string> BuildEvidence(StockDetailDto detail, StockNewsImpactDto impact, int trendScore, int alignmentScore, int totalEvidenceCount)
     {
         var list = new List<string>();
+        if (totalEvidenceCount < 3)
+        {
+            list.Add($"⚠️ 样本不足（仅{totalEvidenceCount}条证据，置信度已下调）");
+        }
+        else if (totalEvidenceCount < 5)
+        {
+            list.Add($"⚠️ 样本偏少（{totalEvidenceCount}条证据，置信度已下调）");
+        }
         if (impact.Summary.Positive > impact.Summary.Negative)
         {
             list.Add($"利好事件多于利空（{impact.Summary.Positive}:{impact.Summary.Negative}）");

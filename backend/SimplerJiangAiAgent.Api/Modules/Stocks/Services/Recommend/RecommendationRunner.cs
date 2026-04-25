@@ -374,24 +374,55 @@ public sealed class RecommendationRunner : IRecommendationRunner
     {
         try
         {
+            var now = DateTime.UtcNow;
+
             var runningSnapshots = await _db.RecommendationStageSnapshots
                 .Where(ss => ss.TurnId == turnId && ss.Status == RecommendStageStatus.Running)
                 .ToListAsync(CancellationToken.None);
 
-            if (runningSnapshots.Count == 0) return;
-
             foreach (var snapshot in runningSnapshots)
             {
                 snapshot.Status = RecommendStageStatus.Failed;
-                snapshot.CompletedAt ??= DateTime.UtcNow;
+                snapshot.CompletedAt ??= now;
             }
+
+            // Cascade: fail all running/pending RoleStates belonging to this turn
+            var stageIds = await _db.RecommendationStageSnapshots
+                .Where(ss => ss.TurnId == turnId)
+                .Select(ss => ss.Id)
+                .ToListAsync(CancellationToken.None);
+
+            if (stageIds.Count > 0)
+            {
+                var orphanRoles = await _db.RecommendationRoleStates
+                    .Where(rs => stageIds.Contains(rs.StageId)
+                        && (rs.Status == RecommendRoleStatus.Running || rs.Status == RecommendRoleStatus.Pending))
+                    .ToListAsync(CancellationToken.None);
+
+                foreach (var role in orphanRoles)
+                {
+                    role.Status = RecommendRoleStatus.Failed;
+                    role.CompletedAt ??= now;
+                }
+
+                if (orphanRoles.Count > 0)
+                {
+                    _logger.LogInformation("Marked {Count} running/pending role states as Failed for turn {TurnId}",
+                        orphanRoles.Count, turnId);
+                }
+            }
+
+            if (runningSnapshots.Count > 0)
+            {
+                _logger.LogInformation("Marked {Count} running stage snapshots as Failed for turn {TurnId}",
+                    runningSnapshots.Count, turnId);
+            }
+
             await _db.SaveChangesAsync(CancellationToken.None);
-            _logger.LogInformation("Marked {Count} running stage snapshots as Failed for turn {TurnId}",
-                runningSnapshots.Count, turnId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to mark running snapshots as Failed for turn {TurnId}", turnId);
+            _logger.LogWarning(ex, "Failed to mark running snapshots/role states as Failed for turn {TurnId}", turnId);
         }
     }
 
@@ -613,11 +644,15 @@ public sealed class RecommendationRunner : IRecommendationRunner
                     judgeResult = await scopedExecutor.ExecuteAsync(judgeContext, ct);
                 }
 
+                // Strip CONSENSUS_REACHED: prefix from judge output before persisting
+                bool isConsensus = judgeResult.Success && judgeResult.OutputJson?.Contains("CONSENSUS_REACHED", StringComparison.OrdinalIgnoreCase) == true;
+                if (isConsensus)
+                    judgeResult = judgeResult with { OutputJson = judgeResult.OutputJson!.Replace("CONSENSUS_REACHED:", "").Trim() };
+
                 await UpdateRoleStateAsync(judgeState, judgeResult, ct);
                 results.Add(judgeResult);
 
-                // Early termination if judge signals consensus
-                if (judgeResult.Success && judgeResult.OutputJson?.Contains("CONSENSUS_REACHED", StringComparison.OrdinalIgnoreCase) == true)
+                if (isConsensus)
                     break;
             }
         }

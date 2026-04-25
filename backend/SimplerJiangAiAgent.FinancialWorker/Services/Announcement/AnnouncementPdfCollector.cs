@@ -348,6 +348,8 @@ public class AnnouncementPdfCollector
         return clean.Length > 80 ? clean[..80] : clean;
     }
 
+    private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
+
     private static DateTime ParseEastmoneyTime(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -360,8 +362,8 @@ public class AnnouncementPdfCollector
             normalized = normalized[..lastColon];
 
         if (DateTime.TryParse(normalized, CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeLocal, out var parsed))
-            return parsed;
+                DateTimeStyles.None, out var parsed))
+            return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified), ChinaTimeZone);
 
         return DateTime.UtcNow;
     }

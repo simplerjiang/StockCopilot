@@ -46,8 +46,8 @@ public sealed class HistoricalBackfillService : IHistoricalBackfillService
             days = Math.Clamp(days, 1, 365);
             var maxPages = Math.Clamp(days / 2, 5, 100);
 
-            // Clear old data to avoid mixing cumulative + daily values
-            await ClearOldDataAsync(code, ct);
+            // Use upsert (ON CONFLICT UPDATE) instead of delete+reinsert
+            // to avoid a window where concurrent queries return 0 results.
 
             foreach (var scraper in _scrapers)
             {

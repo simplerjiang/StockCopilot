@@ -87,6 +87,11 @@ public sealed class HighFrequencyQuoteService : BackgroundService
                 await Task.WhenAll(quoteTask, minuteTask);
 
                 var quote = await quoteTask;
+                if (quote is null)
+                {
+                    return;
+                }
+
                 var messages = await GetMessagesSafelyAsync(messagesTask, symbol, token);
                 var detail = new StockDetailDto(quote, Array.Empty<KLinePointDto>(), await minuteTask, messages);
                 await syncService.SaveDetailAsync(detail, "day", token);

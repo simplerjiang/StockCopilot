@@ -30,6 +30,11 @@ public sealed class LocalFactArticleReadService : ILocalFactArticleReadService
 
     private static readonly Regex MultiWhitespaceRegex = new("\\s+", RegexOptions.Compiled);
     private static readonly Regex BoilerplateRegex = new("(责任编辑|免责声明|原标题|来源：|点击进入专题)", RegexOptions.Compiled);
+
+    private static readonly string[] LeadingNavKeywords =
+    {
+        "财经", "焦点", "股票", "新股", "期指", "期权", "基金", "理财", "外汇", "保险", "行情", "数据", "资讯", "直播"
+    };
     private readonly HttpClient _httpClient;
     private readonly ILogger<LocalFactArticleReadService> _logger;
 
@@ -234,6 +239,8 @@ public sealed class LocalFactArticleReadService : ILocalFactArticleReadService
         var text = HtmlEntity.DeEntitize(container.InnerText ?? string.Empty);
         text = MultiWhitespaceRegex.Replace(text, " ").Trim();
 
+        text = StripLeadingNavBar(text);
+
         var boilerplateIndex = BoilerplateRegex.Match(text).Index;
         if (boilerplateIndex > 120)
         {
@@ -241,6 +248,37 @@ public sealed class LocalFactArticleReadService : ILocalFactArticleReadService
         }
 
         return text.Length > 4000 ? text[..4000].Trim() : text;
+    }
+
+    private static string StripLeadingNavBar(string text)
+    {
+        var head = text.Length > 100 ? text[..100] : text;
+        var matchCount = LeadingNavKeywords.Count(kw => head.Contains(kw));
+        if (matchCount < 5)
+        {
+            return text;
+        }
+
+        var lastEnd = 0;
+        foreach (var kw in LeadingNavKeywords)
+        {
+            var idx = head.LastIndexOf(kw, StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                var end = idx + kw.Length;
+                if (end > lastEnd)
+                {
+                    lastEnd = end;
+                }
+            }
+        }
+
+        while (lastEnd < text.Length && char.IsWhiteSpace(text[lastEnd]))
+        {
+            lastEnd++;
+        }
+
+        return lastEnd < text.Length ? text[lastEnd..] : text;
     }
 
     private static void RemoveNodes(HtmlDocument document, string xPath)

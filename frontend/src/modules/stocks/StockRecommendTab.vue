@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import RecommendReportCard from './recommend/RecommendReportCard.vue'
 import RecommendFeed from './recommend/RecommendFeed.vue'
 import RecommendProgress from './recommend/RecommendProgress.vue'
@@ -23,6 +23,9 @@ const marketError = ref('')
 
 const statusPhase = ref('idle') // 'idle' | 'submitting' | 'connecting' | 'running' | 'completed' | 'failed'
 const statusMessage = ref('')
+const lastSseEventAt = ref(null)
+const sseReconnectDelaySeconds = ref(null)
+const sseBackendStatusText = ref('')
 const submitStartTime = ref(null)
 const elapsedSeconds = ref(0)
 let elapsedTimer = null
@@ -40,6 +43,9 @@ const TURN_LIVE_STATUSES = new Set(['Pending', 'Queued', 'Running'])
 const TURN_RUNNING_STATUSES = new Set(['Queued', 'Running'])
 const TURN_TERMINAL_STATUSES = new Set(['Completed', 'Failed', 'Cancelled'])
 const SESSION_TERMINAL_STATUSES = new Set(['Completed', 'Degraded', 'Failed', 'Closed', 'TimedOut'])
+const SSE_RETRY_DELAYS_SECONDS = [1, 2, 5]
+
+const formatSseEventTime = value => value ? cnDateTimeFormatter.format(new Date(value)) : '暂无'
 
 const parseDateMs = value => {
   if (!value) return null
@@ -228,6 +234,22 @@ const syncRuntimeFromLoadedSession = session => {
 
   statusPhase.value = runtime.phase
   statusMessage.value = runtime.message
+}
+
+const updateSseBackendStatusFromSession = session => {
+  if (!session) {
+    sseBackendStatusText.value = '后台状态不明'
+    return
+  }
+  const sessionStatus = getSessionStatusValue(session)
+  const turnStatus = getTurnStatusValue(getActiveSessionTurn(session))
+  if (sessionStatus === 'Running' || TURN_RUNNING_STATUSES.has(turnStatus) || TURN_LIVE_STATUSES.has(turnStatus)) {
+    sseBackendStatusText.value = '后台分析仍在运行'
+  } else if (SESSION_TERMINAL_STATUSES.has(sessionStatus) || TURN_TERMINAL_STATUSES.has(turnStatus)) {
+    sseBackendStatusText.value = '后台分析已结束'
+  } else {
+    sseBackendStatusText.value = '后台状态不明'
+  }
 }
 
 const topSectors = computed(() => realtimeSectors.value.slice(0, 6))
@@ -468,6 +490,8 @@ const connectSse = (sessionId) => {
   closeSse()
   failedSseSessionId = null
   sseRetryCount = 0
+  sseReconnectDelaySeconds.value = null
+  sseBackendStatusText.value = ''
   seenSseEventIds = new Map()
   isRunning.value = true
   eventSourceSessionId = sessionId
@@ -478,12 +502,15 @@ const connectSse = (sessionId) => {
 
   eventSource.onopen = () => {
     sseRetryCount = 0
+    sseReconnectDelaySeconds.value = null
+    sseBackendStatusText.value = ''
     failedSseSessionId = null
     statusPhase.value = 'running'
     statusMessage.value = '分析进行中，团队正在讨论...'
   }
 
   eventSource.onmessage = (e) => {
+    lastSseEventAt.value = new Date().toISOString()
     if (e.data === '[DONE]') {
       statusPhase.value = 'completed'
       statusMessage.value = `分析完成！耗时 ${elapsedSeconds.value} 秒`
@@ -548,15 +575,19 @@ const connectSse = (sessionId) => {
 
   eventSource.onerror = () => {
     sseRetryCount++
+    const nextDelay = SSE_RETRY_DELAYS_SECONDS[Math.min(sseRetryCount - 1, SSE_RETRY_DELAYS_SECONDS.length - 1)]
+    sseReconnectDelaySeconds.value = nextDelay
     if (sseRetryCount >= SSE_MAX_RETRIES) {
       failedSseSessionId = sessionId
       statusPhase.value = 'failed'
-      statusMessage.value = 'SSE 连接失败，请刷新页面重试'
+      statusMessage.value = 'SSE 连接失败，已停止自动重试'
       stopElapsedTimer()
       isRunning.value = false
       closeSse()
-      void loadSessionDetail(sessionId)
+      void loadSessionDetail(sessionId).then(updateSseBackendStatusFromSession)
+      return
     }
+    statusMessage.value = `SSE 连接中断，浏览器将在约 ${nextDelay} 秒后自动重试（${sseRetryCount}/${SSE_MAX_RETRIES}）`
   }
 }
 
@@ -572,6 +603,8 @@ const reconnectSse = () => {
   if (!activeSession.value) return
   failedSseSessionId = null
   sseRetryCount = 0
+  sseReconnectDelaySeconds.value = null
+  sseBackendStatusText.value = ''
   statusPhase.value = 'connecting'
   statusMessage.value = '正在重试...'
   const activeTurn = getActiveSessionTurn(activeSession.value)
@@ -807,7 +840,15 @@ const handleFollowUp = async (prompt) => {
   }
 }
 
-const cancelAnalysis = () => {
+const cancelAnalysis = async () => {
+  if (activeSession.value) {
+    const id = activeSession.value.Id ?? activeSession.value.id
+    if (id) {
+      try {
+        await fetch(`/api/recommend/sessions/${id}/cancel`, { method: 'POST' })
+      } catch { /* best-effort */ }
+    }
+  }
   closeSse()
   stopElapsedTimer()
   isRunning.value = false
@@ -919,7 +960,13 @@ const quickActions = computed(() => {
   return actions
 })
 
-const handleQuickAction = (prompt) => handleFollowUp(prompt)
+const handleQuickAction = (prompt) => {
+  if (activeSession.value) {
+    handleFollowUp(prompt)
+  } else {
+    handleNewRecommend(prompt)
+  }
+}
 
 const handleViewStock = (symbol) => {
   if (symbol && typeof window !== 'undefined') {
@@ -951,6 +998,39 @@ onUnmounted(() => {
   componentAlive = false
   closeSse()
   stopElapsedTimer()
+})
+
+// V048-S2 #82: keep-alive re-activation — reconnect SSE if session still running
+onActivated(() => {
+  componentAlive = true
+  const session = activeSession.value
+  if (!session) {
+    void resumeRunningSessionIfAny()
+    return
+  }
+  const sessionStatus = getSessionStatusValue(session)
+  const activeTurn = getActiveSessionTurn(session)
+  const turnStatus = getTurnStatusValue(activeTurn)
+  const sessionId = session.id ?? session.Id
+  const needsSse = (sessionStatus === 'Running' || TURN_RUNNING_STATUSES.has(turnStatus) || TURN_LIVE_STATUSES.has(turnStatus))
+    && sessionId != null
+    && eventSourceSessionId !== sessionId
+  if (needsSse) {
+    failedSseSessionId = null
+    sseRetryCount = 0
+    statusPhase.value = 'connecting'
+    statusMessage.value = '检测到会话仍在执行，正在重新连接分析流...'
+    const startedAt = getTurnStartedAt(activeTurn) ?? getTurnRequestedAt(activeTurn) ?? Date.now()
+    startElapsedTimer(startedAt)
+    isRunning.value = true
+    connectSse(sessionId)
+  }
+})
+
+onDeactivated(() => {
+  // Don't close SSE on deactivation — keep the connection alive
+  // so events are not lost while the tab is inactive.
+  // SSE will be cleaned up properly in onUnmounted.
 })
 
 watch(realtimeContextEnabled, value => {
@@ -1060,42 +1140,55 @@ watch(realtimeContextEnabled, value => {
         </div>
 
         <div v-if="statusPhase === 'failed'" class="sse-reconnect-bar">
-          <span class="sse-error-text">{{ statusMessage }}</span>
+          <div class="sse-error-text">
+            <span>{{ statusMessage }}</span>
+            <small>最后事件：{{ formatSseEventTime(lastSseEventAt) }} · {{ sseBackendStatusText || '后台状态不明' }} · 重试 {{ sseRetryCount }}/{{ SSE_MAX_RETRIES }}<template v-if="sseReconnectDelaySeconds"> · 最近退避 {{ sseReconnectDelaySeconds }}s</template></small>
+          </div>
           <button class="sse-reconnect-btn" @click="reconnectSse">
             再试一次
           </button>
         </div>
 
-        <!-- Tab bar -->
-        <div class="tab-bar">
-          <button class="tab-btn" :class="{ active: activeTab === 'report' }" @click="activeTab = 'report'">推荐报告</button>
-          <button class="tab-btn" :class="{ active: activeTab === 'debate' }" @click="activeTab = 'debate'">辩论过程</button>
-          <button class="tab-btn" :class="{ active: activeTab === 'progress' }" @click="activeTab = 'progress'">团队进度</button>
+        <!-- Bug #59: Empty guide when no active session -->
+        <div v-if="!activeSession && statusPhase === 'idle' && !isRunning" class="recommend-empty-guide">
+          <div class="empty-guide-icon">🤖</div>
+          <h3>智能选股推荐</h3>
+          <p>在下方输入你的投资问题，或点击快捷按钮开始分析。</p>
+          <p class="muted">系统将调度 13 个 AI 角色，通过多阶段辩论为你筛选优质标的。</p>
         </div>
 
-        <!-- Tab content -->
-        <div class="tab-content">
-          <RecommendReportCard v-if="activeTab === 'report'"
-            :session="activeSession"
-            @view-stock="handleViewStock"
-            @deep-analyze="handleDeepAnalyze" />
-          <RecommendFeed v-else-if="activeTab === 'debate'"
-            :session="activeSession"
-            :sse-events="sseEvents"
-            :is-running="isRunning" />
-          <RecommendProgress v-else-if="activeTab === 'progress'"
-            :session="activeSession"
-            :sse-events="sseEvents"
-            :is-running="isRunning"
-            @retry-from-stage="handleRetryFromStage" />
-        </div>
+        <template v-else>
+          <!-- Tab bar -->
+          <div class="tab-bar">
+            <button class="tab-btn" :class="{ active: activeTab === 'report' }" @click="activeTab = 'report'">推荐报告</button>
+            <button class="tab-btn" :class="{ active: activeTab === 'debate' }" @click="activeTab = 'debate'">辩论过程</button>
+            <button class="tab-btn" :class="{ active: activeTab === 'progress' }" @click="activeTab = 'progress'">团队进度</button>
+          </div>
+
+          <!-- Tab content -->
+          <div class="tab-content">
+            <RecommendReportCard v-if="activeTab === 'report'"
+              :session="activeSession"
+              @view-stock="handleViewStock"
+              @deep-analyze="handleDeepAnalyze" />
+            <RecommendFeed v-else-if="activeTab === 'debate'"
+              :session="activeSession"
+              :sse-events="sseEvents"
+              :is-running="isRunning" />
+            <RecommendProgress v-else-if="activeTab === 'progress'"
+              :session="activeSession"
+              :sse-events="sseEvents"
+              :is-running="isRunning"
+              @retry-from-stage="handleRetryFromStage" />
+          </div>
+        </template>
 
         <!-- Follow-up input -->
         <div class="follow-up-bar">
           <div class="quick-actions">
             <button v-for="action in quickActions" :key="action.label"
               class="quick-btn" @click="handleQuickAction(action.prompt)"
-              :disabled="!activeSession || followUpSending">
+              :disabled="followUpSending">
               {{ action.label }}
             </button>
           </div>
@@ -1269,6 +1362,30 @@ watch(realtimeContextEnabled, value => {
 .session-status { font-size: 0.75rem; color: var(--color-text-secondary); }
 
 /* Tab bar */
+.recommend-empty-guide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  flex: 1;
+}
+.empty-guide-icon {
+  font-size: 3rem;
+  margin-bottom: 0.75rem;
+}
+.recommend-empty-guide h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  color: var(--color-text-heading);
+}
+.recommend-empty-guide p {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+}
+
 .tab-bar {
   display: flex; align-items: center; gap: 0.5rem;
   border-bottom: 1px solid var(--color-border-light); padding-bottom: 0.5rem;
@@ -1370,18 +1487,19 @@ watch(realtimeContextEnabled, value => {
 .status-dismiss:hover { opacity: 1; }
 
 .status-cancel {
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: var(--radius-sm, 4px);
+  background: #ef4444;
+  border: none;
+  border-radius: 4px;
   cursor: pointer;
-  color: inherit;
+  color: #fff;
   font-size: 0.8rem;
-  padding: 2px 8px;
+  font-weight: 600;
+  padding: 4px 14px;
   margin-left: 8px;
   line-height: 1.4;
   white-space: nowrap;
 }
-.status-cancel:hover { background: rgba(255,255,255,0.25); }
+.status-cancel:hover { background: #dc2626; }
 
 /* Tab content */
 .tab-content {
@@ -1459,9 +1577,14 @@ watch(realtimeContextEnabled, value => {
   margin: 8px 12px;
 }
 .sse-error-text {
+  display: grid;
+  gap: 2px;
   font-size: 12px;
   color: #cf1322;
   flex: 1;
+}
+.sse-error-text small {
+  color: #8c4a44;
 }
 .sse-reconnect-btn {
   padding: 4px 12px;

@@ -17,6 +17,10 @@ public sealed class OpenAiProviderTests
     [InlineData("normal response without fences", "normal response without fences")]
     [InlineData("```JSON\n{\"a\":1}\n```", "{\"a\":1}")]
     [InlineData("mixed content with ```json\n{}\n``` in middle", "mixed content with ```json\n{}\n``` in middle")]
+    [InlineData("```json\n{\"a\":1}\n```\n", "{\"a\":1}")] // trailing newline after closing fence
+    [InlineData("```json\n{\"a\":1}```", "{\"a\":1}")] // no newline before closing fence
+    [InlineData("```json\n{\"a\":1}", "{\"a\":1}")] // no closing fence at all
+    [InlineData("```\n{\"a\":1}", "{\"a\":1}")] // no lang tag, no closing fence
     public void StripMarkdownCodeFences_HandlesVariants(string input, string expected)
     {
         var result = OpenAiProvider.StripMarkdownCodeFences(input);

@@ -15,7 +15,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
 
     public string SourceName => "聚合";
 
-    public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var quotes = new List<(string SourceName, StockQuoteDto Quote)>();
         var preferredQuote = await TryGetQuoteAsync(symbol, EastmoneySourceName, cancellationToken);
@@ -27,8 +27,6 @@ public sealed class CompositeStockCrawler : IStockCrawler
             return fastQuote.Quote with
             {
                 Name = cleanName,
-                News = BuildPlaceholderNews(fastQuote.Quote.Symbol),
-                Indicators = BuildPlaceholderIndicators()
             };
         }
 
@@ -47,7 +45,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
             try
             {
                 var quote = await crawler.GetQuoteAsync(symbol, cancellationToken);
-                if (IsUsableQuote(quote))
+                if (quote is not null && IsUsableQuote(quote))
                 {
                     quotes.Add((crawler.SourceName, quote));
                 }
@@ -62,22 +60,12 @@ public sealed class CompositeStockCrawler : IStockCrawler
             .OrderByDescending(item => GetRealtimeScore(item.Quote))
             .Select(item => item.Quote)
             .FirstOrDefault(item => item.Price > 0m)
-            ?? quotes.Select(item => item.Quote).FirstOrDefault()
-            ?? new StockQuoteDto(
-                symbol,
-                string.Empty,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                DateTime.UtcNow,
-                Array.Empty<StockNewsDto>(),
-                Array.Empty<StockIndicatorDto>()
-            );
+            ?? quotes.Select(item => item.Quote).FirstOrDefault();
+
+        if (baseQuote is null)
+        {
+            return null;
+        }
 
         var mergedQuote = quotes.Select(item => item.Quote).Aggregate(baseQuote, MergeQuote);
 
@@ -99,11 +87,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
             mergedQuote = MergeFundamentals(mergedQuote, preferredFundamentals);
         }
 
-        return mergedQuote with
-        {
-            News = BuildPlaceholderNews(mergedQuote.Symbol),
-            Indicators = BuildPlaceholderIndicators()
-        };
+        return mergedQuote;
     }
 
     public async Task<MarketIndexDto> GetMarketIndexAsync(string symbol, CancellationToken cancellationToken = default)
@@ -197,28 +181,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
             .ToArray();
     }
 
-    private static IReadOnlyList<StockNewsDto> BuildPlaceholderNews(string symbol)
-    {
-        return new List<StockNewsDto>
-        {
-            new(
-                $"{symbol} 新闻示例标题",
-                "https://example.com",
-                "示例来源",
-                DateTime.UtcNow.AddHours(-2)
-            )
-        };
-    }
 
-    private static IReadOnlyList<StockIndicatorDto> BuildPlaceholderIndicators()
-    {
-        return new List<StockIndicatorDto>
-        {
-            new("MA5", 0m, null),
-            new("MA10", 0m, null),
-            new("RSI", 0m, null)
-        };
-    }
 
     private static bool IsUsableQuote(StockQuoteDto quote)
     {

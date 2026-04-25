@@ -95,6 +95,7 @@ const pullModelName = ref('')
 const pulling = ref(false)
 const pullMsg = ref('')
 let keepAliveTimer = null
+let ollamaAutoRefreshTimer = null
 
 // Embedding model management (v0.4.3 S8)
 const embeddingStatus = ref(null)
@@ -486,8 +487,11 @@ const applyProviderPreset = selectedProvider => {
 async function checkOllama() {
   ollamaStatus.value = 'checking'
   ollamaMsg.value = ''
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 10000)
   try {
-    const resp = await fetch('/api/admin/ollama/status', { headers: authHeaders() })
+    const resp = await fetch('/api/admin/ollama/status', { headers: authHeaders(), signal: controller.signal })
+    clearTimeout(timeoutId)
     if (resp.status === 401 || resp.status === 403) {
       handleUnauthorized()
       return
@@ -506,10 +510,24 @@ async function checkOllama() {
     syncProviderOllamaModelSelection()
     syncNewsOllamaModelSelection()
   } catch (e) {
-    ollamaStatus.value = 'error'
-    ollamaModels.value = []
-    ollamaMsg.value = e.message
+    clearTimeout(timeoutId)
+    if (e.name === 'AbortError') {
+      ollamaStatus.value = 'error'
+      ollamaModels.value = []
+      ollamaMsg.value = '检查超时（10 秒），请确认 Ollama 已启动且网络正常。'
+    } else {
+      ollamaStatus.value = 'error'
+      ollamaModels.value = []
+      ollamaMsg.value = e.message
+    }
   }
+  scheduleOllamaAutoRefresh()
+}
+
+function scheduleOllamaAutoRefresh() {
+  if (ollamaAutoRefreshTimer) { clearTimeout(ollamaAutoRefreshTimer); ollamaAutoRefreshTimer = null }
+  if (ollamaStatus.value === 'running') return
+  ollamaAutoRefreshTimer = setTimeout(() => { ollamaAutoRefreshTimer = null; checkOllama() }, 15000)
 }
 
 async function startOllama() {
@@ -1053,6 +1071,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopKeepAlive()
+  if (ollamaAutoRefreshTimer) { clearTimeout(ollamaAutoRefreshTimer); ollamaAutoRefreshTimer = null }
 })
 </script>
 
@@ -1214,6 +1233,12 @@ onUnmounted(() => {
         </div>
         <div v-if="embeddingStatus.error" class="status-error">
           ⚠️ {{ embeddingStatus.error }}
+        </div>
+        <div v-if="!embeddingStatus.available" class="embedding-warning-banner">
+          ⚠️ Embedding 服务不可用，RAG 向量检索功能将无法正常工作。请确认 Ollama 已运行并安装了 embedding 模型。
+        </div>
+        <div v-else-if="embeddingStatus.coverage != null && embeddingStatus.coverage === 0" class="embedding-warning-banner">
+          ⚠️ Embedding 覆盖率为 0%，尚无向量索引数据。请等待后台索引完成或手动触发重建。
         </div>
       </div>
 
@@ -1897,6 +1922,16 @@ onUnmounted(() => {
 .status-ok { color: #16a34a; font-weight: 600; }
 .status-off { color: #dc2626; font-weight: 600; }
 .status-error { color: #dc2626; font-size: 12px; margin-top: 4px; }
+.embedding-warning-banner {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  color: #92400e;
+}
 
 @media (max-width: 768px) {
   .ollama-runtime-grid {

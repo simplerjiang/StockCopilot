@@ -24,8 +24,14 @@ const formatDate = value => {
   return cnDateTimeFormatter.format(date)
 }
 const formatSignedPercent = value => {
+  if (value === null || value === undefined || value === '') return '—'
   const n = Number(value ?? 0)
+  if (!Number.isFinite(n)) return '—'
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
+}
+const formatOneDecimal = value => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n.toFixed(1) : '—'
 }
 const getWindowStrength = item => {
   if (props.compareWindow === '5d') return item.strengthAvg5d
@@ -39,6 +45,7 @@ const getWindowRankChange = item => {
 }
 const getWindowRankLabel = item => {
   const value = getWindowRankChange(item)
+  if (value === null || value === undefined || value === '') return '—'
   return `${value >= 0 ? '+' : ''}${value}`
 }
 const strengthColor = value => value > 0 ? '#ff5c5c' : value < 0 ? '#1ee88f' : '#c2cad8'
@@ -65,11 +72,11 @@ const strengthColor = value => value > 0 ? '#ff5c5c' : value < 0 ? '#1ee88f' : '
           <span class="sector-code" :title="`板块代码：${item.sectorCode}`">{{ item.sectorCode }}</span>
           <span v-if="item.isMainline" class="mainline-badge">主线</span>
           <span class="sector-change" :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0, 'market-rise': item.changePercent >= 0, 'market-fall': item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</span>
-          <span class="sector-strength">★{{ item.strengthScore.toFixed(1) }}</span>
+          <span class="sector-strength">★{{ formatOneDecimal(item.strengthScore) }}</span>
         </div>
         <div class="sector-metrics">
-          <span :style="{ color: strengthColor(getWindowStrength(item)) }">{{ compareWindowLabel }} {{ getWindowStrength(item).toFixed(1) }}</span>
-          <span>扩散 {{ item.diffusionRate.toFixed(1) }}</span>
+          <span :style="{ color: strengthColor(getWindowStrength(item)) }">{{ compareWindowLabel }} {{ formatOneDecimal(getWindowStrength(item)) }}</span>
+          <span>扩散 {{ formatOneDecimal(item.diffusionRate) }}</span>
           <span>{{ getWindowRankLabel(item) }}</span>
           <span class="sector-ts">{{ formatDate(item.snapshotTime) }}</span>
         </div>

@@ -14,7 +14,7 @@ public sealed class SinaStockCrawler : IStockCrawlerSource
 
     public string SourceName => "新浪";
 
-    public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var normalized = StockSymbolNormalizer.Normalize(symbol);
         var url = $"https://hq.sinajs.cn/list={normalized}";

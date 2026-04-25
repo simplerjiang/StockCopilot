@@ -87,6 +87,47 @@
 
 ---
 
+---
+
+## v0.4.8 Sprint（回归测试 111 条 Bug 修复 - 交易员可信度底线）
+
+### Sprint 目标
+
+**2026-04-24 两轮回归测试累计发现 111 条活跃 Bug（10+ Blocker）。本 Sprint 先修 3 条最致命、直接阻断交易员信任的 Blocker 组；其余降级为 Backlog。** 详情见 [.automation/buglist.md](buglist.md)。
+
+### Sprint 规则
+
+- 本 Sprint 为 L 级（Dev → Test → UI Designer → User Rep 双轮验收 → 写双语报告）
+- 每 Story 完成后立即 Test 验证才进下一 Story
+- 任一 Story 触发新 Blocker 立即停摆，先修新 Blocker
+
+### 活跃 Story（上限 3）
+
+| Story | 标题 | 分级 | 覆盖 Bug | 验收标准 | 状态 |
+|---|---|---|---|---|---|
+| V048-S1 | 交易账务闭环一致性 | L | #88/#89/#90/#91/#92 | 持仓账务 `成本+浮盈=市值` 自洽；交易流水→持仓→可用资金三者联动；0 笔交易健康度显示 N/A 而非 100%；持仓行点击 drill-down 跳回股票信息并自动搜索；快速录入代码→名称自动补齐 | TODO |
+| V048-S2 | 核心稳定性四件套 | L | #71/#78/#82/#85 | `/api/*` 未命中路径返 404 而非 SPA index.html（监控恢复可见性）；`/api/market/sync` 加 Semaphore + 429 throttle 避免并发 30s 全超时；股票推荐 SSE 切页回来自动按 sessionId 续上（或显著 reconnect 提示）；单角色运行 >3 分钟或 >工具上限 80% 时显示 ETA 警示与一键终止 | TODO |
+| V048-S3 | 财报数据语义完整 | L | #94/#95/#96/#107/#80 | PDF 来源标签与详情抽屉一致（有 PDF 才标 PDF）；茅台一季报明确标"累计(YTD)"或转为单季口径；关键字段缺失时不标"PDF 解析成功"；Embedding 能力不可用时股票信息/财报中心页主动显示降级横幅；PDF Q1 补齐"资产总计/负债总计"字段 | TODO |
+
+### Backlog（本 Sprint 不做，P1 优先）
+
+> **已关闭（WONT-FIX）**：#111 治理 Trace 脱敏撒谎 / #112 Dev Mode 一键开启无审计 / #63 SQL 注入载荷回显 lastUserIntent。原因：本地桌面单用户环境，prompt/追问直出即预期行为，不做文案修正、不做脱敏实现、不做开关门禁。#110 隔离策略失效保留为独立功能 Debt。
+
+- **V048-DEBT-3**（P1 Blocker）：#97 平安银行公告被绑 sh000001 上证指数 symbol
+- **V048-DEBT-5**（P1 Major）：#65/#68 symbol 归一 `sh600519` vs `600519` 跨接口不一致
+- **V048-DEBT-6**（P1 Major）：#66/#67/#22 Research 写端点 405 + 历史 47 条全 Failed
+- **V048-DEBT-7**（P1 Major）：#72 归档清洗 runId=1 卡 round_budget_reached 自动调度器失效
+- **V048-DEBT-8**（P2 Major）：#69 RAG hybrid 退化为 bm25 即便 Ollama 在线
+- **V048-DEBT-9**（P2 Major）：#76 Recommend lastUserIntent 中文 UTF-8/GBK 双重乱码
+- **V048-DEBT-10**（P2 Minor）：#101/#55 北向资金 3 处口径打架
+- **V048-DEBT-11**（P2 Minor）：#44/#103/#104 盘中消息带重复 + 凌晨时间戳无盘后标签
+- **V048-DEBT-12**（P2 Minor）：#45 最近查询 `invalid/invalid/0%` 垃圾条目 + 无清理入口
+- **V048-DEBT-13**（P3 Minor）：#48/#49 侧栏"交易计划""全局总览"Tab 空壳
+- **V048-DEBT-14**（P3 Minor）：#50 推荐历史近 20 条 15 失败 4 降级 仅 1 完成
+- **V048-DEBT-15**（P3 Minor）：#37/#11 LLM 幻觉标签"无荒隔靶点" + AI 标的打错
+- **V048-DEBT-16**（P3 Minor）：手册缺口 4 条（财报单位断言、情绪轮动完整性、资讯标签一致、交易日志卡片收敛）
+- **V048-DEBT-17**（P4 其余 60+ 条）：待 S1-S3 完成后分批排期
+
 ## 历史归档
 
 - v0.4.6 多 Agent 路由与财报 RAG 闭环 → 本看板"已完成 Sprint 摘要"

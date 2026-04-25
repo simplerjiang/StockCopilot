@@ -390,14 +390,14 @@ public sealed class LocalFactArchiveJobCoordinator : ILocalFactArchiveJobCoordin
                     return;
                 }
 
-                if (!shouldContinue)
-                {
-                    return;
-                }
-
                 if (IsPauseRequested(runId))
                 {
                     TransitionToPaused(runId, "后台清洗已暂停。", "当前批次处理完成后已进入暂停状态。", _status.Rounds);
+                    return;
+                }
+
+                if (!shouldContinue)
+                {
                     return;
                 }
             }
@@ -436,16 +436,19 @@ public sealed class LocalFactArchiveJobCoordinator : ILocalFactArchiveJobCoordin
             shouldContinue = !completed
                 && summary.Continuation?.MayContinueAutomatically == true;
 
+            var isBudgetPaused = !completed && !shouldContinue
+                && string.Equals(summary.Continuation?.ReasonCode, "round_budget_reached", StringComparison.Ordinal);
+
             _status = _status with
             {
-                State = completed ? "completed" : shouldContinue ? "running" : "failed",
+                State = completed ? "completed" : shouldContinue ? "running" : isBudgetPaused ? "paused" : "failed",
                 IsRunning = shouldContinue,
                 Completed = completed,
                 RequiresManualResume = !completed && !shouldContinue && summary.Remaining.Total > 0,
                 Rounds = rounds,
                 Processed = processed,
                 Remaining = summary.Remaining,
-                StopReason = completed || shouldContinue ? null : summary.StopReason,
+                StopReason = completed || shouldContinue || isBudgetPaused ? null : summary.StopReason,
                 Message = BuildStatusMessage(completed, shouldContinue, rounds, processed, summary),
                 Continuation = summary.Continuation,
                 AttentionMessage = shouldContinue
@@ -461,7 +464,9 @@ public sealed class LocalFactArchiveJobCoordinator : ILocalFactArchiveJobCoordin
                         ? CreateEvent("info", "progress", $"第 {rounds} 轮完成，后台清洗已完成。", round: rounds)
                         : shouldContinue
                             ? CreateEvent("info", "progress", $"第 {rounds} 轮完成，正在继续下一轮。", details: summary.StopReason, round: rounds)
-                            : CreateEvent("error", "progress", summary.StopReason ?? "后台清洗已停止，仍有待处理资讯。", round: rounds)),
+                            : isBudgetPaused
+                                ? CreateEvent("info", "progress", $"第 {rounds} 轮完成，已达到批次上限，可手动继续。", details: summary.StopReason, round: rounds)
+                                : CreateEvent("error", "progress", summary.StopReason ?? "后台清洗已停止，仍有待处理资讯。", round: rounds)),
                 UpdatedAt = now,
                 FinishedAt = shouldContinue ? null : now
             };
@@ -1147,7 +1152,7 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
         {
             return (
                 $"本轮已达到单次清洗上限（{budget.LimitDescription}），已保存部分结果。",
-                new LocalFactPendingContinuation(true, "round_budget_reached"));
+                new LocalFactPendingContinuation(false, "round_budget_reached"));
         }
 
         return (

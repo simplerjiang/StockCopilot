@@ -284,7 +284,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     const runningButton = wrapper.find('.archive-process-button')
-    expect(runningButton.text()).toContain('等待首轮结果')
+    expect(runningButton.text()).toContain('后台清洗启动中...')
     expect(runningButton.attributes('disabled')).toBeDefined()
     expect(runningButton.classes()).toContain('is-running')
     expect(wrapper.text()).toContain('暂停后台清洗')
@@ -295,7 +295,7 @@ describe('NewsArchiveTab', () => {
     await vi.advanceTimersByTimeAsync(2000)
     await flushFakeTimers()
 
-    expect(runningButton.text()).toContain('后台清洗进行中')
+    expect(runningButton.text()).toContain('清洗中：已处理 1 条，剩余 1 条（第 1 轮）')
     expect(wrapper.text()).toContain('已处理 1 条（大盘 1 / 板块 0 / 个股 0）')
     expect(wrapper.text()).toContain('剩余 1 条（大盘 0 / 板块 1 / 个股 0）')
     expect(wrapper.text()).toContain('累计轮次 1')
@@ -362,7 +362,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     const runningButton = wrapper.find('.archive-process-button')
-    expect(runningButton.text()).toContain('后台清洗进行中')
+    expect(runningButton.text()).toContain('清洗中：已处理 1 条，剩余 3 条（第 1 轮）')
     expect(runningButton.attributes('disabled')).toBeDefined()
     expect(runningButton.classes()).toContain('is-running')
     expect(wrapper.text()).toContain('暂停后台清洗')
@@ -623,7 +623,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     expect(fetchMock.mock.calls.filter(([url, options]) => url === '/api/news/archive/process-pending' && options?.method === 'POST')).toHaveLength(2)
-    expect(wrapper.find('.archive-process-button').text()).toContain('后台清洗进行中')
+    expect(wrapper.find('.archive-process-button').text()).toContain('清洗中：已处理 1 条，剩余 1 条（第 1 轮）')
     expect(wrapper.text()).toContain('暂停后台清洗')
 
     wrapper.unmount()
@@ -675,7 +675,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     expect(fetchMock.mock.calls.filter(([url, options]) => url === '/api/news/archive/process-pending/restart' && options?.method === 'POST')).toHaveLength(1)
-    expect(wrapper.find('.archive-process-button').text()).toContain('等待首轮结果')
+    expect(wrapper.find('.archive-process-button').text()).toContain('后台清洗启动中...')
     expect(wrapper.text()).toContain('暂停后台清洗')
     expect(wrapper.text()).not.toContain('重新开始清洗')
 

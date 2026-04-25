@@ -18,6 +18,8 @@ const page = ref(1)
 const pageSize = ref(12)
 const loading = ref(false)
 const syncing = ref(false)
+const syncCooldown = ref(0)
+let syncCooldownTimer = null
 const detailLoading = ref(false)
 const realtimeLoading = ref(false)
 const realtimeSectorBoardLoading = ref(false)
@@ -126,6 +128,7 @@ const isBreadthUnavailable = computed(() => isSummaryDegraded.value && hasDegrad
 const isDegradedContext = computed(() => isSummaryDegraded.value || sectorPageStatus.value.isDegraded)
 const _hasUsableTs = value => Boolean(String(value ?? '').trim())
 const _showAsUnavailable = (value, code, hasTimestamp) => {
+  if (value === null || value === undefined || value === '') return true
   if (!isDegradedContext.value) return false
   if (code) {
     const reasons = summary.value?.degradeReason || sectorPageStatus.value.degradeReason
@@ -216,22 +219,22 @@ const normalizeSummary = payload => payload ? ({
   stageLabel: payload.stageLabel ?? payload.StageLabel ?? '混沌',
   stageScore: Number(payload.stageScore ?? payload.StageScore ?? 0),
   maxLimitUpStreak: Number(payload.maxLimitUpStreak ?? payload.MaxLimitUpStreak ?? 0),
-  limitUpCount: Number(payload.limitUpCount ?? payload.LimitUpCount ?? 0),
-  limitDownCount: Number(payload.limitDownCount ?? payload.LimitDownCount ?? 0),
+  limitUpCount: normalizeOptionalNumber(payload.limitUpCount ?? payload.LimitUpCount),
+  limitDownCount: normalizeOptionalNumber(payload.limitDownCount ?? payload.LimitDownCount),
   brokenBoardCount: Number(payload.brokenBoardCount ?? payload.BrokenBoardCount ?? 0),
   brokenBoardRate: Number(payload.brokenBoardRate ?? payload.BrokenBoardRate ?? 0),
-  advancers: Number(payload.advancers ?? payload.Advancers ?? 0),
-  decliners: Number(payload.decliners ?? payload.Decliners ?? 0),
-  flatCount: Number(payload.flatCount ?? payload.FlatCount ?? 0),
+  advancers: normalizeOptionalNumber(payload.advancers ?? payload.Advancers),
+  decliners: normalizeOptionalNumber(payload.decliners ?? payload.Decliners),
+  flatCount: normalizeOptionalNumber(payload.flatCount ?? payload.FlatCount),
   totalTurnover: Number(payload.totalTurnover ?? payload.TotalTurnover ?? 0),
-  top3SectorTurnoverShare: Number(payload.top3SectorTurnoverShare ?? payload.Top3SectorTurnoverShare ?? 0),
-  top10SectorTurnoverShare: Number(payload.top10SectorTurnoverShare ?? payload.Top10SectorTurnoverShare ?? 0),
-  diffusionScore: Number(payload.diffusionScore ?? payload.DiffusionScore ?? 0),
-  continuationScore: Number(payload.continuationScore ?? payload.ContinuationScore ?? 0),
+  top3SectorTurnoverShare: normalizeOptionalNumber(payload.top3SectorTurnoverShare ?? payload.Top3SectorTurnoverShare),
+  top10SectorTurnoverShare: normalizeOptionalNumber(payload.top10SectorTurnoverShare ?? payload.Top10SectorTurnoverShare),
+  diffusionScore: normalizeOptionalNumber(payload.diffusionScore ?? payload.DiffusionScore),
+  continuationScore: normalizeOptionalNumber(payload.continuationScore ?? payload.ContinuationScore),
   stageLabelV2: payload.stageLabelV2 ?? payload.StageLabelV2 ?? '',
   stageConfidence: Number(payload.stageConfidence ?? payload.StageConfidence ?? 0),
-  top3SectorTurnoverShare5dAvg: Number(payload.top3SectorTurnoverShare5dAvg ?? payload.Top3SectorTurnoverShare5dAvg ?? 0),
-  top10SectorTurnoverShare5dAvg: Number(payload.top10SectorTurnoverShare5dAvg ?? payload.Top10SectorTurnoverShare5dAvg ?? 0),
+  top3SectorTurnoverShare5dAvg: normalizeOptionalNumber(payload.top3SectorTurnoverShare5dAvg ?? payload.Top3SectorTurnoverShare5dAvg),
+  top10SectorTurnoverShare5dAvg: normalizeOptionalNumber(payload.top10SectorTurnoverShare5dAvg ?? payload.Top10SectorTurnoverShare5dAvg),
   limitUpCount5dAvg: Number(payload.limitUpCount5dAvg ?? payload.LimitUpCount5dAvg ?? 0),
   brokenBoardRate5dAvg: Number(payload.brokenBoardRate5dAvg ?? payload.BrokenBoardRate5dAvg ?? 0),
   isDegraded: toBoolean(payload.isDegraded ?? payload.IsDegraded ?? false),
@@ -254,14 +257,14 @@ const normalizeSectorItem = item => ({
   sectorName: item.sectorName ?? item.SectorName ?? '',
   changePercent: Number(item.changePercent ?? item.ChangePercent ?? 0),
   mainNetInflow: Number(item.mainNetInflow ?? item.MainNetInflow ?? 0),
-  breadthScore: Number(item.breadthScore ?? item.BreadthScore ?? 0),
+  breadthScore: normalizeOptionalNumber(item.breadthScore ?? item.BreadthScore),
   continuityScore: Number(item.continuityScore ?? item.ContinuityScore ?? 0),
   strengthScore: Number(item.strengthScore ?? item.StrengthScore ?? 0),
   newsSentiment: item.newsSentiment ?? item.NewsSentiment ?? '中性',
   newsHotCount: Number(item.newsHotCount ?? item.NewsHotCount ?? 0),
   leaderSymbol: item.leaderSymbol ?? item.LeaderSymbol ?? '',
   leaderName: item.leaderName ?? item.LeaderName ?? '',
-  leaderChangePercent: item.leaderChangePercent ?? item.LeaderChangePercent ?? null,
+  leaderChangePercent: normalizeOptionalNumber(item.leaderChangePercent ?? item.LeaderChangePercent),
   rankNo: Number(item.rankNo ?? item.RankNo ?? 0),
   snapshotTime: item.snapshotTime ?? item.SnapshotTime ?? '',
   rankChange5d: Number(item.rankChange5d ?? item.RankChange5d ?? 0),
@@ -270,11 +273,11 @@ const normalizeSectorItem = item => ({
   strengthAvg5d: Number(item.strengthAvg5d ?? item.StrengthAvg5d ?? 0),
   strengthAvg10d: Number(item.strengthAvg10d ?? item.StrengthAvg10d ?? 0),
   strengthAvg20d: Number(item.strengthAvg20d ?? item.StrengthAvg20d ?? 0),
-  diffusionRate: Number(item.diffusionRate ?? item.DiffusionRate ?? 0),
-  advancerCount: Number(item.advancerCount ?? item.AdvancerCount ?? 0),
-  declinerCount: Number(item.declinerCount ?? item.DeclinerCount ?? 0),
-  flatMemberCount: Number(item.flatMemberCount ?? item.FlatMemberCount ?? 0),
-  limitUpMemberCount: Number(item.limitUpMemberCount ?? item.LimitUpMemberCount ?? 0),
+  diffusionRate: normalizeOptionalNumber(item.diffusionRate ?? item.DiffusionRate),
+  advancerCount: normalizeOptionalNumber(item.advancerCount ?? item.AdvancerCount),
+  declinerCount: normalizeOptionalNumber(item.declinerCount ?? item.DeclinerCount),
+  flatMemberCount: normalizeOptionalNumber(item.flatMemberCount ?? item.FlatMemberCount),
+  limitUpMemberCount: normalizeOptionalNumber(item.limitUpMemberCount ?? item.LimitUpMemberCount),
   leaderStabilityScore: Number(item.leaderStabilityScore ?? item.LeaderStabilityScore ?? 0),
   mainlineScore: Number(item.mainlineScore ?? item.MainlineScore ?? 0),
   isMainline: Boolean(item.isMainline ?? item.IsMainline ?? false)
@@ -291,7 +294,7 @@ const normalizeRealtimeSectorItem = item => ({
   mediumNetInflow: Number(item.mediumNetInflow ?? item.MediumNetInflow ?? 0),
   smallNetInflow: Number(item.smallNetInflow ?? item.SmallNetInflow ?? 0),
   turnoverAmount: Number(item.turnoverAmount ?? item.TurnoverAmount ?? 0),
-  turnoverShare: Number(item.turnoverShare ?? item.TurnoverShare ?? 0),
+  turnoverShare: normalizeOptionalNumber(item.turnoverShare ?? item.TurnoverShare),
   rankNo: Number(item.rankNo ?? item.RankNo ?? 0),
   snapshotTime: item.snapshotTime ?? item.SnapshotTime ?? ''
 })
@@ -309,15 +312,15 @@ const normalizeDetail = payload => payload ? ({
   history: Array.isArray(payload.history ?? payload.History) ? (payload.history ?? payload.History).map(item => ({
     tradingDate: item.tradingDate ?? item.TradingDate ?? '',
     changePercent: Number(item.changePercent ?? item.ChangePercent ?? 0),
-    breadthScore: Number(item.breadthScore ?? item.BreadthScore ?? 0),
+    breadthScore: normalizeOptionalNumber(item.breadthScore ?? item.BreadthScore),
     continuityScore: Number(item.continuityScore ?? item.ContinuityScore ?? 0),
     strengthScore: Number(item.strengthScore ?? item.StrengthScore ?? 0),
     rankNo: Number(item.rankNo ?? item.RankNo ?? 0),
-    diffusionRate: Number(item.diffusionRate ?? item.DiffusionRate ?? 0),
-    advancerCount: Number(item.advancerCount ?? item.AdvancerCount ?? 0),
-    declinerCount: Number(item.declinerCount ?? item.DeclinerCount ?? 0),
-    flatMemberCount: Number(item.flatMemberCount ?? item.FlatMemberCount ?? 0),
-    limitUpMemberCount: Number(item.limitUpMemberCount ?? item.LimitUpMemberCount ?? 0),
+    diffusionRate: normalizeOptionalNumber(item.diffusionRate ?? item.DiffusionRate),
+    advancerCount: normalizeOptionalNumber(item.advancerCount ?? item.AdvancerCount),
+    declinerCount: normalizeOptionalNumber(item.declinerCount ?? item.DeclinerCount),
+    flatMemberCount: normalizeOptionalNumber(item.flatMemberCount ?? item.FlatMemberCount),
+    limitUpMemberCount: normalizeOptionalNumber(item.limitUpMemberCount ?? item.LimitUpMemberCount),
     rankChange5d: Number(item.rankChange5d ?? item.RankChange5d ?? 0),
     rankChange10d: Number(item.rankChange10d ?? item.RankChange10d ?? 0),
     rankChange20d: Number(item.rankChange20d ?? item.RankChange20d ?? 0),
@@ -573,6 +576,18 @@ const forceSync = async () => {
   syncFeedback.value = null
   try {
     const res = await fetch('/api/market/sync', { method: 'POST' })
+    if (res.status === 429) {
+      const body = await res.json().catch(() => null)
+      const wait = body?.retryAfter || 30
+      syncCooldown.value = wait
+      if (syncCooldownTimer) clearInterval(syncCooldownTimer)
+      syncCooldownTimer = setInterval(() => {
+        syncCooldown.value--
+        if (syncCooldown.value <= 0) { clearInterval(syncCooldownTimer); syncCooldownTimer = null; syncCooldown.value = 0 }
+      }, 1000)
+      syncFeedback.value = { type: 'error', message: body?.message || '同步正在进行中，请稍后重试' }
+      return
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => null)
       throw new Error(body?.message || `同步失败 (${res.status})`)
@@ -656,7 +671,10 @@ onMounted(() => {
   fetchAudit()
   startAutoRefresh()
 })
-onUnmounted(() => { stopAutoRefresh() })
+onUnmounted(() => {
+  stopAutoRefresh()
+  if (syncCooldownTimer) { clearInterval(syncCooldownTimer); syncCooldownTimer = null }
+})
 </script>
 
 <template>
@@ -671,6 +689,7 @@ onUnmounted(() => { stopAutoRefresh() })
       :is-degraded="isSummaryDegraded"
       :degrade-reason="activeDegradeReasonText"
       :syncing="syncing"
+      :sync-cooldown="syncCooldown"
       @sync="forceSync"
     />
 
@@ -684,8 +703,8 @@ onUnmounted(() => { stopAutoRefresh() })
     <!-- 2. 指数+涨停跌停行 -->
     <IndexMetricStrip
       :indices="realtimeOverview?.indices ?? []"
-      :limit-up-count="displaySummary?.limitUpCount ?? 0"
-      :limit-down-count="displaySummary?.limitDownCount ?? 0"
+      :limit-up-count="displaySummary?.limitUpCount ?? null"
+      :limit-down-count="displaySummary?.limitDownCount ?? null"
       :broken-board-count="displaySummary?.brokenBoardCount ?? 0"
       :broken-board-rate="displaySummary?.brokenBoardRate ?? 0"
       :max-limit-up-streak="displaySummary?.maxLimitUpStreak ?? 0"
@@ -701,24 +720,24 @@ onUnmounted(() => { stopAutoRefresh() })
     <div class="overview-row">
       <BreadthBucketChart
         :buckets="realtimeOverview?.breadth?.buckets ?? []"
-        :advancers="displaySummary?.advancers ?? 0"
-        :decliners="displaySummary?.decliners ?? 0"
-        :flat-count="displaySummary?.flatCount ?? 0"
+        :advancers="displaySummary?.advancers ?? null"
+        :decliners="displaySummary?.decliners ?? null"
+        :flat-count="displaySummary?.flatCount ?? null"
         :timestamp="realtimeOverview?.breadth?.tradingDate ?? displaySummary?.snapshotTime ?? ''"
         :unavailable="isBreadthUnavailable"
       />
       <CapitalBreadthPanel
         :main-capital-flow="realtimeOverview?.mainCapitalFlow"
         :northbound-flow="realtimeOverview?.northboundFlow"
-        :diffusion-score="displaySummary?.diffusionScore ?? 0"
-        :continuation-score="displaySummary?.continuationScore ?? 0"
-        :top3-sector-turnover-share="displaySummary?.top3SectorTurnoverShare ?? 0"
-        :top10-sector-turnover-share="displaySummary?.top10SectorTurnoverShare ?? 0"
-        :top3-sector-turnover-share5d-avg="displaySummary?.top3SectorTurnoverShare5dAvg ?? 0"
-        :top10-sector-turnover-share5d-avg="displaySummary?.top10SectorTurnoverShare5dAvg ?? 0"
+        :diffusion-score="displaySummary?.diffusionScore ?? null"
+        :continuation-score="displaySummary?.continuationScore ?? null"
+        :top3-sector-turnover-share="displaySummary?.top3SectorTurnoverShare ?? null"
+        :top10-sector-turnover-share="displaySummary?.top10SectorTurnoverShare ?? null"
+        :top3-sector-turnover-share5d-avg="displaySummary?.top3SectorTurnoverShare5dAvg ?? null"
+        :top10-sector-turnover-share5d-avg="displaySummary?.top10SectorTurnoverShare5dAvg ?? null"
         :total-turnover="displaySummary?.totalTurnover ?? 0"
-        :advancers="displaySummary?.advancers ?? 0"
-        :decliners="displaySummary?.decliners ?? 0"
+        :advancers="displaySummary?.advancers ?? null"
+        :decliners="displaySummary?.decliners ?? null"
         :main-flow-unavailable="mainFlowUnavailable"
         :northbound-unavailable="northboundUnavailable"
         :diffusion-unavailable="diffusionUnavailable"

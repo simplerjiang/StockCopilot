@@ -44,7 +44,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         }
 
         var cacheKey = $"market:realtime:batch:{string.Join(',', normalizedSymbols)}";
-        return await GetCachedAsync(
+        var (result, _) = await GetCachedAsync(
             cacheKey,
             BatchFreshTtl,
             BatchStaleTtl,
@@ -52,6 +52,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
             ct => _client.GetBatchQuotesAsync(normalizedSymbols, ct),
             Array.Empty<BatchStockQuoteDto>(),
             cancellationToken);
+        return result;
     }
 
     public async Task<MarketRealtimeOverviewDto> GetOverviewAsync(IReadOnlyList<string>? indexSymbols = null, CancellationToken cancellationToken = default)
@@ -86,12 +87,13 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         await Task.WhenAll(quotesTask, mainFlowTask, northboundTask, breadthTask);
 
         var quotes = await FillMissingQuotesAsync(quotesTask.Result, safeSymbols, cancellationToken);
-        var mainFlow = mainFlowTask.Result;
-        var northbound = northboundTask.Result;
-        var breadth = breadthTask.Result;
+        var (mainFlow, mainFlowStale) = mainFlowTask.Result;
+        var (northbound, northboundStale) = northboundTask.Result;
+        var (breadth, breadthStale) = breadthTask.Result;
+        var isStale = mainFlowStale || northboundStale || breadthStale;
         var snapshotTime = ResolveSnapshotTime(quotes, mainFlow, northbound);
 
-        return new MarketRealtimeOverviewDto(snapshotTime, quotes, mainFlow, northbound, breadth);
+        return new MarketRealtimeOverviewDto(snapshotTime, quotes, mainFlow, northbound, breadth, isStale);
     }
 
     private async Task<IReadOnlyList<BatchStockQuoteDto>> TryGetBatchQuotesAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken)
@@ -160,7 +162,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         try
         {
             var quote = await _stockDataService.GetQuoteAsync(symbol, TencentSourceName, cancellationToken);
-            return IsUsableFallbackQuote(quote) ? ToBatchQuote(quote) : null;
+            return quote is not null && IsUsableFallbackQuote(quote) ? ToBatchQuote(quote) : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -199,7 +201,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
             quote.Timestamp);
     }
 
-    private async Task<T> GetCachedAsync<T>(
+    private async Task<(T Value, bool IsStale)> GetCachedAsync<T>(
         string cacheKey,
         TimeSpan freshTtl,
         TimeSpan staleTtl,
@@ -211,7 +213,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         var cached = _cache.Get<CachedRealtimeValue<T>>(cacheKey);
         if (IsFresh(cached, freshTtl))
         {
-            return cached!.Value;
+            return (cached!.Value, false);
         }
 
         var gate = CacheGates.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
@@ -221,7 +223,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
             cached = _cache.Get<CachedRealtimeValue<T>>(cacheKey);
             if (IsFresh(cached, freshTtl))
             {
-                return cached!.Value;
+                return (cached!.Value, false);
             }
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -230,7 +232,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
 
             if (value is null)
             {
-                return cached is not null ? cached.Value : fallback;
+                return cached is not null ? (cached.Value, true) : (fallback, false);
             }
 
             _cache.Set(
@@ -238,15 +240,15 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
                 new CachedRealtimeValue<T>(value, _timeProvider.GetUtcNow().UtcDateTime),
                 staleTtl);
 
-            return value;
+            return (value, false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return cached is not null ? cached.Value : fallback;
+            return cached is not null ? (cached.Value, true) : (fallback, false);
         }
         catch
         {
-            return cached is not null ? cached.Value : fallback;
+            return cached is not null ? (cached.Value, true) : (fallback, false);
         }
         finally
         {
