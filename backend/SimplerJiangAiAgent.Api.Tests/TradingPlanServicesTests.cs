@@ -564,6 +564,10 @@ public sealed class TradingPlanServicesTests
         await using var dbContext = CreateDbContext();
         var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), CreateMarketContextService(dbContext));
 
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var startDate = today.AddDays(5);
+        var endDate = today.AddDays(10);
+
         var result = await service.CreateAsync(new TradingPlanCreateDto(
           "sz000021",
           "深科技",
@@ -582,16 +586,16 @@ public sealed class TradingPlanServicesTests
           "观察执行窗口",
           "Draft",
           "Backup",
-          new DateOnly(2026, 4, 20),
-          new DateOnly(2026, 4, 25)));
+          startDate,
+          endDate));
 
         var savedPlan = await dbContext.TradingPlans.SingleAsync();
 
         Assert.True(result.WatchlistEnsured);
         Assert.Equal(TradingPlanStatus.Draft, savedPlan.Status);
         Assert.Equal("Backup", savedPlan.ActiveScenario);
-        Assert.Equal(new DateOnly(2026, 4, 20), savedPlan.PlanStartDate);
-        Assert.Equal(new DateOnly(2026, 4, 25), savedPlan.PlanEndDate);
+        Assert.Equal(startDate, savedPlan.PlanStartDate);
+        Assert.Equal(endDate, savedPlan.PlanEndDate);
       }
 
       [Fact]
@@ -792,6 +796,10 @@ public sealed class TradingPlanServicesTests
 
         var service = new TradingPlanService(dbContext, new ActiveWatchlistService(dbContext), CreateMarketContextService(dbContext));
 
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+        var startDate = today.AddDays(3);
+        var endDate = today.AddDays(15);
+
         var updated = await service.UpdateAsync(
           plan.Id,
           new TradingPlanUpdateDto(
@@ -810,8 +818,8 @@ public sealed class TradingPlanServicesTests
             null,
             "Triggered",
             "Backup",
-            new DateOnly(2026, 4, 18),
-            new DateOnly(2026, 4, 28)));
+            startDate,
+            endDate));
 
         Assert.NotNull(updated);
         Assert.Equal(TradingPlanStatus.Triggered, updated!.Status);
@@ -819,8 +827,8 @@ public sealed class TradingPlanServicesTests
         Assert.Equal("贵州茅台", updated.Title);
         Assert.Equal(1800m, updated.TriggerPrice);
         Assert.Equal("Backup", updated.ActiveScenario);
-        Assert.Equal(new DateOnly(2026, 4, 18), updated.PlanStartDate);
-        Assert.Equal(new DateOnly(2026, 4, 28), updated.PlanEndDate);
+        Assert.Equal(startDate, updated.PlanStartDate);
+        Assert.Equal(endDate, updated.PlanEndDate);
       }
 
       [Fact]
