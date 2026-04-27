@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
@@ -783,7 +784,7 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         }
         catch (Exception ex)
         {
-            return BuildFailedOutcome(approvedCall, ex.Message);
+            return BuildFailedOutcome(approvedCall, ErrorSanitizer.SanitizeErrorMessage(ex.Message) ?? string.Empty);
         }
     }
 

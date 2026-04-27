@@ -34,6 +34,11 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
         await Task.WhenAll(new Task[] { quoteTask, surveyTask, shareholderTask });
 
         var quote = EastmoneyStockParser.ParseQuote(normalized, await quoteTask);
+        if (quote is null)
+        {
+            return null;
+        }
+
         var surveyJson = await surveyTask;
         var shareholderJson = await shareholderTask;
         var profile = surveyJson is null
@@ -56,6 +61,11 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
             .ContinueWith(task =>
             {
                 var quote = task.Result;
+                if (quote is null)
+                {
+                    throw new InvalidOperationException($"东方财富行情不可用: {symbol}");
+                }
+
                 return new MarketIndexDto(quote.Symbol, quote.Name, quote.Price, quote.Change, quote.ChangePercent, quote.Timestamp);
             }, cancellationToken);
     }

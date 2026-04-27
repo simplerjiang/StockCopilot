@@ -33,6 +33,8 @@ public sealed record TradeExecutionUpdateDto(
     string? AbandonReason = null
 );
 
+public sealed record ResetAllTradesRequestDto(string? ConfirmText);
+
 // 交易记录响应
 public sealed record TradeExecutionItemDto(
     long Id,

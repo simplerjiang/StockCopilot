@@ -18,6 +18,15 @@ const activeProviderResponse = () => makeResponse({
   })
 })
 
+const antigravityActiveProviderResponse = () => makeResponse({
+  ok: true,
+  status: 200,
+  json: async () => ({
+    activeProviderKey: 'antigravity',
+    providerKeys: ['default', 'antigravity']
+  })
+})
+
 const ollamaActiveProviderResponse = () => makeResponse({
   ok: true,
   status: 200,
@@ -82,6 +91,51 @@ describe('AdminLlmSettings', () => {
     expect(localStorage.getItem('admin_token')).toBeNull()
     expect(wrapper.text()).toContain('管理员登录')
     expect(wrapper.text()).toContain('登录已过期')
+  })
+
+  it('shows neutral Antigravity authorization guidance without account-ban warning', async () => {
+    localStorage.setItem('admin_token', 'token')
+
+    const fetchMock = vi.fn(async (url) => {
+      if (url.includes('/api/admin/llm/settings/active')) {
+        return antigravityActiveProviderResponse()
+      }
+      if (!url.includes('/api/admin/llm/settings/active') && url.includes('/api/admin/llm/settings/antigravity')) {
+        return makeResponse({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            model: 'gemini-3-flash',
+            enabled: true,
+            hasApiKey: true,
+            organization: 'user@example.com'
+          })
+        })
+      }
+      if (url.includes('/api/admin/antigravity/models')) {
+        return makeResponse({ ok: true, status: 200, json: async () => [] })
+      }
+      if (!url.includes('/api/admin/llm/settings/') && url.includes('/api/admin/llm/news-cleansing')) {
+        return makeResponse({ ok: true, status: 200, json: async () => ({ provider: 'active', model: '', batchSize: 12 }) })
+      }
+      if (url.includes('/api/admin/ollama/status')) {
+        return ollamaStatusResponse({ status: 'not_running', installed: true, models: [] })
+      }
+      if (url.includes('/api/stocks/financial/embedding/status')) {
+        return makeResponse({ ok: true, status: 200, json: async () => ({ available: false }) })
+      }
+      return makeResponse({ ok: false, status: 404 })
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(AdminLlmSettings)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Antigravity 通道使用 Google 授权登录')
+    expect(wrapper.text()).not.toContain('封号风险')
+    expect(wrapper.text()).not.toContain('非主力账号')
   })
 
   it('includes system prompt when saving', async () => {

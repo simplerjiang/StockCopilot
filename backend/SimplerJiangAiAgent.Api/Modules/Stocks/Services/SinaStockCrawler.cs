@@ -24,15 +24,25 @@ public sealed class SinaStockCrawler : IStockCrawlerSource
         var fields = payload.Split(',');
         if (fields.Length < 4)
         {
-            return BuildEmptyQuote(normalized);
+            return null;
         }
 
-        var name = fields[0].Replace(" ", "");  // 中文股票名不应有空格
+        var name = StockNameNormalizer.NormalizeDisplayName(fields[0]);
         var open = ParseDecimal(fields.ElementAtOrDefault(1));
         var prevClose = ParseDecimal(fields.ElementAtOrDefault(2));
         var price = ParseDecimal(fields.ElementAtOrDefault(3));
         var high = ParseDecimal(fields.ElementAtOrDefault(4));
         var low = ParseDecimal(fields.ElementAtOrDefault(5));
+        if (string.IsNullOrWhiteSpace(name)
+            && open == 0m
+            && prevClose == 0m
+            && price == 0m
+            && high == 0m
+            && low == 0m)
+        {
+            return null;
+        }
+
         var change = price - prevClose;
         var changePercent = prevClose == 0 ? 0 : Math.Round(change / prevClose * 100, 2);
 
@@ -59,6 +69,11 @@ public sealed class SinaStockCrawler : IStockCrawlerSource
             .ContinueWith(task =>
             {
                 var quote = task.Result;
+                if (quote is null)
+                {
+                    return new MarketIndexDto(symbol, symbol, 0m, 0m, 0m, DateTime.UtcNow);
+                }
+
                 return new MarketIndexDto(
                     quote.Symbol,
                     quote.Name,
@@ -108,25 +123,6 @@ public sealed class SinaStockCrawler : IStockCrawlerSource
             .OrderByDescending(x => x.PublishedAt)
             .Take(20)
             .ToArray();
-    }
-
-    private static StockQuoteDto BuildEmptyQuote(string symbol)
-    {
-        return new StockQuoteDto(
-            symbol,
-            symbol,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            DateTime.UtcNow,
-            Array.Empty<StockNewsDto>(),
-            Array.Empty<StockIndicatorDto>()
-        );
     }
 
     private static string ExtractPayload(string raw)

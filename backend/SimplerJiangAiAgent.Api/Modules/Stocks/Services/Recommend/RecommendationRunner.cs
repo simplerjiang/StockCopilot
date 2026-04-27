@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
@@ -94,6 +95,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         var pipeline = RecommendStageDefinitions.GetPipeline();
         var upstreamArtifacts = new List<StageArtifact>();
         var turnDegraded = false;
+        var nextStageRunIndex = await GetNextStageRunIndexAsync(turn.Id, effectiveCt);
 
         try
         {
@@ -104,7 +106,9 @@ public sealed class RecommendationRunner : IRecommendationRunner
                     : null;
 
                 var (stageSuccess, stageDegraded) = await ExecutePipelineStageAsync(
-                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, effectiveCt);
+                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, nextStageRunIndex, effectiveCt);
+
+                nextStageRunIndex += pipelineStage.Steps.Count;
 
                 if (stageDegraded) turnDegraded = true;
 
@@ -167,7 +171,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
 
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.TurnFailed, session.Id, turnId, null, null, null, null,
-                $"Turn 异常终止: {ex.Message}", null, DateTime.UtcNow));
+                $"Turn 异常终止: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}", null, DateTime.UtcNow));
         }
         finally
         {
@@ -213,6 +217,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         var pipeline = RecommendStageDefinitions.GetPipeline();
         var upstreamArtifacts = new List<StageArtifact>();
         var turnDegraded = false;
+        var nextStageRunIndex = await GetNextStageRunIndexAsync(turn.Id, ct);
 
         // Load artifacts from the previous completed turn for stages before fromStageIndex
         var previousTurn = await _db.RecommendationTurns
@@ -255,7 +260,9 @@ public sealed class RecommendationRunner : IRecommendationRunner
                     : null;
 
                 var (stageSuccess, stageDegraded) = await ExecutePipelineStageAsync(
-                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, ct);
+                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, nextStageRunIndex, ct);
+
+                nextStageRunIndex += pipelineStage.Steps.Count;
 
                 if (stageDegraded) turnDegraded = true;
 
@@ -304,7 +311,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
 
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.TurnFailed, session.Id, turnId, null, null, null, null,
-                $"部分重跑异常终止: {ex.Message}", null, DateTime.UtcNow));
+                $"部分重跑异常终止: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}", null, DateTime.UtcNow));
         }
         finally
         {
@@ -433,12 +440,13 @@ public sealed class RecommendationRunner : IRecommendationRunner
     private async Task<(bool Success, bool Degraded)> ExecutePipelineStageAsync(
         RecommendationSession session, RecommendationTurn turn,
         RecommendPipelineStage pipelineStage, string? upstreamJson,
-        List<StageArtifact> upstreamArtifacts, CancellationToken ct)
+        List<StageArtifact> upstreamArtifacts, int firstStageRunIndex, CancellationToken ct)
     {
         // A pipeline stage may contain multiple steps (e.g. Parallel then Sequential)
         // All steps share the same StageType; we create one snapshot per step.
         string? stepCarryOver = upstreamJson;
         var anyDegraded = false;
+        var stageRunIndex = firstStageRunIndex;
 
         foreach (var step in pipelineStage.Steps)
         {
@@ -446,7 +454,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
             {
                 TurnId = turn.Id,
                 StageType = step.StageType,
-                StageRunIndex = pipelineStage.StageIndex,
+                StageRunIndex = stageRunIndex++,
                 ExecutionMode = step.ExecutionMode,
                 Status = RecommendStageStatus.Running,
                 ActiveRoleIdsJson = JsonSerializer.Serialize(step.RoleIds, JsonOpts),
@@ -535,6 +543,16 @@ public sealed class RecommendationRunner : IRecommendationRunner
         }
 
         return (true, anyDegraded);
+    }
+
+    private async Task<int> GetNextStageRunIndexAsync(long turnId, CancellationToken ct)
+    {
+        var maxRunIndex = await _db.RecommendationStageSnapshots
+            .Where(snapshot => snapshot.TurnId == turnId)
+            .Select(snapshot => (int?)snapshot.StageRunIndex)
+            .MaxAsync(ct);
+
+        return (maxRunIndex ?? -1) + 1;
     }
 
     private async Task<List<RecommendRoleExecutionResult>> ExecuteParallelAsync(

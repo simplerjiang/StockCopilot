@@ -7,6 +7,8 @@ import {
   collectPdfFiles
 } from './financialApi.js'
 import FinancialReportComparePane from './FinancialReportComparePane.vue'
+import EmbeddingDegradedBanner from '../../components/EmbeddingDegradedBanner.vue'
+import { useEmbeddingStatus } from '../../composables/useEmbeddingStatus.js'
 import {
   BALANCE_SHEET_FIELDS,
   INCOME_STATEMENT_FIELDS,
@@ -21,7 +23,11 @@ import { getSourceChannelTag, sourceChannelTagStyle } from './sourceChannelTag.j
 const props = defineProps({
   visible: { type: Boolean, default: false },
   item: { type: Object, default: null },
-  reportId: { type: [String, Number], default: null }
+  reportId: { type: [String, Number], default: null },
+  embeddingStatus: { type: Object, default: undefined },
+  embeddingLoading: { type: Boolean, default: false },
+  embeddingError: { type: String, default: '' },
+  embeddingRefresh: { type: Function, default: null }
 })
 
 const emit = defineEmits(['close'])
@@ -38,6 +44,22 @@ const recollectMessage = ref('')
 const collectingPdf = ref(false)
 const collectPdfError = ref('')
 const collectPdfMessage = ref('')
+const {
+  status: localEmbeddingStatus,
+  loading: localEmbeddingLoading,
+  error: localEmbeddingError,
+  refreshEmbeddingStatus: refreshLocalEmbeddingStatus
+} = useEmbeddingStatus()
+const hasParentEmbeddingStatus = computed(() => props.embeddingStatus !== undefined)
+const drawerEmbeddingStatus = computed(() => hasParentEmbeddingStatus.value ? props.embeddingStatus : localEmbeddingStatus.value)
+const drawerEmbeddingLoading = computed(() => hasParentEmbeddingStatus.value ? props.embeddingLoading : localEmbeddingLoading.value)
+const drawerEmbeddingError = computed(() => hasParentEmbeddingStatus.value ? props.embeddingError : localEmbeddingError.value)
+const refreshDrawerEmbeddingStatus = () => {
+  if (typeof props.embeddingRefresh === 'function') {
+    return props.embeddingRefresh()
+  }
+  return refreshLocalEmbeddingStatus()
+}
 
 // V041-S5: PDF 文件解析（detail 中无 pdfFileId 时回退到 listPdfFiles）
 const resolvedPdfId = ref(null)
@@ -334,6 +356,9 @@ watch(
       window.addEventListener('keydown', onKeydown)
       recollectError.value = ''
       recollectMessage.value = ''
+      if (!hasParentEmbeddingStatus.value) {
+        refreshLocalEmbeddingStatus()
+      }
       loadDetail()
     } else {
       window.removeEventListener('keydown', onKeydown)
@@ -458,6 +483,14 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
         </header>
 
         <div class="fc-drawer-body">
+          <EmbeddingDegradedBanner
+            :status="drawerEmbeddingStatus"
+            :loading="drawerEmbeddingLoading"
+            :error="drawerEmbeddingError"
+            compact
+            @refresh="refreshDrawerEmbeddingStatus"
+          />
+
           <div v-if="loading" class="fc-drawer-skeleton">
             <p>正在加载财报详情...</p>
             <div class="fc-skel-block" />
@@ -504,10 +537,6 @@ const cashRows = computed(() => buildRows('cashFlow', CASH_FLOW_FIELDS))
                 <div class="fc-drawer-row">
                   <dt>更新时间</dt>
                   <dd>{{ formatDateTime(view?.updatedAt || view?.UpdatedAt) }}</dd>
-                </div>
-                <div class="fc-drawer-row">
-                  <dt>Report ID</dt>
-                  <dd class="fc-drawer-mono">{{ view?.id ?? view?.Id ?? '—' }}</dd>
                 </div>
               </dl>
             </section>

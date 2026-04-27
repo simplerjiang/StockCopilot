@@ -50,7 +50,9 @@ public sealed record NorthboundFlowSnapshotDto(
     decimal ShenzhenNetInflow,
     decimal ShenzhenBalance,
     decimal TotalNetInflow,
-    IReadOnlyList<NorthboundFlowPointDto> Points);
+    IReadOnlyList<NorthboundFlowPointDto> Points,
+    bool IsStale = false,
+    string Status = "ok");
 
 public sealed record MarketBreadthBucketDto(
     int ChangeBucket,

@@ -119,7 +119,7 @@ public class RagContextEnricher
             Text = r.Text,
             Score = r.Score,
             Source = sourceType == "announcement" ? "announcement-rag" : "financial-report-rag"
-        }).ToList();
+        }).Where(c => !IsFutureReportDate(c.ReportDate)).ToList();
     }
 
     /// <summary>
@@ -179,5 +179,24 @@ public class RagContextEnricher
         public string Text { get; set; } = "";
         [JsonPropertyName("score")]
         public double Score { get; set; }
+    }
+
+    /// <summary>
+    /// Returns true if the reportDate is in the future relative to today (China time).
+    /// </summary>
+    internal static bool IsFutureReportDate(string? reportDate)
+    {
+        if (string.IsNullOrWhiteSpace(reportDate))
+        {
+            return false;
+        }
+
+        if (DateOnly.TryParse(reportDate, out var date))
+        {
+            var chinaToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+            return date > chinaToday;
+        }
+
+        return false;
     }
 }

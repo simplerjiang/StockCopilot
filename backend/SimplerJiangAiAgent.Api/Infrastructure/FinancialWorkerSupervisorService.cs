@@ -108,7 +108,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
                     _workerProcess.Id, _workerProcess.ExitCode);
                 _state = "error";
                 _isHealthy = false;
-                _lastError = $"Process exited with code {_workerProcess.ExitCode}";
+                _lastError = SanitizeError($"Process exited with code {_workerProcess.ExitCode}");
                 _workerProcess = null;
                 _processId = null;
                 _consecutiveFailures = 0;
@@ -180,7 +180,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
         {
             _consecutiveFailures++;
             _isHealthy = false;
-            _lastError = error;
+            _lastError = SanitizeError(error);
 
             if (_consecutiveFailures >= MaxConsecutiveFailures)
             {
@@ -246,7 +246,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
                 lock (_lock)
                 {
                     _state = "error";
-                    _lastError = "Cannot find FinancialWorker executable";
+                    _lastError = SanitizeError("Cannot find FinancialWorker executable");
                 }
                 _logger.LogError("FinancialWorker executable not found");
                 return;
@@ -277,7 +277,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
                 lock (_lock)
                 {
                     _state = "error";
-                    _lastError = "Failed to start process";
+                    _lastError = SanitizeError("Failed to start process");
                 }
                 return;
             }
@@ -311,7 +311,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
             lock (_lock)
             {
                 _state = "error";
-                _lastError = "Worker started but health check timed out";
+                _lastError = SanitizeError("Worker started but health check timed out");
             }
         }
         catch (Exception ex)
@@ -319,7 +319,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
             lock (_lock)
             {
                 _state = "error";
-                _lastError = ex.Message;
+                _lastError = SanitizeError(ex.Message);
             }
             _logger.LogError(ex, "Failed to start FinancialWorker");
         }
@@ -368,11 +368,14 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
         lock (_lock)
         {
             return new FinancialWorkerStatus(
-                _state, _isHealthy, _lastHeartbeat, _processId, _lastError, _lastHealthResponse, _workerStartedAt,
+                _state, _isHealthy, _lastHeartbeat, _processId, SanitizeError(_lastError), _lastHealthResponse, _workerStartedAt,
                 _autoRestartCount, _lastAutoRestart
             );
         }
     }
+
+    private static string? SanitizeError(string? message)
+        => ErrorSanitizer.SanitizeErrorMessage(message);
 
     public async Task StartWorkerAsync(CancellationToken ct) => await StartWorkerInternalAsync(ct);
 

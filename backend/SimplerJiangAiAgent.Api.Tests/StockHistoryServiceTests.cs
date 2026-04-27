@@ -152,8 +152,8 @@ public class StockHistoryServiceTests
                 ChangePercent = 0m,
                 TurnoverRate = 0m,
                 PeRatio = 0m,
-                High = 0m,
-                Low = 0m,
+                High = 12m,
+                Low = 8m,
                 Speed = 0m,
                 UpdatedAt = DateTime.UtcNow
             },
@@ -166,8 +166,8 @@ public class StockHistoryServiceTests
                 ChangePercent = 0m,
                 TurnoverRate = 0m,
                 PeRatio = 0m,
-                High = 0m,
-                Low = 0m,
+                High = 11m,
+                Low = 7m,
                 Speed = 0m,
                 UpdatedAt = DateTime.UtcNow
             });
@@ -177,6 +177,55 @@ public class StockHistoryServiceTests
         var list = await service.GetAllAsync();
 
         Assert.Equal(new[] { 1L, 2L }, list.Select(x => x.Id));
+    }
+
+    [Fact]
+    public async Task GetAllAsync_ShouldRemoveInvalidZeroHighLowSnapshots()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var dbContext = new AppDbContext(options);
+        dbContext.StockQueryHistories.AddRange(
+            new StockQueryHistory
+            {
+                Id = 1,
+                Symbol = "sh600001",
+                Name = "zero-hl",
+                Price = 10m,
+                ChangePercent = 0m,
+                TurnoverRate = 0m,
+                PeRatio = 0m,
+                High = 0m,
+                Low = 0m,
+                Speed = 0m,
+                UpdatedAt = DateTime.UtcNow
+            },
+            new StockQueryHistory
+            {
+                Id = 2,
+                Symbol = "sh600002",
+                Name = "valid-hl",
+                Price = 11m,
+                ChangePercent = 0m,
+                TurnoverRate = 0m,
+                PeRatio = 0m,
+                High = 12m,
+                Low = 8m,
+                Speed = 0m,
+                UpdatedAt = DateTime.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new StockHistoryService(dbContext, new FakeStockDataService());
+        var list = await service.GetAllAsync();
+
+        var item = Assert.Single(list);
+        Assert.Equal("sh600002", item.Symbol);
+        Assert.DoesNotContain(list, item => item.High == 0m && item.Low == 0m);
+        Assert.False(await dbContext.StockQueryHistories.AnyAsync(item => item.Symbol == "sh600001"));
+        Assert.True(await dbContext.StockQueryHistories.AnyAsync(item => item.Symbol == "sh600002"));
     }
 
     private static StockQuoteDto CreateQuote(

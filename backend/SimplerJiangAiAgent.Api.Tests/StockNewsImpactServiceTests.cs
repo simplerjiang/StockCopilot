@@ -51,4 +51,120 @@ public class StockNewsImpactServiceTests
         Assert.True(result.Events.Count <= 3);
         Assert.Contains(result.Events, item => item.MergedCount >= 2 && item.Theme == "股份回购");
     }
+
+    [Fact]
+    public void Evaluate_SameThemeStrongPositiveWithNeutralMessages_DoesNotDiluteStrongSignal()
+    {
+        var service = new StockNewsImpactService();
+        var now = DateTime.Now;
+        var messages = new List<IntradayMessageDto>
+        {
+            new("公司公告：业绩增长盈利利好超预期", "上交所公告", now.AddHours(-1), null),
+            new("公司公告：一季度业绩说明会", "上交所公告", now.AddHours(-2), null),
+            new("公司公告：二季度业绩说明会", "上交所公告", now.AddHours(-3), null),
+            new("公司公告：三季度业绩说明会", "上交所公告", now.AddHours(-4), null),
+            new("公司公告：年度业绩交流会", "上交所公告", now.AddHours(-5), null),
+            new("公司公告：投资者业绩问答", "上交所公告", now.AddHours(-6), null)
+        };
+
+        var result = service.Evaluate("sh000001", "测试公司", messages);
+
+        Assert.DoesNotContain(result.Events, item => item.Theme == "业绩表现" && item.MergedCount == messages.Count && item.ImpactScore == 0 && item.Category == "中性");
+        var positiveEvent = Assert.Single(result.Events, item => item.Theme == "业绩表现" && item.Category == "利好");
+        Assert.True(positiveEvent.ImpactScore > 0);
+
+        var neutralEvent = result.Events.SingleOrDefault(item => item.Theme == "业绩表现" && item.Category == "中性");
+        Assert.True(neutralEvent is not null || positiveEvent.MergedCount == messages.Count);
+    }
+
+    [Fact]
+    public void Evaluate_SameThemePositiveMessages_MergesWithStrongestPositiveScoreInsteadOfAverage()
+    {
+        var service = new StockNewsImpactService();
+        var now = DateTime.Now;
+        var messages = new List<IntradayMessageDto>
+        {
+            new("公司公告：业绩增长盈利利好超预期", "上交所公告", now.AddHours(-1), null),
+            new("公司公告：业绩增长", "上交所公告", now.AddHours(-2), null),
+            new("公司公告：盈利改善", "上交所公告", now.AddHours(-3), null),
+            new("公司公告：业绩增长进展", "上交所公告", now.AddHours(-4), null),
+            new("公司公告：盈利能力提升", "上交所公告", now.AddHours(-5), null),
+            new("公司公告：业绩增长更新", "上交所公告", now.AddHours(-6), null)
+        };
+
+        var result = service.Evaluate("sh000001", "测试公司", messages);
+
+        var merged = Assert.Single(result.Events, item => item.Theme == "业绩表现" && item.Category == "利好");
+        Assert.Equal(messages.Count, merged.MergedCount);
+        Assert.Equal(100, merged.ImpactScore);
+        Assert.NotEqual(44, merged.ImpactScore);
+    }
+
+    [Fact]
+    public void Evaluate_SameThemeStrongNegativeWithNeutralMessages_DoesNotDiluteStrongSignal()
+    {
+        var service = new StockNewsImpactService();
+        var now = DateTime.Now;
+        var messages = new List<IntradayMessageDto>
+        {
+            new("公司公告：业绩下滑亏损利空降级", "上交所公告", now.AddHours(-1), null),
+            new("公司公告：一季度业绩说明会", "上交所公告", now.AddHours(-2), null),
+            new("公司公告：二季度业绩说明会", "上交所公告", now.AddHours(-3), null),
+            new("公司公告：三季度业绩说明会", "上交所公告", now.AddHours(-4), null),
+            new("公司公告：年度业绩交流会", "上交所公告", now.AddHours(-5), null),
+            new("公司公告：投资者业绩问答", "上交所公告", now.AddHours(-6), null)
+        };
+
+        var result = service.Evaluate("sh000001", "测试公司", messages);
+
+        Assert.DoesNotContain(result.Events, item => item.Theme == "业绩表现" && item.MergedCount == messages.Count && item.ImpactScore == 0 && item.Category == "中性");
+        var negativeEvent = Assert.Single(result.Events, item => item.Theme == "业绩表现" && item.Category == "利空");
+        Assert.True(negativeEvent.ImpactScore < 0);
+
+        var neutralEvent = result.Events.SingleOrDefault(item => item.Theme == "业绩表现" && item.Category == "中性");
+        Assert.True(neutralEvent is not null || negativeEvent.MergedCount == messages.Count);
+    }
+
+    [Fact]
+    public void Evaluate_SameThemeNegativeMessages_MergesWithStrongestNegativeScoreInsteadOfAverage()
+    {
+        var service = new StockNewsImpactService();
+        var now = DateTime.Now;
+        var messages = new List<IntradayMessageDto>
+        {
+            new("公司公告：业绩下滑亏损利空降级", "上交所公告", now.AddHours(-1), null),
+            new("公司公告：业绩下滑", "上交所公告", now.AddHours(-2), null),
+            new("公司公告：亏损扩大", "上交所公告", now.AddHours(-3), null),
+            new("公司公告：业绩下滑进展", "上交所公告", now.AddHours(-4), null),
+            new("公司公告：亏损风险提示", "上交所公告", now.AddHours(-5), null),
+            new("公司公告：业绩下滑更新", "上交所公告", now.AddHours(-6), null)
+        };
+
+        var result = service.Evaluate("sh000001", "测试公司", messages);
+
+        var merged = Assert.Single(result.Events, item => item.Theme == "业绩表现" && item.Category == "利空");
+        Assert.Equal(messages.Count, merged.MergedCount);
+        Assert.Equal(-100, merged.ImpactScore);
+        Assert.NotEqual(-44, merged.ImpactScore);
+    }
+
+    [Fact]
+    public void Evaluate_PureNeutralSameThemeMessages_RemainsNeutral()
+    {
+        var service = new StockNewsImpactService();
+        var now = DateTime.Now;
+        var messages = new List<IntradayMessageDto>
+        {
+            new("公司公告：一季度业绩说明会", "上交所公告", now.AddHours(-1), null),
+            new("公司公告：二季度业绩说明会", "上交所公告", now.AddHours(-2), null),
+            new("公司公告：三季度业绩说明会", "上交所公告", now.AddHours(-3), null)
+        };
+
+        var result = service.Evaluate("sh000001", "测试公司", messages);
+
+        var merged = Assert.Single(result.Events, item => item.Theme == "业绩表现");
+        Assert.Equal(messages.Count, merged.MergedCount);
+        Assert.Equal("中性", merged.Category);
+        Assert.Equal(0, merged.ImpactScore);
+    }
 }

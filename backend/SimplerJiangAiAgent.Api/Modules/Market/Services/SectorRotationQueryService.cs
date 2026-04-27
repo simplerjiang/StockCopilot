@@ -9,6 +9,8 @@ namespace SimplerJiangAiAgent.Api.Modules.Market.Services;
 
 public sealed class SectorRotationQueryService : ISectorRotationQueryService
 {
+    private const string SectorMembersUnavailableReason = "sector_members_unavailable";
+
     private readonly AppDbContext _dbContext;
     private readonly SectorRotationOptions _options;
 
@@ -101,6 +103,7 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             .Skip((safePage - 1) * safePageSize)
             .Take(safePageSize)
             .ToArray();
+        var hasUnavailableMemberData = latestRows.Any(HasUnavailableMemberData);
 
         return new SectorRotationPageDto(
             normalizedBoardType,
@@ -109,7 +112,9 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             total,
             NormalizeSort(sort),
             latestSnapshotTime,
-            items.Select(MapSectorItem).ToArray());
+            items.Select(MapSectorItem).ToArray(),
+            hasUnavailableMemberData,
+            hasUnavailableMemberData ? SectorMembersUnavailableReason : null);
     }
 
     public async Task<SectorRotationDetailDto?> GetSectorDetailAsync(string sectorCode, string boardType, string window, CancellationToken cancellationToken = default)
@@ -152,7 +157,14 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             .Select(x => new SectorRotationNewsDto(x.Title, x.TranslatedTitle, x.Source, x.AiSentiment, x.PublishTime, x.Url))
             .ToListAsync(cancellationToken);
 
-        return new SectorRotationDetailDto(MapSectorItem(latest), history, leaders, news);
+        var hasUnavailableMemberData = HasUnavailableMemberData(latest) || historyRows.Any(HasUnavailableMemberData);
+        return new SectorRotationDetailDto(
+            MapSectorItem(latest),
+            history,
+            leaders,
+            news,
+            hasUnavailableMemberData,
+            hasUnavailableMemberData ? SectorMembersUnavailableReason : null);
     }
 
     public async Task<SectorRotationTrendDto?> GetSectorTrendAsync(string sectorCode, string boardType, string window, CancellationToken cancellationToken = default)
@@ -404,20 +416,22 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
 
     private static SectorRotationListItemDto MapSectorItem(Data.Entities.SectorRotationSnapshot item)
     {
+        var hasUnavailableMemberData = HasUnavailableMemberData(item);
+
         return new SectorRotationListItemDto(
             item.BoardType,
             item.SectorCode,
             item.SectorName,
             item.ChangePercent,
             item.MainNetInflow,
-            item.BreadthScore,
+            hasUnavailableMemberData ? null : item.BreadthScore,
             item.ContinuityScore,
             item.StrengthScore,
             item.NewsSentiment,
             item.NewsHotCount,
-            item.LeaderSymbol,
-            item.LeaderName,
-            item.LeaderChangePercent,
+            hasUnavailableMemberData ? null : item.LeaderSymbol,
+            hasUnavailableMemberData ? null : item.LeaderName,
+            hasUnavailableMemberData ? null : item.LeaderChangePercent,
             item.RankNo,
             item.SnapshotTime,
             item.RankChange5d,
@@ -426,14 +440,36 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             item.StrengthAvg5d,
             item.StrengthAvg10d,
             item.StrengthAvg20d,
-            item.DiffusionRate,
-            item.AdvancerCount,
-            item.DeclinerCount,
-            item.FlatMemberCount,
-            item.LimitUpMemberCount,
+            hasUnavailableMemberData ? null : item.DiffusionRate,
+            hasUnavailableMemberData ? null : item.AdvancerCount,
+            hasUnavailableMemberData ? null : item.DeclinerCount,
+            hasUnavailableMemberData ? null : item.FlatMemberCount,
+            hasUnavailableMemberData ? null : item.LimitUpMemberCount,
             item.LeaderStabilityScore,
             item.MainlineScore,
             item.IsMainline);
+    }
+
+    private static bool HasUnavailableMemberData(Data.Entities.SectorRotationSnapshot item)
+    {
+        if (item.AdvancerCount.GetValueOrDefault() != 0
+            || item.DeclinerCount.GetValueOrDefault() != 0
+            || item.FlatMemberCount.GetValueOrDefault() != 0)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.LeaderSymbol) || !string.IsNullOrWhiteSpace(item.LeaderName))
+        {
+            return false;
+        }
+
+        return IsUnavailableMemberMetric(item.BreadthScore) && IsUnavailableMemberMetric(item.DiffusionRate);
+    }
+
+    private static bool IsUnavailableMemberMetric(decimal? value)
+    {
+        return value is null or 0m or 50m;
     }
 
     private static SectorRotationHistoryPointDto[] MapHistoryPoints(IReadOnlyList<Data.Entities.SectorRotationSnapshot> historyRows, int historyWindow)
@@ -444,28 +480,32 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
             .OrderByDescending(x => x.TradingDate)
             .Take(historyWindow)
             .OrderBy(x => x.TradingDate)
-            .Select(item => new SectorRotationHistoryPointDto(
-                item.TradingDate,
-                item.SnapshotTime,
-                item.ChangePercent,
-                item.BreadthScore,
-                item.ContinuityScore,
-                item.StrengthScore,
-                item.RankNo,
-                item.DiffusionRate,
-                item.AdvancerCount,
-                item.DeclinerCount,
-                item.FlatMemberCount,
-                item.LimitUpMemberCount,
-                item.RankChange5d,
-                item.RankChange10d,
-                item.RankChange20d,
-                item.StrengthAvg5d,
-                item.StrengthAvg10d,
-                item.StrengthAvg20d,
-                item.LeaderStabilityScore,
-                item.MainlineScore,
-                item.IsMainline))
+            .Select(item =>
+            {
+                var hasUnavailableMemberData = HasUnavailableMemberData(item);
+                return new SectorRotationHistoryPointDto(
+                    item.TradingDate,
+                    item.SnapshotTime,
+                    item.ChangePercent,
+                    hasUnavailableMemberData ? null : item.BreadthScore,
+                    item.ContinuityScore,
+                    item.StrengthScore,
+                    item.RankNo,
+                    hasUnavailableMemberData ? null : item.DiffusionRate,
+                    hasUnavailableMemberData ? null : item.AdvancerCount,
+                    hasUnavailableMemberData ? null : item.DeclinerCount,
+                    hasUnavailableMemberData ? null : item.FlatMemberCount,
+                    hasUnavailableMemberData ? null : item.LimitUpMemberCount,
+                    item.RankChange5d,
+                    item.RankChange10d,
+                    item.RankChange20d,
+                    item.StrengthAvg5d,
+                    item.StrengthAvg10d,
+                    item.StrengthAvg20d,
+                    item.LeaderStabilityScore,
+                    item.MainlineScore,
+                    item.IsMainline);
+            })
             .ToArray();
     }
 
@@ -475,7 +515,7 @@ public sealed class SectorRotationQueryService : ISectorRotationQueryService
         {
             "change" => rows.OrderByDescending(x => x.ChangePercent).ThenBy(x => x.RankNo),
             "flow" => rows.OrderByDescending(x => x.MainNetInflow).ThenBy(x => x.RankNo),
-            "breadth" => rows.OrderByDescending(x => x.BreadthScore ?? -1m).ThenBy(x => x.RankNo),
+            "breadth" => rows.OrderByDescending(x => HasUnavailableMemberData(x) ? -1m : x.BreadthScore ?? -1m).ThenBy(x => x.RankNo),
             "continuity" => rows.OrderByDescending(x => x.ContinuityScore).ThenBy(x => x.RankNo),
             "mainline" => rows.OrderByDescending(x => x.IsMainline).ThenByDescending(x => x.MainlineScore).ThenBy(x => x.RankNo),
             _ => rows.OrderByDescending(x => x.StrengthScore).ThenBy(x => x.RankNo)

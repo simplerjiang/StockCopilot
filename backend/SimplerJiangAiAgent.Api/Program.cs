@@ -142,6 +142,14 @@ app.UseExceptionHandler(errorApp =>
 {
     errorApp.Run(async context =>
     {
+        var exceptionFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>();
+        if (exceptionFeature?.Error is UnsupportedStockSourceException unsupportedSource)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsJsonAsync(new { error = "unsupported_source", message = $"不支持的数据源: {unsupportedSource.SourceName}" });
+            return;
+        }
+
         context.Response.StatusCode = 500;
         await context.Response.WriteAsJsonAsync(new { error = "Internal server error" });
     });

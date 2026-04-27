@@ -57,10 +57,10 @@ public sealed class StockSearchService : IStockSearchService
 
             var market = parts[0].Trim();
             var code = parts.Length >= 2 ? parts[1].Trim() : string.Empty;
-            var name = parts.Length >= 3 ? parts[2].Trim() : string.Empty;
+            var name = parts.Length >= 3 ? StockNameNormalizer.NormalizeDisplayName(parts[2]) : string.Empty;
             if (string.IsNullOrWhiteSpace(name))
             {
-                name = parts.Length >= 2 ? parts[1].Trim() : parts[0].Trim();
+                name = parts.Length >= 2 ? StockNameNormalizer.NormalizeDisplayName(parts[1]) : StockNameNormalizer.NormalizeDisplayName(parts[0]);
             }
 
             if (string.IsNullOrWhiteSpace(code) || !CodeRegex.IsMatch(code))
@@ -77,7 +77,7 @@ public sealed class StockSearchService : IStockSearchService
 
             // Bug #19: relevance filter — skip results that don't match the query
             var pinyin = parts.Length >= 4 ? parts[3].Trim() : string.Empty;
-            if (!IsRelevantResult(upstreamQuery, code, name, pinyin))
+            if (!IsRelevantResult(StockNameNormalizer.NormalizeDisplayName(upstreamQuery), code, name, pinyin))
             {
                 continue;
             }
@@ -210,14 +210,51 @@ public sealed class StockSearchService : IStockSearchService
     /// </summary>
     private static bool IsRelevantResult(string query, string code, string name, string pinyin)
     {
+        var normalizedQuery = query.Trim();
         if (ContainsChinese(query))
         {
-            return name.Contains(query, StringComparison.OrdinalIgnoreCase);
+            return name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase);
         }
 
-        // Alphanumeric/numeric query: code prefix or pinyin prefix must match
-        return code.StartsWith(query, StringComparison.OrdinalIgnoreCase)
-            || (!string.IsNullOrEmpty(pinyin) && pinyin.StartsWith(query, StringComparison.OrdinalIgnoreCase));
+        if (IsDigitsOnly(normalizedQuery))
+        {
+            return code.StartsWith(normalizedQuery, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (IsAsciiLettersOnly(normalizedQuery))
+        {
+            return normalizedQuery.Length <= 2
+                && !string.IsNullOrEmpty(pinyin)
+                && pinyin.StartsWith(normalizedQuery, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return code.StartsWith(normalizedQuery, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDigitsOnly(string text)
+    {
+        foreach (var c in text)
+        {
+            if (!char.IsDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return text.Length > 0;
+    }
+
+    private static bool IsAsciiLettersOnly(string text)
+    {
+        foreach (var c in text)
+        {
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
+            {
+                return false;
+            }
+        }
+
+        return text.Length > 0;
     }
 
     private static bool ContainsChinese(string text)

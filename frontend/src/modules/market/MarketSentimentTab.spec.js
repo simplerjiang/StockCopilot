@@ -40,6 +40,9 @@ const createSummary = overrides => ({
   advancers: 3680,
   decliners: 1120,
   flatCount: 202,
+  totalTurnover: 25000,
+  totalTurnoverUnit: 'CNY_100M',
+  totalTurnoverUnitLabel: '亿元',
   top3SectorTurnoverShare: 26.4,
   top10SectorTurnoverShare: 58.8,
   diffusionScore: 72.5,
@@ -81,6 +84,33 @@ const settle = async (times = 3) => {
   for (let index = 0; index < times; index += 1) {
     await flushPromises()
   }
+}
+
+const stubMarketDashboard = ({ summary = createSummary(), sectorPage = createSectorPage(), detail = createDetail(), realtimeSectorBoard = { items: [] }, realtimeOverview = createRealtimeOverview() } = {}) => {
+  const fetchMock = vi.fn(async input => {
+    const url = String(input)
+    if (url === '/api/market/sentiment/latest') {
+      return makeResponse({ json: async () => summary })
+    }
+    if (url === '/api/market/sentiment/history?days=10') {
+      return makeResponse({ json: async () => ([]) })
+    }
+    if (url === '/api/market/realtime/overview') {
+      return makeResponse({ json: async () => realtimeOverview })
+    }
+    if (url.includes('/api/market/sectors/realtime?boardType=concept')) {
+      return makeResponse({ json: async () => realtimeSectorBoard })
+    }
+    if (url.includes('/api/market/sectors?boardType=concept')) {
+      return makeResponse({ json: async () => sectorPage })
+    }
+    if (url.includes('/api/market/sectors/')) {
+      return makeResponse({ json: async () => detail })
+    }
+    throw new Error(`unexpected url: ${url}`)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
 }
 
 beforeEach(() => {
@@ -305,6 +335,16 @@ describe('MarketSentimentTab', () => {
     expect(wrapper.text()).toContain('上证指数')
   })
 
+  it('renders total turnover using the unit label from the market summary contract', async () => {
+    stubMarketDashboard()
+
+    const wrapper = mount(MarketSentimentTab)
+    await settle(4)
+
+    expect(wrapper.text()).toContain('总成交额')
+    expect(wrapper.text()).toContain('25000亿')
+  })
+
   it('reloads board list when board type changes', async () => {
     const fetchMock = vi.fn(async input => {
       const url = String(input)
@@ -512,6 +552,58 @@ describe('MarketSentimentTab', () => {
     expect(text).toContain('快照有限板块')
   })
 
+  it('shows stale northbound as unavailable without pseudo realtime amount or shifted time', async () => {
+    stubMarketDashboard({
+      realtimeOverview: createRealtimeOverview({
+        mainCapitalFlow: { snapshotTime: '2026-03-19T15:00:00+08:00', amountUnit: '亿元', mainNetInflow: 12.3, superLargeOrderNetInflow: 4.5 },
+        northboundFlow: {
+          snapshotTime: '2026-03-19T23:00:00+08:00',
+          amountUnit: '亿元',
+          totalNetInflow: 0,
+          shanghaiNetInflow: 0,
+          shenzhenNetInflow: 0,
+          isStale: true,
+          status: 'unavailable'
+        },
+        breadth: { tradingDate: '2026-03-19', advancers: 2200, decliners: 1800, flatCount: 100, limitUpCount: 55, limitDownCount: 8, buckets: [] }
+      })
+    })
+
+    const wrapper = mount(MarketSentimentTab)
+    await settle()
+
+    const text = wrapper.text()
+    expect(text).toContain('北向资金')
+    expect(text).toContain('数据不可用')
+    expect(text).not.toContain('+0.0亿')
+    expect(text).not.toContain('23:00:00')
+  })
+
+  it('keeps live northbound amount and snapshot time visible in realtime capital panel', async () => {
+    stubMarketDashboard({
+      realtimeOverview: createRealtimeOverview({
+        northboundFlow: {
+          snapshotTime: '2026-04-24T10:30:00+08:00',
+          amountUnit: '亿元',
+          totalNetInflow: 12.34,
+          shanghaiNetInflow: 8.1,
+          shenzhenNetInflow: 4.24,
+          isStale: false,
+          status: 'live'
+        },
+        breadth: { tradingDate: '2026-03-19', advancers: 2200, decliners: 1800, flatCount: 100, limitUpCount: 55, limitDownCount: 8, buckets: [] }
+      })
+    })
+
+    const wrapper = mount(MarketSentimentTab)
+    await settle()
+
+    const northboundCell = wrapper.findAll('.mc').map(node => node.text()).find(text => text.startsWith('北向资金'))
+    expect(northboundCell).toContain('+12.3亿')
+    expect(northboundCell).toContain('10:30:00')
+    expect(northboundCell).not.toContain('数据不可用')
+  })
+
   it('renders degraded hero, placeholder cards, empty board and realtime note clearly', async () => {
     const fetchMock = vi.fn(async input => {
       const url = String(input)
@@ -598,6 +690,146 @@ describe('MarketSentimentTab', () => {
     expect(toolbarMeta).not.toContain('共 0 个板块')
     expect(emptyState.exists()).toBe(true)
     expect(emptyState.text()).toContain('板块排行暂未同步完成')
+  })
+
+  it('hides legacy 50 member placeholders on degraded sector member pages', async () => {
+    stubMarketDashboard({
+      sectorPage: createSectorPage({
+        total: 1,
+        isDegraded: true,
+        degradeReason: 'sector_members_unavailable',
+        items: [{
+          boardType: 'concept',
+          sectorCode: 'BK50',
+          sectorName: '占位板块',
+          changePercent: 1.23,
+          strengthScore: 50,
+          strengthAvg5d: 50,
+          strengthAvg10d: 50,
+          strengthAvg20d: 50,
+          breadthScore: 50,
+          diffusionRate: 50,
+          advancerCount: 0,
+          declinerCount: 0,
+          flatMemberCount: 0,
+          leaderName: null,
+          leaderSymbol: null,
+          rankChange10d: 0,
+          rankNo: 1
+        }]
+      }),
+      detail: createDetail({
+        snapshot: { boardType: 'concept', sectorCode: 'BK50', sectorName: '占位板块', changePercent: 1.23, advancerCount: 0, declinerCount: 0, flatMemberCount: 0, leaderSymbol: '' },
+        leaders: []
+      })
+    })
+
+    const wrapper = mount(MarketSentimentTab)
+    await settle()
+
+    const card = wrapper.find('.sector-card')
+    const cardText = card.text()
+    const toolbarMeta = wrapper.find('.toolbar-meta').text()
+
+    expect(cardText).toContain('降级快照')
+    expect(cardText).toContain('数据不可用')
+    expect(cardText).toContain('成分股待补齐')
+    expect(cardText).not.toContain('龙头')
+    expect(cardText).not.toContain('★50.0')
+    expect(cardText).not.toContain('10日主线 50.0')
+    expect(cardText).not.toContain('扩散 50.0')
+    expect(toolbarMeta).toContain('降级快照：1 个板块，成分股待补齐')
+    expect(toolbarMeta).not.toContain('共 1 个板块')
+  })
+
+  it('shows unavailable copy when sector member fields are null', async () => {
+    stubMarketDashboard({
+      sectorPage: createSectorPage({
+        total: 1,
+        items: [{
+          boardType: 'concept',
+          sectorCode: 'BKN',
+          sectorName: '空成员板块',
+          changePercent: 0.85,
+          strengthScore: 50,
+          strengthAvg10d: null,
+          breadthScore: null,
+          diffusionRate: null,
+          advancerCount: null,
+          declinerCount: null,
+          flatMemberCount: null,
+          leaderName: null,
+          leaderSymbol: null,
+          rankNo: 1
+        }]
+      }),
+      detail: createDetail({
+        snapshot: { boardType: 'concept', sectorCode: 'BKN', sectorName: '空成员板块', changePercent: 0.85, advancerCount: null, declinerCount: null, flatMemberCount: null, leaderSymbol: '' },
+        leaders: []
+      })
+    })
+
+    const wrapper = mount(MarketSentimentTab)
+    await settle()
+
+    const cardText = wrapper.find('.sector-card').text()
+    const toolbarMeta = wrapper.find('.toolbar-meta').text()
+
+    expect(cardText).toContain('降级快照')
+    expect(cardText).toContain('10日主线 成分股待补齐')
+    expect(cardText).toContain('扩散 数据不可用')
+    expect(cardText).not.toContain('龙头')
+    expect(cardText).not.toContain('★50.0')
+    expect(cardText).not.toContain('扩散 50.0')
+    expect(toolbarMeta).toContain('降级快照：1 个板块，成分股待补齐')
+  })
+
+  it('keeps real sector member metrics visible when member data exists', async () => {
+    stubMarketDashboard({
+      sectorPage: createSectorPage({
+        total: 1,
+        isDegraded: true,
+        degradeReason: 'sector_members_unavailable',
+        items: [{
+          boardType: 'concept',
+          sectorCode: 'BKR',
+          sectorName: '真实成员板块',
+          changePercent: 3.4,
+          strengthScore: 88,
+          strengthAvg5d: 71,
+          strengthAvg10d: 73,
+          strengthAvg20d: 69,
+          breadthScore: 82,
+          diffusionRate: 66,
+          advancerCount: 18,
+          declinerCount: 4,
+          flatMemberCount: 2,
+          leaderName: '真实龙头',
+          leaderSymbol: 'sh600000',
+          rankChange10d: 5,
+          rankNo: 1
+        }]
+      }),
+      detail: createDetail({
+        snapshot: { boardType: 'concept', sectorCode: 'BKR', sectorName: '真实成员板块', changePercent: 3.4, advancerCount: 18, declinerCount: 4, flatMemberCount: 2, leaderSymbol: 'sh600000' },
+        leaders: [{ rankInSector: 1, symbol: 'sh600000', name: '真实龙头', changePercent: 6.6 }]
+      })
+    })
+
+    const wrapper = mount(MarketSentimentTab)
+    await settle()
+
+    const cardText = wrapper.find('.sector-card').text()
+    const allText = wrapper.text()
+
+    expect(cardText).toContain('★88.0')
+    expect(cardText).toContain('10日主线 73.0')
+    expect(cardText).toContain('扩散 66.0')
+    expect(cardText).toContain('龙头')
+    expect(cardText).toContain('真实龙头')
+    expect(cardText).toContain('sh600000')
+    expect(cardText).not.toContain('成分股待补齐')
+    expect(allText).toContain('真实龙头')
   })
 
   it('shows partial sync feedback when refreshed data is still degraded', async () => {

@@ -30,7 +30,7 @@ const defaultFetchMock = (overrides = {}) => vi.fn(async (url, opts) => {
   if (url === '/api/market/realtime/overview') {
     return makeResponse({
       ok: true, status: 200,
-      json: async () => ({
+      json: async () => overrides.realtimeOverview || ({
         snapshotTime: '2026-03-19T07:00:00Z',
         indices: [
           { symbol: 'sh000001', name: '上证指数', price: 3401.22, changePercent: 0.82 },
@@ -39,6 +39,19 @@ const defaultFetchMock = (overrides = {}) => vi.fn(async (url, opts) => {
         mainCapitalFlow: { mainNetInflow: 12.34 },
         northboundFlow: { totalNetInflow: 8.9 },
         breadth: { advancers: 3210, decliners: 1450, limitUpCount: 55, limitDownCount: 6 }
+      })
+    })
+  }
+  if (url === '/api/stocks/financial/embedding/status') {
+    return makeResponse({
+      ok: true, status: 200,
+      json: async () => ({
+        available: true,
+        model: 'bge-m3',
+        dimension: 1024,
+        embeddingCount: 1456,
+        chunkCount: 1456,
+        coverage: 1
       })
     })
   }
@@ -218,6 +231,69 @@ describe('StockRecommendTab', () => {
     expect(wrapper.text()).toContain('上证指数')
     expect(wrapper.text()).toContain('机器人')
     expect(wrapper.text()).toContain('主力 +12.34 亿')
+  })
+
+  it('renders Chinese recommendation labels and disabled action explanations', async () => {
+    const runningDetail = createSessionDetail({
+      id: 7,
+      status: 'Running',
+      activeTurnId: 701,
+      turns: [createTurn({ id: 701, status: 'Running' })]
+    })
+    const fetchMock = defaultFetchMock({
+      sessions: [createSessionSummary({ id: 7, status: 'Running', activeTurnId: 701, lastUserIntent: '正在运行的推荐' })],
+      handler: async url => {
+        if (url === '/api/recommend/sessions/7') {
+          return makeResponse({ ok: true, status: 200, json: async () => runningDetail })
+        }
+
+        return makeResponse({ ok: true, status: 200, json: async () => ({}) })
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockRecommendTab)
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.session-item').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('多角色分阶段辩论推荐系统')
+    expect(wrapper.text()).toContain('实时市场上下文')
+    expect(wrapper.text()).not.toContain('13-Agent 多阶段辩论推荐系统')
+    expect(wrapper.text()).not.toContain('Realtime Context')
+    expect(wrapper.find('.follow-up-input').attributes('placeholder')).toContain('请输入新问题')
+    expect(wrapper.find('.follow-up-input').attributes('title')).toBe('请输入问题或追问内容后再发送。')
+    expect(wrapper.find('.follow-up-send').attributes('title')).toBe('请输入问题或追问内容后再发送。')
+    expect(wrapper.find('.follow-up-hint').text()).toContain('请输入问题或追问内容后再发送。')
+    const newButton = wrapper.findAll('.session-new').find(button => button.text() === '新建推荐')
+    expect(newButton?.attributes('disabled')).toBeDefined()
+    expect(newButton?.attributes('title')).toContain('推荐正在运行')
+    expect(wrapper.find('.market-toggle').attributes('title')).toBe('刷新推荐前市场快照')
+  })
+
+  it('shows unavailable northbound status before stale copy in market snapshot', async () => {
+    vi.stubGlobal('fetch', defaultFetchMock({
+      realtimeOverview: {
+        snapshotTime: '2026-03-19T07:00:00Z',
+        indices: [
+          { symbol: 'sh000001', name: '上证指数', price: 3401.22, changePercent: 0.82 }
+        ],
+        mainCapitalFlow: { mainNetInflow: 12.34 },
+        northboundFlow: { totalNetInflow: 0, isStale: true, status: 'unavailable' },
+        breadth: { advancers: 3210, decliners: 1450, limitUpCount: 55, limitDownCount: 6 }
+      }
+    }))
+    const wrapper = mount(StockRecommendTab)
+    await flushPromises()
+    await flushPromises()
+
+    const northboundPill = wrapper.findAll('.market-pill').map(node => node.text()).find(text => text.startsWith('北向'))
+    expect(northboundPill).toBe('北向 不可用')
+    expect(northboundPill).not.toContain('数据待更新')
+    expect(northboundPill).not.toContain('+0.00 亿')
   })
 
   it('renders the no-session guide instead of tabs when idle', async () => {
@@ -606,6 +682,66 @@ describe('StockRecommendTab', () => {
     expect(wrapper.find('.follow-up-send').text()).toBe('打断并发送')
     expect(wrapper.find('.session-history-head .session-new').attributes('disabled')).toBeDefined()
     expect(Number.parseInt(wrapper.find('.status-elapsed').text(), 10)).toBeGreaterThanOrEqual(10)
+  })
+
+  it('backs off SSE reconnects exponentially without exhausting retries immediately', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-01T10:10:10Z'))
+
+    const runningSummary = createSessionSummary({ id: 4, status: 'Running', activeTurnId: 401, lastUserIntent: 'backoff-running' })
+    const runningDetail = createSessionDetail({
+      id: 4,
+      status: 'Running',
+      activeTurnId: 401,
+      turns: [createTurn({
+        id: 401,
+        turnIndex: 0,
+        status: 'Running',
+        requestedAt: '2026-04-01T10:09:58Z',
+        startedAt: '2026-04-01T10:10:00Z'
+      })]
+    })
+
+    const fetchMock = defaultFetchMock({
+      sessions: [runningSummary],
+      handler: async (url) => {
+        if (url === '/api/recommend/sessions/4') {
+          return makeResponse({ ok: true, status: 200, json: async () => runningDetail })
+        }
+        return makeResponse({ ok: true, status: 200, json: async () => ({}) })
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { EventSourceMock, instances } = createEventSourceController()
+    vi.stubGlobal('EventSource', EventSourceMock)
+
+    const wrapper = mount(StockRecommendTab)
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.session-item').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(EventSourceMock).toHaveBeenCalledTimes(1)
+    instances[0].onerror?.()
+    await nextTick()
+    expect(wrapper.text()).toContain('约 1 秒后自动重连')
+    expect(instances[0].close).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+    expect(EventSourceMock).toHaveBeenCalledTimes(2)
+
+    instances[1].onerror?.()
+    await nextTick()
+    expect(wrapper.text()).toContain('约 2 秒后自动重连')
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(EventSourceMock).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await flushPromises()
+    expect(EventSourceMock).toHaveBeenCalledTimes(3)
   })
 
   it('rebinds follow-up reruns to the newest live turn instead of reusing the previous completed progress', async () => {

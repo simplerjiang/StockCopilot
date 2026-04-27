@@ -9,4 +9,9 @@ public interface IStockDataService
     Task<IReadOnlyList<KLinePointDto>> GetKLineAsync(string symbol, string interval, int count, string? source = null, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<MinuteLinePointDto>> GetMinuteLineAsync(string symbol, string? source = null, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<IntradayMessageDto>> GetIntradayMessagesAsync(string symbol, string? source = null, CancellationToken cancellationToken = default);
+    async Task<IntradayMessagesResultDto> GetIntradayMessagesResultAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+    {
+        var messages = await GetIntradayMessagesAsync(symbol, source, cancellationToken);
+        return new IntradayMessagesResultDto(messages);
+    }
 }

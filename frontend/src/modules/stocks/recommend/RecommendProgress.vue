@@ -76,11 +76,48 @@ const getTurnStatus = turn => turn?.status ?? turn?.Status ?? null
 const getSessionStatus = session => session?.status ?? session?.Status ?? null
 const getSnapshotType = snapshot => snapshot?.stageType ?? snapshot?.StageType ?? null
 const getSnapshotStatus = snapshot => snapshot?.status ?? snapshot?.Status ?? null
+const getSnapshotRunIndex = snapshot => {
+  const value = Number(snapshot?.stageRunIndex ?? snapshot?.StageRunIndex)
+  return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER
+}
+
+const getSnapshotTimeValue = snapshot => {
+  const value = Date.parse(
+    snapshot?.createdAt ?? snapshot?.CreatedAt ??
+    snapshot?.startedAt ?? snapshot?.StartedAt ??
+    snapshot?.completedAt ?? snapshot?.CompletedAt ??
+    ''
+  )
+  return Number.isFinite(value) ? value : 0
+}
+
+const getSnapshotIdValue = snapshot => {
+  const value = Number(snapshot?.id ?? snapshot?.Id)
+  return Number.isFinite(value) ? value : 0
+}
+
+const sortSnapshotsForDisplay = snapshots => snapshots.slice().sort((left, right) => {
+  const runIndexDiff = getSnapshotRunIndex(left) - getSnapshotRunIndex(right)
+  if (runIndexDiff !== 0) return runIndexDiff
+
+  const timeDiff = getSnapshotTimeValue(left) - getSnapshotTimeValue(right)
+  if (timeDiff !== 0) return timeDiff
+
+  return getSnapshotIdValue(left) - getSnapshotIdValue(right)
+})
 
 const getSnapshotRoleStates = snapshot => {
   if (Array.isArray(snapshot?.roleStates)) return snapshot.roleStates
   if (Array.isArray(snapshot?.RoleStates)) return snapshot.RoleStates
   return []
+}
+
+const setSnapshotRoleStates = (snapshot, roleStates) => {
+  if (Array.isArray(snapshot?.RoleStates) && !Array.isArray(snapshot?.roleStates)) {
+    snapshot.RoleStates = roleStates
+  } else {
+    snapshot.roleStates = roleStates
+  }
 }
 
 const getRoleStateId = roleState => roleState?.roleId ?? roleState?.RoleId ?? null
@@ -227,21 +264,47 @@ const currentTurnEvents = computed(() => {
 
 const snapshotMap = computed(() => {
   const map = {}
-  const snapshots = getTurnSnapshots(snapshotTurn.value)
+  const snapshots = sortSnapshotsForDisplay(getTurnSnapshots(snapshotTurn.value))
   for (const ss of snapshots) {
     const key = getSnapshotType(ss)
     if (key == null) continue
 
-    map[key] = ss
-
     const matchedStage = STAGES.find(stage => stage.type === key || stage.index === key)
-    if (matchedStage) {
-      map[matchedStage.type] = ss
-      map[matchedStage.index] = ss
+    const mapKeys = matchedStage ? [matchedStage.type, matchedStage.index] : [key]
+    const primaryKey = matchedStage?.type ?? key
+    const current = map[primaryKey]
+    const merged = current ? mergeStageSnapshots(current, ss) : cloneSnapshotForDisplay(ss)
+
+    for (const mapKey of mapKeys) {
+      map[mapKey] = merged
     }
   }
   return map
 })
+
+const cloneSnapshotForDisplay = snapshot => {
+  const clone = { ...snapshot }
+  setSnapshotRoleStates(clone, getSnapshotRoleStates(snapshot).slice())
+  return clone
+}
+
+const mergeStageSnapshots = (current, next) => {
+  const merged = { ...current, ...next }
+  const roleMap = new Map()
+
+  for (const roleState of getSnapshotRoleStates(current)) {
+    const roleId = getRoleStateId(roleState)
+    if (roleId) roleMap.set(roleId, roleState)
+  }
+
+  for (const roleState of getSnapshotRoleStates(next)) {
+    const roleId = getRoleStateId(roleState)
+    if (roleId) roleMap.set(roleId, roleState)
+  }
+
+  setSnapshotRoleStates(merged, [...roleMap.values()])
+  return merged
+}
 
 const liveStageStatus = computed(() => {
   const status = {}

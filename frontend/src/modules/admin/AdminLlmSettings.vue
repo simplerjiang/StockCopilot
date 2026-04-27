@@ -1,5 +1,7 @@
 <script setup>
+defineOptions({ name: 'AdminLlmSettings' })
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { clearAdminToken, readAdminToken, writeAdminToken } from './adminTokenStorage.js'
 
 const emit = defineEmits(['settings-saved'])
 
@@ -47,7 +49,7 @@ const ollamaRuntimeDefaults = Object.freeze({
 
 const username = ref('')
 const password = ref('')
-const token = ref('local-bypass')
+const token = ref(readAdminToken() || 'local-bypass')
 const loginError = ref('')
 const loginLoading = ref(false)
 
@@ -384,7 +386,7 @@ const login = async () => {
 
     const data = await response.json()
     token.value = data.token
-    localStorage.setItem('admin_token', token.value)
+    writeAdminToken(token.value)
     const loaded = await loadActiveProvider()
     if (loaded) {
       provider.value = activeProviderKey.value
@@ -401,7 +403,7 @@ const login = async () => {
 
 const logout = () => {
   token.value = ''
-  localStorage.removeItem('admin_token')
+  clearAdminToken()
 }
 
 const loadAntigravityModels = async () => {
@@ -1315,7 +1317,7 @@ onUnmounted(() => {
             </button>
 
             <p v-if="antigravityAuthError" class="form-error" style="margin-top: 8px;">{{ antigravityAuthError }}</p>
-            <p class="form-hint">⚠️ 使用 Antigravity 通道有 Google 封号风险，建议使用非主力账号。</p>
+            <p class="form-hint">Antigravity 通道使用 Google 授权登录，请确认账号授权状态后再保存配置。</p>
           </div>
         </template>
 

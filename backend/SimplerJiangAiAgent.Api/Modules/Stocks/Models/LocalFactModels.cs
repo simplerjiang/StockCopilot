@@ -80,7 +80,11 @@ public sealed record LocalNewsArchivePageDto(
     string? Level,
     string? Sentiment,
     IReadOnlyList<LocalNewsArchiveItemDto> Items,
-    int PendingTotal = 0
+    int PendingTotal = 0,
+    int ReadableTotal = 0,
+    decimal ReadableRate = 0m,
+    int UrlUnavailableTotal = 0,
+    decimal UrlUnavailableRate = 0m
 );
 
 public sealed record StockAgentQueryPolicyDto(

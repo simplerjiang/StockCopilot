@@ -79,6 +79,18 @@ public class StockSymbolNormalizerTests
     }
 
     [Theory]
+    [InlineData("sh000001", true)]
+    [InlineData("sz399001", true)]
+    [InlineData("399006", true)]
+    [InlineData("sz000518", false)]
+    [InlineData("000001", false)]
+    [InlineData("bj430047", false)]
+    public void IsIndex_ShouldBeExchangeAware(string input, bool expected)
+    {
+        Assert.Equal(expected, StockSymbolNormalizer.IsIndex(input));
+    }
+
+    [Theory]
     [InlineData("430047", "bj430047")]
     [InlineData("830799", "bj830799")]
     public void Normalize_ShouldHandleBjStocks(string input, string expected)
@@ -91,5 +103,28 @@ public class StockSymbolNormalizerTests
     {
         Assert.Equal("hk00700", StockSymbolNormalizer.Normalize(" hk00700 "));
         Assert.False(StockSymbolNormalizer.IsValid("hk00700"));
+    }
+}
+
+public class StockNameNormalizerTests
+{
+    [Theory]
+    [InlineData("*ST 四环", "*ST四环")]
+    [InlineData("*ST　四环", "*ST四环")]
+    [InlineData("*ST八钢", "*ST八钢")]
+    [InlineData("ST 四环", "ST四环")]
+    [InlineData("S*ST 四环", "S*ST四环")]
+    [InlineData("普通 公司", "普通 公司")]
+    [InlineData("Foo Bar", "Foo Bar")]
+    public void NormalizeDisplayName_ShouldOnlyRemoveWhitespaceAfterSpecialStPrefix(string input, string expected)
+    {
+        Assert.Equal(expected, StockNameNormalizer.NormalizeDisplayName(input));
+    }
+
+    [Fact]
+    public void NormalizeDisplayNameOrNull_ShouldPreserveBlankAsNull()
+    {
+        Assert.Null(StockNameNormalizer.NormalizeDisplayNameOrNull(null));
+        Assert.Null(StockNameNormalizer.NormalizeDisplayNameOrNull("   "));
     }
 }

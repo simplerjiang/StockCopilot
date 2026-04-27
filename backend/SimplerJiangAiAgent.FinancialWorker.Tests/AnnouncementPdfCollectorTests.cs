@@ -100,7 +100,9 @@ public class AnnouncementPdfCollectorTests : IDisposable
         Assert.Equal(2, result.Count);
         Assert.Equal("关于2024年度利润分配方案的公告", result[0].Title);
         Assert.Equal("AN202504281649438286", result[0].ArtCode);
+        Assert.Equal(new DateTime(2025, 4, 28, 10, 30, 0, DateTimeKind.Utc), result[0].PublishTime);
         Assert.Equal("2024年年度报告", result[1].Title);
+        Assert.Equal(new DateTime(2025, 4, 28, 9, 0, 0, DateTimeKind.Utc), result[1].PublishTime);
     }
 
     [Fact]

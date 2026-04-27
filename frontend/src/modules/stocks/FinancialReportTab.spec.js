@@ -168,6 +168,46 @@ describe('FinancialReportTab', () => {
     expect(wrapper.text()).toContain('总资产')
   })
 
+  it('renders THS normalized yuan amounts at the correct yi-yuan magnitude', async () => {
+    setupFetchMock({
+      trendData: {
+        symbol: '600519',
+        monetaryUnit: 'CNY-yuan',
+        revenue: [{ period: '2025-12-31', value: 172054000000, yoY: null }],
+        netProfit: [{ period: '2025-12-31', value: 85310000000, yoY: null }],
+        totalAssets: [{ period: '2025-12-31', value: 303835000000, yoY: null }],
+        recentDividends: []
+      },
+      summaryData: {
+        symbol: '600519',
+        monetaryUnit: 'CNY-yuan',
+        periods: [
+          {
+            reportDate: '2025-12-31',
+            reportType: 'Annual',
+            sourceChannel: 'ths',
+            keyMetrics: {
+              Revenue: 172054000000,
+              NetProfit: 85310000000,
+              TotalAssets: 303835000000
+            }
+          }
+        ]
+      }
+    })
+
+    const wrapper = mount(FinancialReportTab, { props: { symbol: '600519', active: true } })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('1720.54亿')
+    expect(text).toContain('853.10亿')
+    expect(text).toContain('3038.35亿')
+    expect(text).not.toContain('1720.54万')
+    expect(text).not.toContain('853.10万')
+    expect(text).not.toContain('3038.35万')
+  })
+
   it('renders trend table rows', async () => {
     setupFetchMock()
     const wrapper = mount(FinancialReportTab, { props: { symbol: '600519', active: true } })

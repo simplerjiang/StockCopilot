@@ -143,7 +143,7 @@ describe('TradingWorkbenchProgress', () => {
     expect(wrapper.text()).toContain('新闻分析')
   })
 
-  it.skip('renders collapsible MCP result panels', async () => {
+  it('renders collapsible MCP result panels', async () => {
     const stages = [{
       key: 'CompanyOverviewPreflight',
       label: '公司概览',
@@ -273,7 +273,7 @@ describe('TradingWorkbenchReport', () => {
     expect(wrapper.text()).toContain('降级')
   })
 
-  it.skip('shows routing summary for follow-up turn', () => {
+  it('shows routing summary for follow-up turn', () => {
     const wrapper = mount(TradingWorkbenchReport, {
       props: {
         blocks: [],

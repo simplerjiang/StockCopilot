@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using SimplerJiangAiAgent.Api.Infrastructure.Serialization;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -227,7 +228,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
         var snapshotDate = shanghai?.Date
             ?? shenzhen?.Date
             ?? DateOnly.FromDateTime(DateTime.Today);
-        var snapshotTime = snapshotDate.ToDateTime(new TimeOnly(15, 0));
+        var snapshotTime = ChinaLocalToUtc(snapshotDate, new TimeOnly(15, 0));
         var label = shanghai?.Label
             ?? shenzhen?.Label
             ?? snapshotDate.ToString("MM-dd", CultureInfo.InvariantCulture);
@@ -361,7 +362,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
     {
         var code = GetString(item, "f12");
         var market = GetInt(item, "f13");
-        var name = GetString(item, "f14");
+        var name = StockNameNormalizer.NormalizeDisplayName(GetString(item, "f14"));
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(name))
         {
             return null;
@@ -395,10 +396,12 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
         }
 
         var parts = raw.Split(',', StringSplitOptions.TrimEntries);
-        if (parts.Length < 6 || !DateTime.TryParse(parts[0], CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var timestamp))
+        if (parts.Length < 6 || !DateTime.TryParse(parts[0], CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTimestamp))
         {
             return null;
         }
+
+        var timestamp = ChinaLocalToUtc(DateOnly.FromDateTime(parsedTimestamp), TimeOnly.FromDateTime(parsedTimestamp));
 
         return new MarketCapitalFlowPointDto(
             timestamp,
@@ -422,7 +425,7 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             return null;
         }
 
-        var timestamp = tradingDate.ToDateTime(TimeOnly.FromTimeSpan(time));
+        var timestamp = ChinaLocalToUtc(tradingDate, TimeOnly.FromTimeSpan(time));
         return new NorthboundFlowPointDto(
             timestamp,
             ToHundredMillion(parts[1], TenThousandPerHundredMillion),
@@ -482,7 +485,13 @@ public sealed class EastmoneyRealtimeMarketClient : IEastmoneyRealtimeMarketClie
             return date;
         }
 
-        return DateOnly.FromDateTime(DateTime.Today);
+        return DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, ChinaTimeZone.Info));
+    }
+
+    private static DateTime ChinaLocalToUtc(DateOnly date, TimeOnly time)
+    {
+        var local = DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(local, ChinaTimeZone.Info);
     }
 
     private static string FormatBreadthLabel(int bucket)

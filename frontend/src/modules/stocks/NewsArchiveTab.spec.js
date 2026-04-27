@@ -165,6 +165,10 @@ describe('NewsArchiveTab', () => {
         page: 1,
         pageSize: 20,
         total: 1,
+        readableTotal: 1,
+        readableRate: 1,
+        urlUnavailableTotal: 0,
+        urlUnavailableRate: 0,
         items: [
           {
             level: 'market',
@@ -189,10 +193,48 @@ describe('NewsArchiveTab', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/news/archive?page=1&pageSize=20')
     expect(wrapper.text()).toContain('全量资讯库')
+    expect(wrapper.text()).toContain('资讯归档控制台')
+    expect(wrapper.text()).not.toContain('News Archive Console')
     expect(wrapper.text()).toContain('美联储前景偏谨慎，市场保持观望')
     expect(wrapper.text()).toContain('原题：Fed outlook keeps markets cautious')
     expect(wrapper.text()).toContain('宏观货币')
     expect(wrapper.text()).toContain('大盘')
+    expect(wrapper.text()).toContain('可读 1 条 · 100.0%')
+    expect(wrapper.text()).toContain('无原文 0 条 · 0.0%')
+  })
+
+  it('renders archive readability summary from api totals', async () => {
+    const fetchMock = vi.fn(async () => makeResponse({
+      json: async () => ({
+        page: 1,
+        pageSize: 20,
+        total: 3784,
+        readableTotal: 2650,
+        readableRate: 0.7003,
+        urlUnavailableTotal: 1134,
+        urlUnavailableRate: 0.2997,
+        items: [
+          {
+            level: 'market',
+            sectorName: '大盘环境',
+            title: 'Market archive sample',
+            source: 'CNBC Finance',
+            sentiment: '中性',
+            publishTime: '2026-04-26T08:00:00Z',
+            isAiProcessed: true
+          }
+        ]
+      })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(NewsArchiveTab)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('共 3784 条资讯')
+    expect(wrapper.text()).toContain('可读 2650 条 · 70.0%')
+    expect(wrapper.text()).toContain('无原文 1134 条 · 30.0%')
   })
 
   it('submits keyword and filters to archive api', async () => {

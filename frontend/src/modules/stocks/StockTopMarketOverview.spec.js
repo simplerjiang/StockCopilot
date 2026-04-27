@@ -176,13 +176,51 @@ describe('StockTopMarketOverview', () => {
         currentStockRealtimeQuote: {
           name: '贵州茅台', symbol: 'sh600519', price: 1856.0, change: 38.6, changePercent: 2.12, turnoverAmount: 15000000000
         },
-        stockRealtimeRelativeStrength: { label: '强于大盘', spread: 0.89 }
+        stockRealtimeRelativeStrength: { label: '跑赢沪指', spread: 0.89 }
       }
     })
     await wrapper.find('.expand-toggle').trigger('click')
     expect(wrapper.text()).toContain('个股对照')
     expect(wrapper.text()).toContain('贵州茅台')
-    expect(wrapper.text()).toContain('强于大盘')
+    expect(wrapper.text()).toContain('跑赢沪指')
+    expect(wrapper.text()).toContain('+0.89 pp')
+    expect(wrapper.text()).not.toContain('+0.89%')
+  })
+
+  it('keeps collapsed and expanded northbound copy consistent when data is closed', async () => {
+    const wrapper = mount(StockTopMarketOverview, {
+      props: {
+        ...baseProps,
+        overview: {
+          ...baseProps.overview,
+          northboundFlow: { totalNetInflow: 0, shanghaiNetInflow: 0, shenzhenNetInflow: 0, isStale: true, status: 'closed' }
+        },
+        formatSignedRealtimeAmount: v => `${Number(v ?? 0) >= 0 ? '+' : ''}${Number(v ?? 0).toFixed(2)} 亿`
+      }
+    })
+
+    expect(wrapper.text()).toContain('休市')
+    await wrapper.find('.expand-toggle').trigger('click')
+
+    const text = wrapper.text()
+    expect(text).toContain('北向资金')
+    expect(text).toContain('休市')
+    expect(text).not.toContain('+0.00 亿')
+  })
+
+  it('renders valid northbound amount normally', () => {
+    const wrapper = mount(StockTopMarketOverview, {
+      props: {
+        ...baseProps,
+        overview: {
+          ...baseProps.overview,
+          northboundFlow: { totalNetInflow: 8.9, shanghaiNetInflow: 4.1, shenzhenNetInflow: 4.8, isStale: false, status: 'ok' }
+        },
+        formatSignedRealtimeAmount: v => `${Number(v ?? 0) >= 0 ? '+' : ''}${Number(v ?? 0).toFixed(2)} 亿`
+      }
+    })
+
+    expect(wrapper.text()).toContain('+8.90 亿')
   })
 
   it('stops countdown when disabled', async () => {

@@ -223,7 +223,7 @@ public sealed class RecommendationSessionService : IRecommendationSessionService
 
     private static RecommendTurnDto MapTurn(RecommendationTurn turn, IReadOnlyList<RecommendFeedItemDto> feedItems)
     {
-        var stageSnapshots = turn.StageSnapshots
+        var stageSnapshots = NormalizeStageSnapshotsForRead(turn.StageSnapshots)
             .OrderBy(snapshot => snapshot.StageRunIndex)
             .Select(snapshot => new RecommendStageSnapshotDto(
                 snapshot.Id,
@@ -265,6 +265,56 @@ public sealed class RecommendationSessionService : IRecommendationSessionService
             stageSnapshots,
             feedItems);
     }
+
+    private static IReadOnlyList<RecommendationStageSnapshot> NormalizeStageSnapshotsForRead(IEnumerable<RecommendationStageSnapshot> snapshots)
+    {
+        var ordered = snapshots
+            .OrderBy(snapshot => snapshot.StageRunIndex)
+            .ThenBy(snapshot => snapshot.StartedAt ?? snapshot.CompletedAt ?? DateTime.MinValue)
+            .ThenBy(snapshot => snapshot.Id)
+            .ToArray();
+
+        if (ordered.Length == 0)
+        {
+            return ordered;
+        }
+
+        var usedRunIndexes = new HashSet<int>();
+        var nextRunIndex = 0;
+        var normalized = new List<RecommendationStageSnapshot>(ordered.Length);
+
+        foreach (var snapshot in ordered)
+        {
+            var runIndex = Math.Max(snapshot.StageRunIndex, nextRunIndex);
+            while (!usedRunIndexes.Add(runIndex))
+            {
+                runIndex++;
+            }
+
+            nextRunIndex = runIndex + 1;
+            normalized.Add(CloneSnapshotForRead(snapshot, runIndex));
+        }
+
+        return normalized;
+    }
+
+    private static RecommendationStageSnapshot CloneSnapshotForRead(RecommendationStageSnapshot snapshot, int stageRunIndex) => new()
+    {
+        Id = snapshot.Id,
+        TurnId = snapshot.TurnId,
+        StageType = snapshot.StageType,
+        StageRunIndex = stageRunIndex,
+        ExecutionMode = snapshot.ExecutionMode,
+        Status = snapshot.Status,
+        ActiveRoleIdsJson = snapshot.ActiveRoleIdsJson,
+        Summary = snapshot.Summary,
+        StartedAt = snapshot.StartedAt,
+        CompletedAt = snapshot.CompletedAt,
+        RoleStates = snapshot.RoleStates
+            .OrderBy(state => state.RunIndex)
+            .ThenBy(state => state.Id)
+            .ToArray()
+    };
 
     private static RecommendFeedItemDto MapFeedItem(RecommendationFeedItem item)
     {

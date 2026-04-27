@@ -14,15 +14,43 @@ const makeResponse = ({ ok = true, json, text } = {}) => ({
 })
 
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+const waitForStockSearch = async () => {
+  await wait(350)
+  await flushPromises()
+  await flushPromises()
+}
 const getTradeField = (wrapper, testId) => wrapper.get(`[data-testid="${testId}"]`)
+const getLabeledValue = (wrapper, itemSelector, labelSelector, valueSelector, labelText) => {
+  const item = wrapper.findAll(itemSelector).find(node => {
+    const label = node.find(labelSelector)
+    return label.exists() && label.text() === labelText
+  })
+  expect(item).toBeTruthy()
+  return item.find(valueSelector).text()
+}
 
 const defaultSnapshot = {
   totalCapital: 100000,
+  totalCost: 60000,
   totalMarketValue: 80000,
   totalUnrealizedPnL: 2000,
   availableCash: 20000,
   totalPositionRatio: 0.8,
   positions: []
+}
+
+const navigateStockPosition = {
+  symbol: '000001',
+  name: '平安银行',
+  quantity: 1000,
+  quantityLots: 1000,
+  averageCost: 10.5,
+  totalCost: 10500,
+  latestPrice: 11.2,
+  marketValue: 11200,
+  unrealizedPnL: 700,
+  positionRatio: 0.112
 }
 
 const defaultSummary = {
@@ -205,6 +233,87 @@ function setupFetchMock(overrides = {}) {
   })
 }
 
+const mountWithNavigablePosition = async () => {
+  vi.stubGlobal('fetch', setupFetchMock({
+    snapshot: {
+      ...defaultSnapshot,
+      positions: [navigateStockPosition]
+    }
+  }))
+  const wrapper = mount(TradeLogTab)
+  await flushPromises()
+  await flushPromises()
+  return wrapper
+}
+
+const listenForNavigateStock = () => {
+  const handler = vi.fn()
+  window.addEventListener('navigate-stock', handler)
+  return {
+    handler,
+    cleanup: () => window.removeEventListener('navigate-stock', handler)
+  }
+}
+
+const expectNavigateStockEvent = (handler) => {
+  expect(handler).toHaveBeenCalledTimes(1)
+  expect(handler.mock.calls[0][0].detail).toEqual({
+    symbol: navigateStockPosition.symbol,
+    name: navigateStockPosition.name
+  })
+}
+
+const mountQuickEntryWithStockSearch = async (stockSearchResults) => {
+  const fetchMock = setupFetchMock({
+    extra: {
+      '/api/stocks/search?': makeResponse({ json: async () => stockSearchResults })
+    }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(TradeLogTab)
+  await flushPromises()
+  await flushPromises()
+
+  await wrapper.find('.toolbar-actions .btn-primary').trigger('click')
+  await flushPromises()
+
+  return { wrapper, fetchMock }
+}
+
+const mountQuickEntryWithStockSearchByQuery = async (stockSearchResultsByQuery) => {
+  const baseFetchMock = setupFetchMock()
+  const fetchMock = vi.fn(async (url, opts) => {
+    const requestUrl = String(url)
+    if (requestUrl.startsWith('/api/stocks/search?')) {
+      const query = new URL(requestUrl, 'http://local.test').searchParams.get('q') || ''
+      return makeResponse({ json: async () => stockSearchResultsByQuery[query] ?? [] })
+    }
+    return baseFetchMock(url, opts)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(TradeLogTab)
+  await flushPromises()
+  await flushPromises()
+
+  await wrapper.find('.toolbar-actions .btn-primary').trigger('click')
+  await flushPromises()
+
+  return { wrapper, fetchMock }
+}
+
+const fillSymbolAndBlur = async (wrapper, symbol) => {
+  const symbolInput = getTradeField(wrapper, 'trade-symbol')
+  await symbolInput.setValue(symbol)
+  await symbolInput.trigger('blur')
+  await flushPromises()
+  await flushPromises()
+}
+
+const fillSymbolAndWaitForSearch = async (wrapper, symbol) => {
+  await getTradeField(wrapper, 'trade-symbol').setValue(symbol)
+  await waitForStockSearch()
+}
+
 beforeEach(() => {
   vi.restoreAllMocks()
   mockConfirm.mockImplementation(() => Promise.resolve(true))
@@ -223,6 +332,109 @@ describe('TradeLogTab', () => {
     expect(wrapper.text()).toContain('仓位')
     expect(wrapper.text()).toContain('总盈亏')
     expect(wrapper.text()).toContain('胜率')
+  })
+
+  it('normalizes PascalCase portfolio snapshot totals', async () => {
+    vi.stubGlobal('fetch', setupFetchMock({
+      snapshot: {
+        TotalCapital: 250000,
+        TotalCost: 123456.78,
+        TotalMarketValue: 130000.25,
+        TotalUnrealizedPnL: 6543.47,
+        AvailableCash: 126000.75,
+        TotalPositionRatio: 0.493827,
+        Positions: []
+      }
+    }))
+    const wrapper = mount(TradeLogTab)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="portfolio-total-capital"]').text()).toBe('250000.00')
+    expect(wrapper.get('[data-testid="portfolio-total-cost"]').text()).toBe('123456.78')
+    expect(wrapper.get('[data-testid="portfolio-total-market-value"]').text()).toBe('130000.25')
+    expect(wrapper.get('[data-testid="portfolio-total-unrealized-pnl"]').text()).toBe('+6543.47')
+    expect(wrapper.get('[data-testid="portfolio-available-cash"]').text()).toBe('126000.75')
+  })
+
+  it('normalizes PascalCase portfolio position rows without mixing cost market value and PnL', async () => {
+    vi.stubGlobal('fetch', setupFetchMock({
+      snapshot: {
+        TotalCapital: 100000,
+        TotalCost: 35530,
+        TotalMarketValue: 38000,
+        TotalUnrealizedPnL: 2470,
+        AvailableCash: 64470,
+        TotalPositionRatio: 0.3553,
+        Positions: [
+          {
+            Symbol: '000001',
+            Name: '平安银行',
+            QuantityLots: 1000,
+            AvgCostPrice: 35.53,
+            TotalCost: 35530,
+            LatestPrice: 38,
+            MarketValue: 38000,
+            UnrealizedPnL: 2470,
+            UnrealizedReturnRate: 0.0695,
+            PositionRatio: 0.3553
+          }
+        ]
+      }
+    }))
+    const wrapper = mount(TradeLogTab)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('平安银行')
+    expect(wrapper.get('[data-testid="portfolio-position-cost-000001"]').text()).toBe('成本 35530.00')
+    expect(wrapper.get('[data-testid="portfolio-position-market-value-000001"]').text()).toBe('市值 38000.00')
+    expect(wrapper.get('[data-testid="portfolio-position-pnl-000001"]').text()).toBe('浮盈 +2470.00')
+  })
+
+  it('dispatches navigate-stock with symbol and name when clicking a portfolio position row', async () => {
+    const wrapper = await mountWithNavigablePosition()
+    const row = wrapper.get('.position-item-clickable')
+    const { handler, cleanup } = listenForNavigateStock()
+
+    expect(row.attributes('role')).toBe('button')
+    expect(row.attributes('tabindex')).toBe('0')
+
+    try {
+      await row.trigger('click')
+
+      expectNavigateStockEvent(handler)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('dispatches navigate-stock with symbol and name when pressing Enter on a portfolio position row', async () => {
+    const wrapper = await mountWithNavigablePosition()
+    const row = wrapper.get('.position-item-clickable')
+    const { handler, cleanup } = listenForNavigateStock()
+
+    try {
+      await row.trigger('keydown', { key: 'Enter', code: 'Enter' })
+
+      expectNavigateStockEvent(handler)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('dispatches navigate-stock with symbol and name when pressing Space on a portfolio position row', async () => {
+    const wrapper = await mountWithNavigablePosition()
+    const row = wrapper.get('.position-item-clickable')
+    const { handler, cleanup } = listenForNavigateStock()
+
+    try {
+      await row.trigger('keydown', { key: ' ', code: 'Space' })
+
+      expectNavigateStockEvent(handler)
+    } finally {
+      cleanup()
+    }
   })
 
   it('renders trade list items', async () => {
@@ -244,6 +456,49 @@ describe('TradeLogTab', () => {
     expect(wrapper.text()).not.toContain('持仓快照语境')
     expect(wrapper.text()).not.toContain('教练提示')
     expect(wrapper.text()).not.toContain('Coach')
+  })
+
+  it('renders dashes for health score and plan execution rate when behavior stats has zero trades', async () => {
+    vi.stubGlobal('fetch', setupFetchMock({
+      summary: {
+        ...defaultSummary,
+        totalTrades: 0,
+        plannedTradeCount: 0,
+        winRate: null,
+        complianceRate: null
+      },
+      behaviorStats: {
+        disciplineScore: null,
+        planExecutionRate: null,
+        trades7Days: 0,
+        trades30Days: 0,
+        avgDailyTrades7Days: 0,
+        avgDailyTrades30Days: 0,
+        plannedTrades30Days: 0,
+        totalTrades30Days: 0,
+        currentLossStreak: 0,
+        maxLossStreak30Days: 0,
+        chasingBuyCount30Days: 0,
+        chasingBuyRate: 0,
+        isOverTrading: false,
+        activeAlerts: []
+      }
+    }))
+    const wrapper = mount(TradeLogTab)
+    await flushPromises()
+    await flushPromises()
+
+    const behaviorDashboard = wrapper.get('.behavior-dashboard')
+    const healthScore = behaviorDashboard.get('.discipline-score').text()
+    const healthPlanExecutionRate = getLabeledValue(behaviorDashboard, '.behavior-metric', '.metric-label', '.metric-value', '计划执行率')
+    const summaryPlanExecutionRate = getLabeledValue(wrapper, '.summary-item', '.summary-label', '.summary-value', '计划执行率')
+
+    expect(healthScore).toBe('—')
+    expect(healthPlanExecutionRate).toBe('—')
+    expect(summaryPlanExecutionRate).toBe('—')
+    expect([healthScore, healthPlanExecutionRate, summaryPlanExecutionRate]).not.toContain('100 分')
+    expect([healthPlanExecutionRate, summaryPlanExecutionRate]).not.toContain('100.0%')
+    expect([healthPlanExecutionRate, summaryPlanExecutionRate]).not.toContain('0.0%')
   })
 
   it('shows active plans by default and filters trades after selecting a plan', async () => {
@@ -517,6 +772,154 @@ describe('TradeLogTab', () => {
 
     expect(wrapper.find('.trade-modal').exists()).toBe(true)
     expect(wrapper.text()).toContain('快速录入')
+  })
+
+  it('auto-fills quick entry name for bare 000001 using the best stock match', async () => {
+    const { wrapper, fetchMock } = await mountQuickEntryWithStockSearch([
+      { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+      { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' }
+    ])
+
+    await fillSymbolAndBlur(wrapper, '000001')
+
+    expect(fetchMock.mock.calls.some(call => String(call[0]) === '/api/stocks/search?q=000001')).toBe(true)
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('平安银行')
+  })
+
+  it('auto-fills quick entry name for prefixed sz000001', async () => {
+    const { wrapper } = await mountQuickEntryWithStockSearch([
+      { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+      { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' }
+    ])
+
+    await fillSymbolAndBlur(wrapper, 'sz000001')
+
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('平安银行')
+  })
+
+  it('auto-fills quick entry name for 600519', async () => {
+    const { wrapper } = await mountQuickEntryWithStockSearch([
+      { Symbol: 'sh600519', Code: '600519', Name: '贵州茅台', Market: 'sh' }
+    ])
+
+    await fillSymbolAndBlur(wrapper, '600519')
+
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('贵州茅台')
+  })
+
+  it.each([
+    {
+      symbol: '000001',
+      results: [
+        { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+        { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' }
+      ],
+      expectedName: '平安银行'
+    },
+    {
+      symbol: 'sz000001',
+      results: [
+        { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+        { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' }
+      ],
+      expectedName: '平安银行'
+    },
+    {
+      symbol: '600519',
+      results: [
+        { Symbol: 'sh600519', Code: '600519', Name: '贵州茅台', Market: 'sh' }
+      ],
+      expectedName: '贵州茅台'
+    }
+  ])('auto-fills quick entry name for $symbol as soon as input search resolves', async ({ symbol, results, expectedName }) => {
+    const { wrapper } = await mountQuickEntryWithStockSearch(results)
+
+    await fillSymbolAndWaitForSearch(wrapper, symbol)
+
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe(expectedName)
+    expect(wrapper.find('.search-dropdown').exists()).toBe(false)
+  })
+
+  it('updates a previously auto-filled quick entry name when the symbol changes', async () => {
+    const { wrapper } = await mountQuickEntryWithStockSearchByQuery({
+      '000001': [
+        { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+        { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' }
+      ],
+      '600519': [
+        { Symbol: 'sh600519', Code: '600519', Name: '贵州茅台', Market: 'sh' }
+      ]
+    })
+
+    await fillSymbolAndWaitForSearch(wrapper, '000001')
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('平安银行')
+
+    await fillSymbolAndWaitForSearch(wrapper, '600519')
+
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('贵州茅台')
+    expect(wrapper.find('.search-dropdown').exists()).toBe(false)
+  })
+
+  it('does not overwrite a manually edited quick entry name during input auto-fill', async () => {
+    const { wrapper } = await mountQuickEntryWithStockSearch([
+      { Symbol: 'sh600519', Code: '600519', Name: '贵州茅台', Market: 'sh' }
+    ])
+
+    await getTradeField(wrapper, 'trade-name').setValue('手工名称')
+    await fillSymbolAndWaitForSearch(wrapper, '600519')
+
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('手工名称')
+  })
+
+  it('ignores stale quick entry stock search results after the symbol changes', async () => {
+    let resolveFirstSearch
+    const baseFetchMock = setupFetchMock()
+    const fetchMock = vi.fn(async (url, opts) => {
+      const requestUrl = String(url)
+      if (requestUrl.startsWith('/api/stocks/search?')) {
+        const query = new URL(requestUrl, 'http://local.test').searchParams.get('q') || ''
+        if (query === '000001') {
+          return new Promise(resolve => {
+            resolveFirstSearch = () => resolve(makeResponse({
+              json: async () => [
+                { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+                { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' }
+              ]
+            }))
+          })
+        }
+        if (query === '600519') {
+          return makeResponse({
+            json: async () => [
+              { Symbol: 'sh600519', Code: '600519', Name: '贵州茅台', Market: 'sh' }
+            ]
+          })
+        }
+      }
+      return baseFetchMock(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(TradeLogTab)
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.find('.toolbar-actions .btn-primary').trigger('click')
+    await flushPromises()
+
+    await getTradeField(wrapper, 'trade-symbol').setValue('000001')
+    await waitForStockSearch()
+    expect(resolveFirstSearch).toBeTypeOf('function')
+
+    await fillSymbolAndWaitForSearch(wrapper, '600519')
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('贵州茅台')
+
+    resolveFirstSearch()
+    await flushPromises()
+    await flushPromises()
+
+    expect(getTradeField(wrapper, 'trade-symbol').element.value).toBe('600519')
+    expect(getTradeField(wrapper, 'trade-name').element.value).toBe('贵州茅台')
+    expect(wrapper.find('.search-dropdown').exists()).toBe(false)
   })
 
   it('closes modal on cancel', async () => {
@@ -883,6 +1286,31 @@ describe('TradeLogTab', () => {
     const deleteCalls = fetchMock.mock.calls.filter(c => c[1]?.method === 'DELETE')
     expect(deleteCalls.length).toBe(1)
     expect(String(deleteCalls[0][0])).toContain('/api/trades/1')
+  })
+
+  it('sends reset-all confirmation text after both UI confirmations', async () => {
+    const fetchMock = setupFetchMock({
+      extra: {
+        '/api/trades/reset-all': makeResponse({
+          json: async () => ({ success: true, deletedTradeCount: 3, deletedPositionCount: 2, deletedReviewCount: 1 })
+        })
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mount(TradeLogTab)
+    await flushPromises()
+    await flushPromises()
+
+    const resetBtn = wrapper.findAll('.toolbar-actions .btn').find(btn => btn.text().includes('重置'))
+    expect(resetBtn.exists()).toBe(true)
+    await resetBtn.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(mockConfirm).toHaveBeenCalledTimes(2)
+    const resetCalls = fetchMock.mock.calls.filter(call => call[0] === '/api/trades/reset-all' && call[1]?.method === 'POST')
+    expect(resetCalls.length).toBe(1)
+    expect(JSON.parse(resetCalls[0][1].body)).toEqual({ confirmText: 'RESET_ALL_TRADES' })
   })
 
   // ── Settings modal ──

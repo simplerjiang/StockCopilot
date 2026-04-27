@@ -104,6 +104,9 @@ public static class RecommendSessionSchemaInitializer
             "CREATE UNIQUE INDEX IX_RecommendationTurns_SessionId_TurnIndex ON dbo.RecommendationTurns(SessionId, TurnIndex);", ct);
         await EnsureIndexAsync(dbContext, "IX_RecommendationStageSnapshots_TurnId_StageType",
             "CREATE INDEX IX_RecommendationStageSnapshots_TurnId_StageType ON dbo.RecommendationStageSnapshots(TurnId, StageType, StageRunIndex);", ct);
+        await RepairDuplicateStageRunIndexesBeforeUniqueIndexAsync(dbContext, ct);
+        await EnsureUniqueIndexAsync(dbContext, "UX_RecommendationStageSnapshots_TurnId_StageRunIndex",
+            "CREATE UNIQUE INDEX UX_RecommendationStageSnapshots_TurnId_StageRunIndex ON dbo.RecommendationStageSnapshots(TurnId, StageRunIndex);", ct);
         await EnsureIndexAsync(dbContext, "IX_RecommendationRoleStates_StageId_RoleId",
             "CREATE INDEX IX_RecommendationRoleStates_StageId_RoleId ON dbo.RecommendationRoleStates(StageId, RoleId, RunIndex);", ct);
         await EnsureIndexAsync(dbContext, "IX_RecommendationFeedItems_TurnId_CreatedAt",
@@ -116,6 +119,17 @@ public static class RecommendSessionSchemaInitializer
 #pragma warning disable EF1002
         await dbContext.Database.ExecuteSqlRawAsync(
             $"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{indexName}') {createSql}", ct);
+#pragma warning restore EF1002
+    }
+
+    private static async Task EnsureUniqueIndexAsync(AppDbContext dbContext, string indexName, string createSql, CancellationToken ct)
+    {
+        SqlIdentifierGuard.ValidateSqlIdentifier(indexName, nameof(indexName));
+#pragma warning disable EF1002
+        await dbContext.Database.ExecuteSqlRawAsync(
+            $"IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.RecommendationStageSnapshots') AND name = N'{indexName}' AND is_unique = 0) " +
+            $"DROP INDEX {indexName} ON dbo.RecommendationStageSnapshots; " +
+            $"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.RecommendationStageSnapshots') AND name = N'{indexName}' AND is_unique = 1) {createSql}", ct);
 #pragma warning restore EF1002
     }
 
@@ -204,10 +218,31 @@ public static class RecommendSessionSchemaInitializer
             "CREATE UNIQUE INDEX IF NOT EXISTS IX_RecommendationTurns_SessionId_TurnIndex ON RecommendationTurns(SessionId, TurnIndex);", ct);
         await dbContext.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_RecommendationStageSnapshots_TurnId ON RecommendationStageSnapshots(TurnId, StageType, StageRunIndex);", ct);
+        await RepairDuplicateStageRunIndexesBeforeUniqueIndexAsync(dbContext, ct);
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "DROP INDEX IF EXISTS UX_RecommendationStageSnapshots_TurnId_StageRunIndex; " +
+            "CREATE UNIQUE INDEX UX_RecommendationStageSnapshots_TurnId_StageRunIndex ON RecommendationStageSnapshots(TurnId, StageRunIndex);", ct);
         await dbContext.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_RecommendationRoleStates_StageId ON RecommendationRoleStates(StageId, RoleId, RunIndex);", ct);
         await dbContext.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_RecommendationFeedItems_TurnId ON RecommendationFeedItems(TurnId, CreatedAt);", ct);
+    }
+
+    private static Task<bool> HasDuplicateStageRunIndexesAsync(AppDbContext dbContext, CancellationToken ct) =>
+        dbContext.RecommendationStageSnapshots
+            .AsNoTracking()
+            .GroupBy(snapshot => new { snapshot.TurnId, snapshot.StageRunIndex })
+            .AnyAsync(group => group.Count() > 1, ct);
+
+    private static async Task RepairDuplicateStageRunIndexesBeforeUniqueIndexAsync(AppDbContext dbContext, CancellationToken ct)
+    {
+        await RecommendStageRunIndexRepairer.RepairDuplicateStageRunIndexesAsync(dbContext, null, ct);
+
+        if (await HasDuplicateStageRunIndexesAsync(dbContext, ct))
+        {
+            throw new InvalidOperationException(
+                "Cannot create recommendation stage snapshot unique index because duplicate TurnId/StageRunIndex rows remain after automatic repair.");
+        }
     }
 }
 

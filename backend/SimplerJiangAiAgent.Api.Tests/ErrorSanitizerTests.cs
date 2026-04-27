@@ -52,4 +52,36 @@ public class ErrorSanitizerTests
         Assert.DoesNotContain("example.com", result);
         Assert.Equal(2, result.Split("[LLM-GATEWAY]").Length - 1);
     }
+
+    [Fact]
+    public void SecretAssignments_AreReplaced()
+    {
+        const string raw = "token=sk-test-secret, api_key=test-api-key-123, Authorization: Bearer sk-another-secret";
+        var result = ErrorSanitizer.SanitizeErrorMessage(raw);
+        Assert.DoesNotContain("sk-test-secret", result);
+        Assert.DoesNotContain("test-api-key-123", result);
+        Assert.DoesNotContain("sk-another-secret", result);
+        Assert.Equal(3, result.Split("[SECRET]").Length - 1);
+    }
+
+    [Theory]
+    [InlineData("Authorization Bearer sk-plain-header-secret")]
+    [InlineData("Authorization: Bearer sk-colon-header-secret")]
+    [InlineData("token=sk-token-secret")]
+    [InlineData("api_key=sk-api-key-secret")]
+    public void SecretTokenVariants_AreReplaced(string raw)
+    {
+        var result = ErrorSanitizer.SanitizeErrorMessage(raw);
+        Assert.DoesNotContain("sk-", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[SECRET]", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BareSkSecret_IsReplaced()
+    {
+        const string raw = "provider failed with sk-test-secret while retrying";
+        var result = ErrorSanitizer.SanitizeErrorMessage(raw);
+        Assert.DoesNotContain("sk-test-secret", result);
+        Assert.Contains("[SECRET]", result);
+    }
 }

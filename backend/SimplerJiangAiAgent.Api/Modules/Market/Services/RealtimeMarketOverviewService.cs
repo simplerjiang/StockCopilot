@@ -10,6 +10,9 @@ namespace SimplerJiangAiAgent.Api.Modules.Market.Services;
 public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewService
 {
     private static readonly string[] DefaultIndexSymbols = ["sh000001", "sz399001", "sz399006"];
+    private static readonly TimeZoneInfo ChinaTimeZone = ResolveChinaTimeZone();
+    private static readonly TimeOnly ChinaTradingOpen = new(9, 30);
+    private static readonly TimeOnly ChinaTradingClose = new(15, 5);
     private const string TencentSourceName = "腾讯";
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> CacheGates = new(StringComparer.Ordinal);
     private static readonly TimeSpan BatchFreshTtl = TimeSpan.FromSeconds(5);
@@ -90,10 +93,98 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         var (mainFlow, mainFlowStale) = mainFlowTask.Result;
         var (northbound, northboundStale) = northboundTask.Result;
         var (breadth, breadthStale) = breadthTask.Result;
-        var isStale = mainFlowStale || northboundStale || breadthStale;
-        var snapshotTime = ResolveSnapshotTime(quotes, mainFlow, northbound);
+        var normalizedNorthbound = NormalizeNorthboundState(northbound, northboundStale);
+        var isStale = mainFlowStale || breadthStale || normalizedNorthbound?.IsStale == true;
+        var snapshotTime = ResolveSnapshotTime(quotes, mainFlow, normalizedNorthbound);
 
-        return new MarketRealtimeOverviewDto(snapshotTime, quotes, mainFlow, northbound, breadth, isStale);
+        return new MarketRealtimeOverviewDto(snapshotTime, quotes, mainFlow, normalizedNorthbound, breadth, isStale);
+    }
+
+    private NorthboundFlowSnapshotDto? NormalizeNorthboundState(NorthboundFlowSnapshotDto? northbound, bool cacheStale)
+    {
+        if (northbound is null)
+        {
+            return null;
+        }
+
+        var status = ResolveNorthboundStatus(northbound, cacheStale);
+        return northbound with { IsStale = status != "ok", Status = status };
+    }
+
+    private string ResolveNorthboundStatus(NorthboundFlowSnapshotDto northbound, bool cacheStale)
+    {
+        if (cacheStale)
+        {
+            return "stale";
+        }
+
+        if (HasSuspiciousConstantZeroSeries(northbound))
+        {
+            return "unavailable";
+        }
+
+        if (!IsChinaTradingHours(_timeProvider.GetUtcNow().UtcDateTime))
+        {
+            return "closed";
+        }
+
+        return "ok";
+    }
+
+    private static bool HasSuspiciousConstantZeroSeries(NorthboundFlowSnapshotDto northbound)
+    {
+        var points = northbound.Points;
+        if (points.Count < 3)
+        {
+            return false;
+        }
+
+        var allNetFlowZero = points.All(point => point.TotalNetInflow == 0m
+            && point.ShanghaiNetInflow == 0m
+            && point.ShenzhenNetInflow == 0m);
+        if (!allNetFlowZero)
+        {
+            return false;
+        }
+
+        var first = points[0];
+        var balancesConstant = points.All(point => point.ShanghaiBalance == first.ShanghaiBalance
+            && point.ShenzhenBalance == first.ShenzhenBalance);
+        if (!balancesConstant)
+        {
+            return false;
+        }
+
+        var span = points.Max(point => point.Timestamp) - points.Min(point => point.Timestamp);
+        return span >= TimeSpan.FromHours(2);
+    }
+
+    private static bool IsChinaTradingHours(DateTime utcNow)
+    {
+        var chinaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc), ChinaTimeZone);
+        if (chinaNow.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+        {
+            return false;
+        }
+
+        var current = TimeOnly.FromDateTime(chinaNow);
+        return current >= ChinaTradingOpen && current <= ChinaTradingClose;
+    }
+
+    private static TimeZoneInfo ResolveChinaTimeZone()
+    {
+        foreach (var id in new[] { "China Standard Time", "Asia/Shanghai" })
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(id);
+            }
+            catch
+            {
+            }
+        }
+
+        return TimeZoneInfo.Utc;
     }
 
     private async Task<IReadOnlyList<BatchStockQuoteDto>> TryGetBatchQuotesAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken)
@@ -188,7 +279,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
     {
         return new BatchStockQuoteDto(
             StockSymbolNormalizer.Normalize(quote.Symbol),
-            quote.Name,
+            StockNameNormalizer.NormalizeDisplayName(quote.Name),
             quote.Price,
             quote.Change,
             quote.ChangePercent,

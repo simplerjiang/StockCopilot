@@ -214,6 +214,10 @@ public sealed class TradeAccountingService : ITradeAccountingService
         }
         else switch (p)
         {
+            case "day":
+                periodStart = from ?? TimeZoneInfo.ConvertTimeToUtc(nowCst.Date, cst);
+                periodEnd = to ?? endOfTodayCstUtc;
+                break;
             case "week":
                 periodStart = from ?? endOfTodayCstUtc.AddDays(-7);
                 periodEnd = to ?? endOfTodayCstUtc;

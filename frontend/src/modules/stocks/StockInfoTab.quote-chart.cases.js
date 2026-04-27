@@ -46,6 +46,13 @@ export const stockInfoTabQuoteChartCases = ({
             status: 200,
             json: async () => ([
               {
+                id: 2,
+                symbol: 'sz000021',
+                name: '深科技',
+                changePercent: 0.8,
+                updatedAt: '2026-03-14T00:00:00Z'
+              },
+              {
                 id: 1,
                 symbol: '600000',
                 name: '浦发银行',
@@ -105,9 +112,17 @@ export const stockInfoTabQuoteChartCases = ({
     await flushPromises()
     await flushPromises()
 
-    await wrapper.find('.history-chip').trigger('click')
+    let historyChips = wrapper.findAll('.history-chip')
+    expect(historyChips[0].text()).toContain('深科技')
+    expect(historyChips[1].text()).toContain('浦发银行')
+
+    await historyChips[1].trigger('click')
     await flushPromises()
     await flushPromises()
+
+    historyChips = wrapper.findAll('.history-chip')
+    expect(historyChips[0].text()).toContain('浦发银行')
+    expect(JSON.parse(localStorage.getItem('stock_recent_history_order'))[0]).toBe('sh600000')
 
     const cacheCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/detail/cache?'))
     const detailCall = fetchMock.mock.calls.find(args => String(args[0]).startsWith('/api/stocks/chart?'))
@@ -129,6 +144,48 @@ export const stockInfoTabQuoteChartCases = ({
     expect(wrapper.vm.detail?.quote?.price).toBe(10.1)
     expect(wrapper.vm.loading).toBe(false)
     expect(wrapper.vm.historyList[0]).toMatchObject(savedHistory)
+  }
+  },
+  {
+    title: "hides invalid recent-history items and offers cleanup",
+    run: async () => {
+    localStorage.setItem('stock_recent_history_order', JSON.stringify(['invalid', 'sz000001', 'invalid/invalid/0%', 'sh600000']))
+    const { fetchMock } = createChatFetchMock({
+      handle: async (url) => {
+        if (url === '/api/stocks/history') {
+          return makeResponse({
+            ok: true,
+            status: 200,
+            json: async () => ([
+              { id: 1, symbol: 'invalid/invalid/0%', name: 'invalid', changePercent: 0, updatedAt: '2026-03-14T00:00:00Z' },
+              { id: 2, symbol: 'sz000001', name: '平安银行', changePercent: 1.1, updatedAt: '2026-03-14T00:00:00Z' },
+              { id: 3, symbol: 'invalid', name: 'invalid', changePercent: 0, updatedAt: '2026-03-13T00:00:00Z' },
+              { id: 4, symbol: '600000', name: '浦发银行', changePercent: -0.2, updatedAt: '2026-03-12T00:00:00Z' }
+            ])
+          })
+        }
+
+        return null
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    await flushPromises()
+    await flushPromises()
+
+    const historyText = wrapper.find('.history-chip-row').text()
+    expect(historyText).toContain('平安银行')
+    expect(historyText).toContain('浦发银行')
+    expect(historyText).not.toContain('invalid')
+    expect(wrapper.text()).toContain('已自动隐藏 2 条无效历史。')
+
+    await wrapper.find('.history-cleanup-button').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('已自动隐藏')
+    expect(JSON.parse(localStorage.getItem('stock_recent_history_order'))).toEqual(['sz000001', 'sh600000'])
+    expect(wrapper.vm.historyList.map(item => item.symbol)).toEqual(['sz000001', '600000'])
   }
   },
   {

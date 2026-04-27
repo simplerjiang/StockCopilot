@@ -13,7 +13,24 @@ internal static partial class ErrorSanitizer
     [GeneratedRegex(@"https?://[^\s,，;；\]）)""']+", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex UrlPattern();
 
+    [GeneratedRegex(@"\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex BearerTokenPattern();
+
+    [GeneratedRegex(@"\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|authorization)(\s*[:=]\s*)([""']?)(?:Bearer\s+)?[^,\r\n;}\]""']+", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex SecretAssignmentPattern();
+
+    [GeneratedRegex(@"\bsk-[A-Za-z0-9][A-Za-z0-9._-]{6,}\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex BareOpenAiKeyPattern();
+
+    [GeneratedRegex(@"\b[A-Za-z]:\\[^\r\n,;""']+", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex WindowsPathPattern();
+
+    [GeneratedRegex(@"(?<!:)\/(?:Users|home|var|tmp|etc|opt)\/[^\r\n,;""']+", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex UnixPathPattern();
+
     private const string Replacement = "[LLM-GATEWAY]";
+    private const string SecretReplacement = "[SECRET]";
+    private const string PathReplacement = "[LOCAL-PATH]";
 
     /// <summary>
     /// Returns the message with all HTTP(S) URLs replaced by a safe placeholder.
@@ -22,6 +39,12 @@ internal static partial class ErrorSanitizer
     public static string? SanitizeErrorMessage(string? message)
     {
         if (string.IsNullOrEmpty(message)) return message;
-        return UrlPattern().Replace(message, Replacement);
+        var sanitized = UrlPattern().Replace(message, Replacement);
+        sanitized = BearerTokenPattern().Replace(sanitized, $"$1{SecretReplacement}");
+        sanitized = SecretAssignmentPattern().Replace(sanitized, $"$1$2$3{SecretReplacement}");
+        sanitized = BareOpenAiKeyPattern().Replace(sanitized, SecretReplacement);
+        sanitized = WindowsPathPattern().Replace(sanitized, PathReplacement);
+        sanitized = UnixPathPattern().Replace(sanitized, PathReplacement);
+        return sanitized;
     }
 }

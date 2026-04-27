@@ -46,11 +46,24 @@ public static class StockSymbolNormalizer
     {
         if (string.IsNullOrWhiteSpace(symbol)) return false;
         var trimmed = symbol.Trim().ToLowerInvariant();
-        // Strip exchange prefix
-        var code = trimmed.StartsWith("sh") || trimmed.StartsWith("sz") || trimmed.StartsWith("bj")
-            ? trimmed[2..]
-            : trimmed;
-        return code.Length == 6 && (code.StartsWith("000") || code.StartsWith("399"));
+        if (trimmed.StartsWith("sh"))
+        {
+            var code = trimmed[2..];
+            return code.Length == 6 && code.StartsWith("000");
+        }
+
+        if (trimmed.StartsWith("sz"))
+        {
+            var code = trimmed[2..];
+            return code.Length == 6 && code.StartsWith("399");
+        }
+
+        if (trimmed.StartsWith("bj"))
+        {
+            return false;
+        }
+
+        return trimmed.Length == 6 && trimmed.All(char.IsDigit) && trimmed.StartsWith("399");
     }
 
     public static string Normalize(string symbol)

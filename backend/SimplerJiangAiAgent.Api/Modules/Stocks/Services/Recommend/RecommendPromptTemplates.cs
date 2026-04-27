@@ -25,6 +25,7 @@ public static class RecommendPromptTemplates
         ## 质量要求
         - 每条证据必须标注来源(source)和时间(publishedAt)，缺少时间标注的信息降级为弱证据
         - 数值型数据（涨跌幅、资金流向等）必须标注数据来源和时间点
+        - 输出板块时，code 必须与 name/sectorName 来自同一条工具返回或同一条上游 JSON；不要把 stockSectorCode 与 mainlineSectorName 混配
         - 不确定的判断请明确标注置信度
         """;
 

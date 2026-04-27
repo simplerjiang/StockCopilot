@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Nodes;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
@@ -230,7 +231,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         }
         catch (Exception ex)
         {
-            return new StockAgentResultDto(definition.Id, definition.Name, false, ex.Message, null, null);
+            return new StockAgentResultDto(definition.Id, definition.Name, false, ErrorSanitizer.SanitizeErrorMessage(ex.Message), null, null);
         }
     }
 

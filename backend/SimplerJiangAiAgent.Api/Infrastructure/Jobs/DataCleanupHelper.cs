@@ -1,11 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using SimplerJiangAiAgent.Api.Data;
+using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 namespace SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 
 /// <summary>
 /// Idempotent data cleanup executed on every startup.
-/// Fixes legacy dirty data: "示例名称" placeholders and extra spaces in short stock names.
+/// Fixes legacy dirty data: "示例名称" placeholders and extra spaces after ST prefixes.
 /// </summary>
 public static class DataCleanupHelper
 {
@@ -18,12 +19,12 @@ public static class DataCleanupHelper
         foreach (var h in badNames)
             h.Name = string.Empty;
 
-        // Clean StockQueryHistories – remove extra spaces in short Chinese names (≤10 chars)
+        // Clean StockQueryHistories – normalize legacy ST-prefix spacing without touching ordinary names.
         var spacedNames = await dbContext.StockQueryHistories
-            .Where(h => h.Name.Contains(" ") && h.Name.Length <= 10)
+            .Where(h => h.Name.Contains("ST") && h.Name.Length <= 12)
             .ToListAsync(cancellationToken);
         foreach (var h in spacedNames)
-            h.Name = h.Name.Replace(" ", "");
+            h.Name = StockNameNormalizer.NormalizeDisplayName(h.Name);
 
         if (badNames.Count > 0 || spacedNames.Count > 0)
             await dbContext.SaveChangesAsync(cancellationToken);

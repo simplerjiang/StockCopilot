@@ -296,6 +296,20 @@ const createChatFetchMock = (handlers = {}) => {
     if (url === '/api/stocks/sources') {
       return makeResponse({ ok: true, status: 200, json: async () => ([]) })
     }
+    if (url === '/api/stocks/financial/embedding/status') {
+      return makeResponse({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          available: true,
+          model: 'bge-m3',
+          dimension: 1024,
+          embeddingCount: 1456,
+          chunkCount: 1456,
+          coverage: 1
+        })
+      })
+    }
     if (String(url).startsWith('/api/stocks/quote?')) {
       const params = new URLSearchParams(String(url).split('?')[1] || '')
       const symbol = params.get('symbol') || 'sz000021'

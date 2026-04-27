@@ -1,9 +1,10 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
+import { readAdminToken, writeAdminToken } from './adminTokenStorage.js'
 
 // Auth token (same as other admin panels)
-const token = ref(localStorage.getItem('admin-token') || '')
+const token = ref(readAdminToken())
 const isAuthed = ref(false)
 
 // Config state
@@ -153,7 +154,7 @@ async function login() {
     })
     if (res.ok) {
       isAuthed.value = true
-      localStorage.setItem('admin-token', token.value)
+      writeAdminToken(token.value)
       await loadAll()
     } else {
       isAuthed.value = false

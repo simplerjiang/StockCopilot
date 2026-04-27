@@ -1,3 +1,4 @@
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
@@ -524,7 +525,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
         }
         catch (Exception ex)
         {
-            return BuildFailedOutcome(proposal, ex.Message);
+            return BuildFailedOutcome(proposal, ErrorSanitizer.SanitizeErrorMessage(ex.Message) ?? string.Empty);
         }
     }
 

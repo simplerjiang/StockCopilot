@@ -49,6 +49,23 @@ public sealed class StockCopilotMcpServiceTests
     }
 
     [Fact]
+    public async Task GetCompanyOverviewAsync_WhenQuoteUnavailable_ShouldDegradeWithoutZeroPrice()
+    {
+        var service = CreateService(dataService: new FakeStockDataService(quoteAvailable: false));
+
+        var result = await service.GetCompanyOverviewAsync("sh600000", "task-company-overview-no-quote");
+
+        Assert.Equal("sh600000", result.Data.Symbol);
+        Assert.Equal("浦发银行", result.Data.Name);
+        Assert.Null(result.Data.Price);
+        Assert.Null(result.Data.ChangePercent);
+        Assert.Null(result.Data.QuoteTimestamp);
+        Assert.Contains("quote_unavailable", result.DegradedFlags);
+        Assert.Contains(result.Warnings, warning => warning.Contains("行情数据不可用", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Evidence, item => item.Summary?.Contains("现价=0", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
     public async Task GetProductAsync_ShouldExposeBusinessScopeIndustryAndRegion()
     {
         var snapshot = new StockFundamentalSnapshotDto(
@@ -1079,6 +1096,32 @@ public sealed class StockCopilotMcpServiceTests
     }
 
     [Fact]
+    public async Task GetKlineAsync_WhenQuoteUnavailable_ShouldReturnDegradedEnvelopeWithoutZeroQuoteFallback()
+    {
+        var service = CreateService(dataService: new FakeStockDataService(quoteAvailable: false));
+
+        var result = await service.GetKlineAsync("sh600000", "day", 60, null, "task-kline-no-quote");
+
+        Assert.Equal("sh600000", result.Data.Symbol);
+        Assert.NotEmpty(result.Data.Bars);
+        Assert.Contains("quote_unavailable", result.DegradedFlags);
+        Assert.Contains(result.Warnings, warning => warning.Contains("行情数据不可用", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetKlineAsync_WhenQuoteAvailable_ShouldReturnNormalEnvelopeWithoutQuoteUnavailableWarning()
+    {
+        var service = CreateService();
+
+        var result = await service.GetKlineAsync("sh600000", "day", 60, null, "task-kline-with-quote");
+
+        Assert.Equal("sh600000", result.Data.Symbol);
+        Assert.NotEmpty(result.Data.Bars);
+        Assert.DoesNotContain("quote_unavailable", result.DegradedFlags);
+        Assert.DoesNotContain(result.Warnings, warning => warning.Contains("行情数据不可用", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task SharedResearchTaskScope_ShouldDeduplicateSymbolRefreshAcrossTools()
     {
         const string symbol = "sh600111";
@@ -1199,14 +1242,17 @@ public sealed class StockCopilotMcpServiceTests
     {
         private readonly IReadOnlyList<KLinePointDto> _kLines;
         private readonly IReadOnlyList<MinuteLinePointDto> _minuteLines;
-        private readonly StockQuoteDto _quote;
+        private readonly StockQuoteDto? _quote;
 
         public FakeStockDataService(
             StockQuoteDto? quote = null,
             IReadOnlyList<KLinePointDto>? kLines = null,
-            IReadOnlyList<MinuteLinePointDto>? minuteLines = null)
+            IReadOnlyList<MinuteLinePointDto>? minuteLines = null,
+            bool quoteAvailable = true)
         {
-            _quote = quote ?? new StockQuoteDto("sh600000", "浦发银行", 10.5m, 0.2m, 1.9m, 13m, 8m, 10.7m, 10.1m, 0.1m, new DateTime(2026, 3, 21, 10, 0, 0), Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(), 320_000_000_000m, 2.8m, 100000, "银行");
+            _quote = quoteAvailable
+                ? quote ?? new StockQuoteDto("sh600000", "浦发银行", 10.5m, 0.2m, 1.9m, 13m, 8m, 10.7m, 10.1m, 0.1m, new DateTime(2026, 3, 21, 10, 0, 0), Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>(), 320_000_000_000m, 2.8m, 100000, "银行")
+                : null;
             _kLines = kLines ?? Enumerable.Range(0, 30)
                 .Select(index => new KLinePointDto(new DateTime(2026, 2, 1).AddDays(index), 9.8m + index * 0.02m, 9.9m + index * 0.02m, 10m + index * 0.02m, 9.7m + index * 0.02m, 1000 + index * 20))
                 .ToArray();
@@ -1218,9 +1264,9 @@ public sealed class StockCopilotMcpServiceTests
             };
         }
 
-        public Task<StockQuoteDto> GetQuoteAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
+        public Task<StockQuoteDto?> GetQuoteAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(_quote with { Symbol = symbol });
+            return Task.FromResult(_quote is null ? null : _quote with { Symbol = symbol });
         }
 
         public Task<MarketIndexDto> GetMarketIndexAsync(string symbol, string? source = null, CancellationToken cancellationToken = default)

@@ -79,7 +79,7 @@ public sealed class StockSyncService : IStockSyncService
         return new MarketIndexSnapshot
         {
             Symbol = dto.Symbol,
-            Name = dto.Name,
+            Name = StockNameNormalizer.NormalizeDisplayName(dto.Name),
             Price = dto.Price,
             Change = dto.Change,
             ChangePercent = dto.ChangePercent,
@@ -113,6 +113,7 @@ public sealed class StockSyncService : IStockSyncService
         }
 
         var symbol = StockSymbolNormalizer.Normalize(quote.Symbol);
+        var name = StockNameNormalizer.NormalizeDisplayName(quote.Name);
         var serializedFacts = StockFundamentalSnapshotMapper.SerializeFacts(fundamentalSnapshot?.Facts);
         var existing = await dbContext.StockCompanyProfiles.FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
         if (existing is null)
@@ -120,7 +121,7 @@ public sealed class StockSyncService : IStockSyncService
             dbContext.StockCompanyProfiles.Add(new StockCompanyProfile
             {
                 Symbol = symbol,
-                Name = quote.Name,
+                Name = name,
                 SectorName = quote.SectorName,
                 ShareholderCount = quote.ShareholderCount,
                 FundamentalFactsJson = serializedFacts,
@@ -130,7 +131,7 @@ public sealed class StockSyncService : IStockSyncService
             return;
         }
 
-        existing.Name = quote.Name;
+        existing.Name = name;
         existing.SectorName = quote.SectorName ?? existing.SectorName;
         existing.ShareholderCount = quote.ShareholderCount ?? existing.ShareholderCount;
         existing.FundamentalFactsJson = serializedFacts ?? existing.FundamentalFactsJson;
@@ -145,13 +146,19 @@ public sealed class StockSyncService : IStockSyncService
             return;
         }
 
-        var dates = points.Select(p => p.Date.Date).Distinct().ToArray();
+        var validPoints = points.Where(StockKLinePointFilters.HasUsableHighLow).ToArray();
+        if (validPoints.Length == 0)
+        {
+            return;
+        }
+
+        var dates = validPoints.Select(p => p.Date.Date).Distinct().ToArray();
         var existing = await dbContext.KLinePoints
             .Where(x => x.Symbol == symbol && x.Interval == interval && dates.Contains(x.Date.Date))
             .ToListAsync(cancellationToken);
 
         dbContext.KLinePoints.RemoveRange(existing);
-        dbContext.KLinePoints.AddRange(points.Select(p => new KLinePointEntity
+        dbContext.KLinePoints.AddRange(validPoints.Select(p => new KLinePointEntity
         {
             Symbol = symbol,
             Interval = interval,

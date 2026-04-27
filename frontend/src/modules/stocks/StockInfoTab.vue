@@ -1,4 +1,5 @@
 <script setup>
+defineOptions({ name: 'StockInfoTab' })
 import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import StockCharts from './StockCharts.vue'
 import StockMarketNewsPanel from './StockMarketNewsPanel.vue'
@@ -86,8 +87,16 @@ import { useCollapsible } from './useCollapsible'
 import { useRetailHeat } from './charting/useRetailHeat'
 import { useRetailHeatStatus } from './charting/useRetailHeatStatus.js'
 import RetailHeatStatusPanel from './RetailHeatStatusPanel.vue'
+import EmbeddingDegradedBanner from '../../components/EmbeddingDegradedBanner.vue'
+import { useEmbeddingStatus } from '../../composables/useEmbeddingStatus.js'
 
 const { confirm: showConfirm } = useConfirm()
+const {
+  status: embeddingStatus,
+  loading: embeddingStatusLoading,
+  error: embeddingStatusError,
+  refreshEmbeddingStatus
+} = useEmbeddingStatus()
 
 const symbol = ref('')
 const interval = ref(localStorage.getItem('stock_interval') || 'day')
@@ -114,7 +123,29 @@ const historyRefreshSeconds = ref(Number(localStorage.getItem('stock_history_ref
 const historyAutoRefresh = ref(localStorage.getItem('stock_history_auto_refresh') === 'true')
 let historyTimer = null
 const contextMenu = ref({ visible: false, x: 0, y: 0, item: null })
-const sortKey = ref('id')
+const RECENT_HISTORY_ORDER_KEY = 'stock_recent_history_order'
+const normalizeValidHistorySymbol = value => {
+  const normalized = normalizeStockSymbol(value)
+  return isDirectStockSymbol(normalized) ? normalized : ''
+}
+const sanitizeRecentHistoryOrder = value => Array.isArray(value)
+  ? value.map(item => normalizeValidHistorySymbol(item)).filter(Boolean)
+  : []
+const readRecentHistoryOrder = () => {
+  try {
+    const raw = localStorage.getItem(RECENT_HISTORY_ORDER_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    const sanitized = sanitizeRecentHistoryOrder(parsed)
+    if (raw && JSON.stringify(parsed) !== JSON.stringify(sanitized)) {
+      localStorage.setItem(RECENT_HISTORY_ORDER_KEY, JSON.stringify(sanitized))
+    }
+    return sanitized
+  } catch {
+    return []
+  }
+}
+const recentHistoryOrder = ref(readRecentHistoryOrder())
+const sortKey = ref('recent')
 const sortAsc = ref(true)
 const monochromeMode = ref(localStorage.getItem('stock_monochrome_mode') === 'true')
 const marketNewsModalOpen = ref(false)
@@ -268,7 +299,7 @@ const stockRealtimeRelativeStrength = computed(() => {
   const spread = Number(focusQuote.changePercent) - Number(shanghaiQuote.changePercent)
   return {
     spread,
-    label: spread >= 0 ? '强于沪指' : '弱于沪指'
+    label: spread >= 0 ? '跑赢沪指' : '跑输沪指'
   }
 })
 const stockRealtimeBreadthBias = computed(() => {
@@ -357,6 +388,41 @@ const resetStockLoadStages = workspace => {
   })
 }
 
+const getHistorySymbolKey = item => normalizeValidHistorySymbol(
+  typeof item === 'string' ? item : (item?.symbol || item?.Symbol || item?.code || item?.Code || '')
+)
+
+const sanitizeHistoryList = value => Array.isArray(value)
+  ? value.filter(item => Boolean(getHistorySymbolKey(item)))
+  : []
+
+const rememberRecentHistorySymbol = symbolKey => {
+  const normalizedSymbol = normalizeValidHistorySymbol(symbolKey)
+  if (!normalizedSymbol) {
+    return
+  }
+
+  recentHistoryOrder.value = [
+    normalizedSymbol,
+    ...recentHistoryOrder.value.filter(item => item !== normalizedSymbol)
+  ].slice(0, 30)
+  localStorage.setItem(RECENT_HISTORY_ORDER_KEY, JSON.stringify(recentHistoryOrder.value))
+}
+
+const promoteHistoryItem = item => {
+  const normalizedSymbol = getHistorySymbolKey(item)
+  if (!normalizedSymbol) {
+    return
+  }
+
+  rememberRecentHistorySymbol(normalizedSymbol)
+  const now = new Date().toISOString()
+  historyList.value = [
+    { ...item, updatedAt: item?.updatedAt ?? item?.UpdatedAt ?? now },
+    ...historyList.value.filter(entry => getHistorySymbolKey(entry) !== normalizedSymbol)
+  ]
+}
+
 const setStockLoadStage = (workspace, requestToken, key, status, message = '') => {
   if (!workspace || requestToken !== workspace.quoteRequestToken) {
     return
@@ -375,7 +441,11 @@ const setStockLoadStage = (workspace, requestToken, key, status, message = '') =
 
 const applyHistorySymbol = item => {
   const rawSymbol = item.symbol || item.Symbol || item.code || item.Code || ''
-  const normalizedSymbol = normalizeStockSymbol(rawSymbol)
+  const normalizedSymbol = normalizeValidHistorySymbol(rawSymbol)
+  if (!normalizedSymbol) {
+    return
+  }
+  promoteHistoryItem(item)
   selectedSymbol.value = normalizedSymbol
   symbol.value = normalizedSymbol || String(rawSymbol || '').trim()
   currentStockKey.value = normalizedSymbol
@@ -443,9 +513,18 @@ const applyLatestMessages = (workspace, requestToken, messages) => {
     return false
   }
 
+  const isWrappedMessageResponse = Boolean(messages && !Array.isArray(messages) && typeof messages === 'object')
+  const messageItems = Array.isArray(messages)
+    ? messages
+    : Array.isArray(messages?.messages)
+      ? messages.messages
+      : []
+
   workspace.detail = {
     ...workspace.detail,
-    messages: Array.isArray(messages) ? messages : []
+    messages: messageItems,
+    messagesDegraded: isWrappedMessageResponse ? Boolean(messages.degraded) : false,
+    warning: isWrappedMessageResponse ? (messages.warning ?? null) : null
   }
   return true
 }
@@ -633,14 +712,70 @@ const editTradingPlan = (symbolKey, item) => {
   fetchDraftMetrics(workspace)
 }
 
+const readPlanNumericValue = value => {
+  const numericValue = normalizePlanNumber(value)
+  return Number.isFinite(numericValue) ? numericValue : null
+}
+
+const resolveTradingPlanReference = (form, workspace) => {
+  const triggerPrice = readPlanNumericValue(form?.triggerPrice)
+  if (triggerPrice != null) {
+    return triggerPrice
+  }
+
+  const quotePrice = readPlanNumericValue(workspace?.detail?.quote?.price)
+  if (quotePrice != null) {
+    return quotePrice
+  }
+
+  return null
+}
+
+const validateTradingPlanPriceRules = (form, workspace) => {
+  const referencePrice = resolveTradingPlanReference(form, workspace)
+  if (referencePrice == null) {
+    return ''
+  }
+
+  const direction = form?.direction === 'Short' ? 'Short' : 'Long'
+  const stopLossPrice = readPlanNumericValue(form?.stopLossPrice)
+  const takeProfitPrice = readPlanNumericValue(form?.takeProfitPrice)
+  const referenceLabel = `参考价 ${formatPlanPrice(referencePrice)}`
+
+  if (direction === 'Short') {
+    if (stopLossPrice != null && stopLossPrice < referencePrice) {
+      return `卖出/减仓计划止损价不应低于触发价或当前价（${referenceLabel}）。`
+    }
+    if (takeProfitPrice != null && takeProfitPrice > referencePrice) {
+      return `卖出/减仓计划止盈价不应高于触发价或当前价（${referenceLabel}）。`
+    }
+    return ''
+  }
+
+  if (stopLossPrice != null && stopLossPrice > referencePrice) {
+    return `买入计划止损价不应高于触发价或当前价（${referenceLabel}）。`
+  }
+  if (takeProfitPrice != null && takeProfitPrice < referencePrice) {
+    return `买入计划止盈价不应低于触发价或当前价（${referenceLabel}）。`
+  }
+
+  return ''
+}
+
 const saveTradingPlan = async (symbolKey = currentStockKey.value) => {
   const workspace = getWorkspace(symbolKey) ?? currentWorkspace.value
   if (!workspace?.planForm) {
     return
   }
 
-  workspace.planSaving = true
   workspace.planError = ''
+  const validationError = validateTradingPlanPriceRules(workspace.planForm, workspace)
+  if (validationError) {
+    workspace.planError = validationError
+    return
+  }
+
+  workspace.planSaving = true
   try {
     const form = workspace.planForm
     const isEditing = Boolean(form.id)
@@ -827,8 +962,29 @@ const marketNewsItems = computed(() => marketNewsBucket.value?.items ?? [])
 const marketNewsPreviewItems = computed(() => marketNewsItems.value.slice(0, 5))
 
 const sortedHistoryList = computed(() => {
-  const list = [...historyList.value]
+  const list = sanitizeHistoryList(historyList.value)
   const key = sortKey.value
+  if (key === 'recent') {
+    const order = new Map(recentHistoryOrder.value.map((symbolKey, index) => [symbolKey, index]))
+    return list.sort((a, b) => {
+      const aSymbol = getHistorySymbolKey(a)
+      const bSymbol = getHistorySymbolKey(b)
+      const aOrder = order.has(aSymbol) ? order.get(aSymbol) : Number.POSITIVE_INFINITY
+      const bOrder = order.has(bSymbol) ? order.get(bSymbol) : Number.POSITIVE_INFINITY
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder
+      }
+
+      const aTime = getSortValue(a, 'updatedAt')
+      const bTime = getSortValue(b, 'updatedAt')
+      if (aTime !== bTime) {
+        return bTime - aTime
+      }
+
+      return getSortValue(b, 'id') - getSortValue(a, 'id')
+    })
+  }
+
   const direction = sortAsc.value ? 1 : -1
   return list.sort((a, b) => {
     const va = getSortValue(a, key)
@@ -837,6 +993,20 @@ const sortedHistoryList = computed(() => {
     return va > vb ? direction : -direction
   })
 })
+
+const visibleHistoryList = computed(() => sanitizeHistoryList(historyList.value))
+const invalidHistoryCount = computed(() => {
+  const list = Array.isArray(historyList.value) ? historyList.value : []
+  return Math.max(0, list.length - visibleHistoryList.value.length)
+})
+
+const cleanupInvalidHistory = () => {
+  historyList.value = visibleHistoryList.value
+  recentHistoryOrder.value = recentHistoryOrder.value
+    .map(item => normalizeValidHistorySymbol(item))
+    .filter(Boolean)
+  localStorage.setItem(RECENT_HISTORY_ORDER_KEY, JSON.stringify(recentHistoryOrder.value))
+}
 
 const toggleSort = key => {
   if (sortKey.value === key) {
@@ -908,16 +1078,20 @@ const appendRecordedHistory = async quote => {
 
   const saved = await response.json()
   const savedId = String(saved?.id ?? saved?.Id ?? '')
-  const savedSymbol = String(saved?.symbol ?? saved?.Symbol ?? '').toLowerCase()
+  const savedSymbol = getHistorySymbolKey(saved)
+  if (!savedSymbol) {
+    return
+  }
   const currentList = Array.isArray(historyList.value) ? historyList.value : []
+  rememberRecentHistorySymbol(savedSymbol)
 
   historyList.value = [
     saved,
     ...currentList.filter(item => {
       const itemId = String(item?.id ?? item?.Id ?? '')
-      const itemSymbol = String(item?.symbol ?? item?.Symbol ?? '').toLowerCase()
-      if (savedId && itemId) {
-        return itemId !== savedId
+      const itemSymbol = getHistorySymbolKey(item)
+      if (savedId && itemId && itemId === savedId) {
+        return false
       }
       return !savedSymbol || itemSymbol !== savedSymbol
     })
@@ -1256,6 +1430,7 @@ const handleTradeExecutionSaved = async (event) => {
 }
 
 onMounted(() => {
+  refreshEmbeddingStatus()
   fetchSources()
   setupRefresh()
   fetchHistory()
@@ -1380,8 +1555,9 @@ watch(currentStockKey, (newKey) => {
         :history-refresh-seconds="historyRefreshSeconds"
         :history-loading="historyLoading"
         :history-error="historyError"
-        :history-list="historyList"
+        :history-list="visibleHistoryList"
         :sorted-history-list="sortedHistoryList"
+        :invalid-history-count="invalidHistoryCount"
         :context-menu="contextMenu"
         :get-change-class="getChangeClass"
         :format-percent="formatPercent"
@@ -1400,6 +1576,7 @@ watch(currentStockKey, (newKey) => {
         @apply-history-symbol="applyHistorySymbol($event)"
         @open-context-menu="openContextMenu"
         @delete-history-item="deleteHistoryItem"
+        @cleanup-invalid-history="cleanupInvalidHistory"
       >
         <template #actions>
           <button class="panel-mode-btn btn btn-sm btn-ghost" @click="monochromeMode = !monochromeMode">
@@ -1407,6 +1584,13 @@ watch(currentStockKey, (newKey) => {
           </button>
         </template>
       </StockSearchToolbar>
+
+    <EmbeddingDegradedBanner
+      :status="embeddingStatus"
+      :loading="embeddingStatusLoading"
+      :error="embeddingStatusError"
+      @refresh="refreshEmbeddingStatus"
+    />
 
     <StockTopMarketOverview
       :enabled="stockRealtimeOverviewEnabled"
@@ -1499,7 +1683,7 @@ watch(currentStockKey, (newKey) => {
       />
 
       <div class="sc-workspace__right">
-        <SidebarTabs>
+        <SidebarTabs :has-stock="Boolean(detail?.quote?.symbol)" :has-unread-alerts="Boolean(currentPlanWorkspace?.planAlerts?.length)">
           <template #plans>
             <template v-if="currentPlanWorkspace">
               <StockTradingPlanSection

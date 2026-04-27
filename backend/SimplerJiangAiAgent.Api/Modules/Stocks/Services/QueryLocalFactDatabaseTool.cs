@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using SimplerJiangAiAgent.Api.Data;
+using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
@@ -15,6 +16,11 @@ public interface IQueryLocalFactDatabaseTool
 
 public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
 {
+    private const string EastmoneyAnnouncementSourceTag = "eastmoney-announcement";
+    private const string EastmoneyAnnouncementSource = "东方财富公告";
+    private static readonly TimeSpan ChinaUtcOffset = TimeSpan.FromHours(8);
+    private static readonly TimeSpan LegacyRepairMaxCrawlLag = TimeSpan.FromDays(2);
+
     private readonly DbContextOptions<AppDbContext> _dbContextOptions;
     private readonly ILocalFactArticleReadService _articleReadService;
 
@@ -52,7 +58,9 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             .Take(40)
             .ToListAsync(cancellationToken);
 
+        var targetChanged = RepairLegacyStockFacts(stockNewsRows, companyProfile?.Name, companyProfile?.SectorName);
         await _articleReadService.PrepareAsync(stockNewsRows, cancellationToken);
+        targetChanged |= RepairLegacyAiTargets(stockNewsRows, companyProfile?.Name, companyProfile?.SectorName);
 
         var stockNews = stockNewsRows
             .Where(item => LocalFactDisplayPolicy.IsStrongStockMatch(
@@ -96,6 +104,7 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             .ToListAsync(cancellationToken);
 
         await _articleReadService.PrepareAsync(sectorReportRows, cancellationToken);
+        targetChanged |= RepairLegacyAiTargets(sectorReportRows);
 
         var sectorReports = sectorReportRows
             .Select(item => new
@@ -147,8 +156,9 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             .ToListAsync(cancellationToken);
 
         await _articleReadService.PrepareAsync(marketReportRows, cancellationToken);
+        targetChanged |= RepairLegacyAiTargets(marketReportRows);
 
-        if (dbContext.ChangeTracker.HasChanges())
+        if (targetChanged || dbContext.ChangeTracker.HasChanges())
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
@@ -516,6 +526,11 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             .Take(displayLimit)
             .ToList();
 
+        if (RepairLegacyAiTargets(selected))
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
         var marketReportRows = selected
             .Select(item => new LocalNewsItemDto(
                 item.Id,
@@ -563,13 +578,16 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
         var normalizedLevel = NormalizeArchiveLevel(level);
         var normalizedSentiment = NormalizeArchiveSentiment(sentiment);
         var normalizedKeyword = string.IsNullOrWhiteSpace(keyword) ? null : keyword.Trim();
+        var normalizedStockKeyword = StockNameNormalizer.NormalizeDisplayNameOrNull(normalizedKeyword);
         await using var dbContext = CreateDbContext();
+        await RepairLegacyEastmoneyAnnouncementPublishTimesAsync(dbContext, cancellationToken);
 
         var archiveItems = new List<LocalNewsArchiveItemDto>();
+        var legacyDataChanged = false;
 
         if (normalizedLevel is null or "stock")
         {
-            var stockQuery = dbContext.LocalStockNews.AsNoTracking().AsQueryable();
+            var stockQuery = dbContext.LocalStockNews.AsQueryable();
 
             if (normalizedSentiment is not null)
             {
@@ -581,18 +599,25 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                 stockQuery = stockQuery.Where(item =>
                     item.Symbol.Contains(normalizedKeyword) ||
                     item.Name.Contains(normalizedKeyword) ||
+                    (normalizedStockKeyword != null && item.Name.Replace(" ", "").Replace("　", "").Contains(normalizedStockKeyword)) ||
                     (item.SectorName != null && item.SectorName.Contains(normalizedKeyword)) ||
                     item.Title.Contains(normalizedKeyword) ||
                     (item.TranslatedTitle != null && item.TranslatedTitle.Contains(normalizedKeyword)) ||
                     item.Source.Contains(normalizedKeyword) ||
-                    (item.AiTarget != null && item.AiTarget.Contains(normalizedKeyword)));
+                    (item.AiTarget != null && (item.AiTarget.Contains(normalizedKeyword) || (normalizedStockKeyword != null && item.AiTarget.Replace(" ", "").Replace("　", "").Contains(normalizedStockKeyword)))));
             }
 
-            archiveItems.AddRange(await stockQuery
+            var stockRows = await stockQuery.ToListAsync(cancellationToken);
+            var stockProfiles = await LoadStockProfilesAsync(dbContext, stockRows.Select(item => item.Symbol), cancellationToken);
+            legacyDataChanged |= RepairLegacyStockFacts(stockRows, stockProfiles);
+            legacyDataChanged |= RepairLegacyStoredArticleText(stockRows);
+            legacyDataChanged |= RepairLegacyAiTargets(stockRows, stockProfiles);
+
+            archiveItems.AddRange(stockRows
                 .Select(item => new LocalNewsArchiveItemDto(
                     "stock",
                     item.Symbol,
-                    item.Name,
+                    StockNameNormalizer.NormalizeDisplayName(item.Name),
                     item.SectorName,
                     item.Id,
                     $"stock_news:{item.Id}",
@@ -610,15 +635,15 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     NormalizeReadMode(item.ReadMode, item.Url),
                     NormalizeReadStatus(item.ReadStatus, item.Url, item.ArticleSummary, item.ArticleExcerpt),
                     item.IngestedAt,
-                    item.AiTarget,
-                    ParseAiTags(item.AiTags),
+                    StockNameNormalizer.NormalizeDisplayNameOrNull(item.AiTarget),
+                    LocalFactAiTargetPolicy.SanitizeTagsForStock(item, ParseAiTags(item.AiTags)),
                     item.IsAiProcessed))
-                .ToListAsync(cancellationToken));
+                .ToList());
         }
 
         if (normalizedLevel != "stock")
         {
-            var reportQuery = dbContext.LocalSectorReports.AsNoTracking().AsQueryable();
+            var reportQuery = dbContext.LocalSectorReports.AsQueryable();
 
             if (normalizedLevel is not null)
             {
@@ -641,7 +666,11 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     (item.AiTarget != null && item.AiTarget.Contains(normalizedKeyword)));
             }
 
-            archiveItems.AddRange(await reportQuery
+            var reportRows = await reportQuery.ToListAsync(cancellationToken);
+            legacyDataChanged |= RepairLegacyStoredArticleText(reportRows);
+            legacyDataChanged |= RepairLegacyAiTargets(reportRows);
+
+            archiveItems.AddRange(reportRows
                 .Select(item => new LocalNewsArchiveItemDto(
                     item.Level,
                     item.Symbol,
@@ -664,9 +693,14 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
                     NormalizeReadStatus(item.ReadStatus, item.Url, item.ArticleSummary, item.ArticleExcerpt),
                     item.IngestedAt,
                     item.AiTarget,
-                    ParseAiTags(item.AiTags),
+                    LocalFactAiTargetPolicy.SanitizeTagsForSectorReport(item, ParseAiTags(item.AiTags)),
                     item.IsAiProcessed))
-                .ToListAsync(cancellationToken));
+                .ToList());
+        }
+
+        if (legacyDataChanged)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
 
         var orderedItems = archiveItems
@@ -676,6 +710,10 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
 
         var total = orderedItems.Length;
         var pendingTotal = orderedItems.Count(item => !item.IsAiProcessed);
+        var urlUnavailableTotal = orderedItems.Count(IsUrlUnavailableArchiveItem);
+        var readableTotal = total - urlUnavailableTotal;
+        var readableRate = CalculateArchiveRate(readableTotal, total);
+        var urlUnavailableRate = CalculateArchiveRate(urlUnavailableTotal, total);
         var pagedItems = orderedItems
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -689,7 +727,270 @@ public sealed class QueryLocalFactDatabaseTool : IQueryLocalFactDatabaseTool
             normalizedLevel,
             normalizedSentiment,
             pagedItems,
-            pendingTotal);
+            pendingTotal,
+            readableTotal,
+            readableRate,
+            urlUnavailableTotal,
+            urlUnavailableRate);
+    }
+
+    private static bool IsUrlUnavailableArchiveItem(LocalNewsArchiveItemDto item)
+    {
+        return string.Equals(item.ReadMode, "url_unavailable", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static decimal CalculateArchiveRate(int count, int total)
+    {
+        return total <= 0 ? 0m : Math.Round((decimal)count / total, 4, MidpointRounding.AwayFromZero);
+    }
+
+    private static bool RepairLegacyStoredArticleText(IReadOnlyList<LocalStockNews> rows)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            changed |= RepairLegacyStoredArticleText(row);
+        }
+
+        return changed;
+    }
+
+    private static async Task<Dictionary<string, (string? Name, string? SectorName)>> LoadStockProfilesAsync(
+        AppDbContext dbContext,
+        IEnumerable<string> symbols,
+        CancellationToken cancellationToken)
+    {
+        var normalizedSymbols = symbols
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(StockSymbolNormalizer.Normalize)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (normalizedSymbols.Length == 0)
+        {
+            return new Dictionary<string, (string? Name, string? SectorName)>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var profiles = await dbContext.StockCompanyProfiles
+            .AsNoTracking()
+            .Where(item => normalizedSymbols.Contains(item.Symbol))
+            .Select(item => new { item.Symbol, item.Name, item.SectorName, item.FundamentalUpdatedAt, item.UpdatedAt })
+            .ToListAsync(cancellationToken);
+
+        return profiles
+            .GroupBy(item => item.Symbol, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(item => item.FundamentalUpdatedAt ?? item.UpdatedAt)
+                .First())
+            .ToDictionary(
+                item => item.Symbol,
+                item => ((string?)item.Name, item.SectorName),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool RepairLegacyStockFacts(
+        IReadOnlyList<LocalStockNews> rows,
+        IReadOnlyDictionary<string, (string? Name, string? SectorName)> profiles)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            var symbol = StockSymbolNormalizer.Normalize(row.Symbol);
+            if (!profiles.TryGetValue(symbol, out var profile))
+            {
+                continue;
+            }
+
+            changed |= RepairLegacyStockFacts(row, profile.Name, profile.SectorName);
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyStockFacts(IReadOnlyList<LocalStockNews> rows, string? fallbackName, string? fallbackSectorName)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            changed |= RepairLegacyStockFacts(row, fallbackName, fallbackSectorName);
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyStockFacts(LocalStockNews row, string? fallbackName, string? fallbackSectorName)
+    {
+        var changed = false;
+        var normalizedName = StockNameNormalizer.NormalizeDisplayNameOrNull(fallbackName);
+        if (!string.IsNullOrWhiteSpace(normalizedName) && !string.Equals(row.Name, normalizedName, StringComparison.Ordinal))
+        {
+            row.Name = normalizedName;
+            changed = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(fallbackSectorName) && !string.Equals(row.SectorName, fallbackSectorName, StringComparison.Ordinal))
+        {
+            row.SectorName = fallbackSectorName;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyAiTargets(IReadOnlyList<LocalStockNews> rows, string? fallbackName = null, string? fallbackSectorName = null)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            changed |= LocalFactAiTargetPolicy.Repair(row, fallbackName, fallbackSectorName);
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyAiTargets(
+        IReadOnlyList<LocalStockNews> rows,
+        IReadOnlyDictionary<string, (string? Name, string? SectorName)> profiles)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            profiles.TryGetValue(StockSymbolNormalizer.Normalize(row.Symbol), out var profile);
+            changed |= LocalFactAiTargetPolicy.Repair(row, profile.Name, profile.SectorName);
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyAiTargets(IReadOnlyList<LocalSectorReport> rows)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            changed |= LocalFactAiTargetPolicy.Repair(row);
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyStoredArticleText(IReadOnlyList<LocalSectorReport> rows)
+    {
+        var changed = false;
+        foreach (var row in rows)
+        {
+            changed |= RepairLegacyStoredArticleText(row);
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyStoredArticleText(LocalStockNews row)
+    {
+        var cleanedExcerpt = CleanStoredArticleText(row.ArticleExcerpt);
+        var cleanedSummary = CleanStoredArticleText(row.ArticleSummary);
+        var changed = !string.Equals(cleanedExcerpt, row.ArticleExcerpt, StringComparison.Ordinal) ||
+            !string.Equals(cleanedSummary, row.ArticleSummary, StringComparison.Ordinal);
+
+        if (changed)
+        {
+            row.ArticleExcerpt = cleanedExcerpt;
+            row.ArticleSummary = cleanedSummary;
+        }
+
+        return changed;
+    }
+
+    private static bool RepairLegacyStoredArticleText(LocalSectorReport row)
+    {
+        var cleanedExcerpt = CleanStoredArticleText(row.ArticleExcerpt);
+        var cleanedSummary = CleanStoredArticleText(row.ArticleSummary);
+        var changed = !string.Equals(cleanedExcerpt, row.ArticleExcerpt, StringComparison.Ordinal) ||
+            !string.Equals(cleanedSummary, row.ArticleSummary, StringComparison.Ordinal);
+
+        if (changed)
+        {
+            row.ArticleExcerpt = cleanedExcerpt;
+            row.ArticleSummary = cleanedSummary;
+        }
+
+        return changed;
+    }
+
+    private static string? CleanStoredArticleText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var cleaned = LocalFactArticleTextSanitizer.StripLeadingNavBarForStoredSnippet(value);
+        return string.IsNullOrWhiteSpace(cleaned) ? null : cleaned;
+    }
+
+    private static async Task RepairLegacyEastmoneyAnnouncementPublishTimesAsync(
+        AppDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        var stockRows = await dbContext.LocalStockNews
+            .Where(item => item.PublishTime > item.CrawledAt &&
+                (item.SourceTag == EastmoneyAnnouncementSourceTag ||
+                 (item.Source == EastmoneyAnnouncementSource && item.Category == "announcement")))
+            .ToListAsync(cancellationToken);
+
+        var changed = false;
+        foreach (var row in stockRows)
+        {
+            if (TryCorrectLegacyEastmoneyAnnouncementPublishTime(row.PublishTime, row.CrawledAt, out var corrected))
+            {
+                row.PublishTime = corrected;
+                changed = true;
+            }
+        }
+
+        var reportRows = await dbContext.LocalSectorReports
+            .Where(item => item.PublishTime > item.CrawledAt && item.SourceTag == EastmoneyAnnouncementSourceTag)
+            .ToListAsync(cancellationToken);
+
+        foreach (var row in reportRows)
+        {
+            if (TryCorrectLegacyEastmoneyAnnouncementPublishTime(row.PublishTime, row.CrawledAt, out var corrected))
+            {
+                row.PublishTime = corrected;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private static bool TryCorrectLegacyEastmoneyAnnouncementPublishTime(
+        DateTime publishTime,
+        DateTime crawledAt,
+        out DateTime corrected)
+    {
+        corrected = publishTime;
+        if (publishTime <= crawledAt)
+        {
+            return false;
+        }
+
+        var candidate = publishTime.Subtract(ChinaUtcOffset);
+        if (candidate > crawledAt)
+        {
+            return false;
+        }
+
+        var crawlLag = crawledAt - candidate;
+        if (crawlLag < TimeSpan.Zero || crawlLag > LegacyRepairMaxCrawlLag)
+        {
+            return false;
+        }
+
+        corrected = DateTime.SpecifyKind(candidate, DateTimeKind.Utc);
+        return true;
     }
 
     private static string? NormalizeArchiveLevel(string? level)

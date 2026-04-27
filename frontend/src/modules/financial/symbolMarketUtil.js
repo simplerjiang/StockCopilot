@@ -49,7 +49,7 @@ export function inferMarketFromCode(code) {
 
 const extractCode = (item) => {
   if (!item) return ''
-  const raw = item.code || item.symbol || ''
+  const raw = item.code || item.Code || item.symbol || item.Symbol || ''
   const s = String(raw).trim()
   const m = s.match(/^([a-zA-Z]{2})?(\d{4,6})$/)
   return m ? m[2] : s
@@ -57,10 +57,15 @@ const extractCode = (item) => {
 
 const extractMarket = (item) => {
   if (!item) return ''
-  if (item.market) return String(item.market).toLowerCase()
-  const sym = String(item.symbol || '').trim()
+  if (item.market || item.Market) return String(item.market || item.Market).toLowerCase()
+  const sym = String(item.symbol || item.Symbol || '').trim()
   const m = sym.match(/^([a-zA-Z]{2})\d+$/)
   return m ? m[1].toLowerCase() : ''
+}
+
+const extractSymbol = (item) => {
+  if (!item) return ''
+  return String(item.symbol || item.Symbol || '').trim()
 }
 
 /**
@@ -89,7 +94,7 @@ export function pickStockMatch(results, sym) {
   const inferredMarket = symMarket || inferMarketFromCode(symCode)
 
   // 1. 完整 symbol 严格相等
-  const exactSymbol = results.find(d => d && d.symbol && String(d.symbol) === symStr)
+  const exactSymbol = results.find(d => extractSymbol(d) === symStr)
   if (exactSymbol) return exactSymbol
 
   if (symCode) {

@@ -1277,8 +1277,11 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
             item.SourceTag,
             "stock",
             item.Category,
+            item.Name,
             item.Symbol,
             item.SectorName,
+            item.ArticleExcerpt,
+            item.ArticleSummary,
             item.PublishTime,
             Apply: result => Apply(item, result));
     }
@@ -1292,8 +1295,11 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
             item.SourceTag,
             item.Level,
             null,
+            null,
             item.Symbol,
             item.SectorName,
+            item.ArticleExcerpt,
+            item.ArticleSummary,
             item.PublishTime,
             Apply: result => Apply(item, result));
     }
@@ -1503,19 +1509,34 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
             sourceTag = item.SourceTag,
             scope = item.Scope,
             category = item.Category,
+            name = item.Name,
             symbol = item.Symbol,
             sectorName = item.SectorName,
+            articleSummary = TruncatePromptText(item.ArticleSummary),
+            articleExcerpt = TruncatePromptText(item.ArticleExcerpt),
             publishedAt = item.PublishTime
         }), JsonOptions);
 
-         return "你是财经资讯清洗器，只返回 JSON 数组，不要 Markdown，不要解释。" +
+        return "你是财经资讯清洗器，只返回 JSON 数组，不要 Markdown，不要解释。" +
              "\n只允许输出一个 JSON 数组，缺失值请使用 null 或空数组。" +
              "\n每个元素必须包含 id, translatedTitle, aiSentiment, aiTarget, aiTags。" +
              "\naiSentiment 只能是 利好 / 中性 / 利空。" +
-             "\naiTarget 用中文描述主要影响对象；不明确时填 无明确靶点。" +
-             "\naiTags 必须是数组，只能从以下标签中选择 0 到 2 个：紧急消息、突发事件、宏观货币、地缘政治、行业周期、政策红利、财报业绩、资金面、监管政策、海外映射、商品价格、风险预警。" +
+             "\naiTarget 必须来自标题、摘要、正文中明确出现的实体，或来自输入 name / symbol 对应的关联股票名称；不得凭行业联想生成。" +
+             "\n当 name 非空时，aiTarget 优先使用该关联公司名；不明确时填 无明确标的。" +
+             "\naiTags 必须是数组，只能从以下标签中选择 0 到 2 个：紧急消息、突发事件、宏观货币、地缘政治、行业周期、行业预期、政策红利、财报业绩、经营数据、资金面、监管政策、海外映射、商品价格、风险预警。不得把其它股票或公司名写入 aiTags。" +
              "\n若原文已是清晰中文，translatedTitle 返回 null；不要编造事实，不要输出数组外文字。" +
              "\n输入：\n" + payload;
+    }
+
+    private static string? TruncatePromptText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Length <= 360 ? trimmed : trimmed[..360];
     }
 
     private static LlmChatRequest CreateArchiveLlmRequest(string prompt, string model, double temperature)
@@ -2063,8 +2084,8 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
     {
         entity.TranslatedTitle = NormalizeTranslatedTitle(entity.Title, result.TranslatedTitle);
         entity.AiSentiment = result.AiSentiment;
-        entity.AiTarget = result.AiTarget;
-        entity.AiTags = SerializeTags(result.AiTags);
+        entity.AiTarget = LocalFactAiTargetPolicy.SanitizeForStock(entity, result.AiTarget);
+        entity.AiTags = SerializeTags(LocalFactAiTargetPolicy.SanitizeTagsForStock(entity, result.AiTags));
         entity.IsAiProcessed = result.IsAiProcessed;
     }
 
@@ -2072,8 +2093,8 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
     {
         entity.TranslatedTitle = NormalizeTranslatedTitle(entity.Title, result.TranslatedTitle);
         entity.AiSentiment = result.AiSentiment;
-        entity.AiTarget = result.AiTarget;
-        entity.AiTags = SerializeTags(result.AiTags);
+        entity.AiTarget = LocalFactAiTargetPolicy.SanitizeForSectorReport(entity, result.AiTarget);
+        entity.AiTags = SerializeTags(LocalFactAiTargetPolicy.SanitizeTagsForSectorReport(entity, result.AiTags));
         entity.IsAiProcessed = result.IsAiProcessed;
     }
 
@@ -2173,8 +2194,11 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
         string SourceTag,
         string Scope,
         string? Category,
+        string? Name,
         string? Symbol,
         string? SectorName,
+        string? ArticleExcerpt,
+        string? ArticleSummary,
         DateTime PublishTime,
         Action<NewsEnrichmentResult> Apply);
 

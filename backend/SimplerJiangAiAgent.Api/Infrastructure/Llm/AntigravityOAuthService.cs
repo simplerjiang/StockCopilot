@@ -168,11 +168,17 @@ public sealed class AntigravityOAuthService
     {
         if (_callbackTcs is null)
             return new AntigravityAuthStatus("idle", null);
+        if (_callbackTcs.Task.IsFaulted)
+            return new AntigravityAuthStatus("error", SanitizeAuthError(_callbackTcs.Task.Exception));
         if (_callbackTcs.Task.IsCompleted)
             return new AntigravityAuthStatus("completed", null);
-        if (_callbackTcs.Task.IsFaulted)
-            return new AntigravityAuthStatus("error", _callbackTcs.Task.Exception?.InnerException?.Message);
         return new AntigravityAuthStatus("waiting", null);
+    }
+
+    private static string? SanitizeAuthError(AggregateException? exception)
+    {
+        var message = exception?.Flatten().InnerExceptions.FirstOrDefault()?.Message ?? exception?.Message;
+        return ErrorSanitizer.SanitizeErrorMessage(message);
     }
 
     // =========== Token 管理 ===========

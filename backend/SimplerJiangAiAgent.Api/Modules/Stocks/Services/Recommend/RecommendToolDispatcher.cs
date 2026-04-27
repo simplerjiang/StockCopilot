@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
 using Microsoft.Extensions.Logging;
 
@@ -166,13 +167,13 @@ public sealed class RecommendToolDispatcher : IRecommendToolDispatcher
         catch (MissingToolParameterException ex)
         {
             _logger.LogWarning("RecommendToolDispatch missing param: {Tool} {Param}", toolName, ex.ParameterName);
-            return JsonSerializer.Serialize(new { tool_error = true, error = ex.Message }, JsonOpts);
+            return JsonSerializer.Serialize(new { tool_error = true, error = ErrorSanitizer.SanitizeErrorMessage(ex.Message) }, JsonOpts);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "RecommendToolDispatch failed: {Tool}", toolName);
             RecordFailure();
-            return JsonSerializer.Serialize(new { tool_error = true, error = $"工具调用失败: {ex.Message}" }, JsonOpts);
+            return JsonSerializer.Serialize(new { tool_error = true, error = $"工具调用失败: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}" }, JsonOpts);
         }
     }
 

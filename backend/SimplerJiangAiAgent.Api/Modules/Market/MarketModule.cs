@@ -386,7 +386,10 @@ public sealed class MarketModule : IModule
                 degradedSources = s.DegradedSources,
                 reasons = BuildReasons(s.DegradedSources),
                 sectorRowCount = s.SectorRowCount,
-                totalTurnover = s.TotalTurnover
+                totalTurnover = s.TotalTurnover,
+                totalTurnoverCny = s.TotalTurnover,
+                totalTurnoverUnit = MarketAmountUnitContracts.Cny,
+                totalTurnoverUnitLabel = MarketAmountUnitContracts.CnyUnitLabel
             });
 
             var computation = DataSourceTracker.LastComputation;

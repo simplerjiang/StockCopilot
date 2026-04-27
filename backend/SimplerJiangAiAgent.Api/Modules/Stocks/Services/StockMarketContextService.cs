@@ -110,7 +110,10 @@ public sealed class StockMarketContextService : IStockMarketContextService
             decimal.Round(suggestedScale, 4),
             executionFrequency,
             counterTrendWarning,
-            isMainlineAligned);
+            isMainlineAligned)
+        {
+            MainlineSectorCode = mainline?.SectorCode
+        };
     }
 
     internal static decimal ResolveSuggestedPositionScale(string stageLabel, decimal stageConfidence, bool isMainlineAligned)

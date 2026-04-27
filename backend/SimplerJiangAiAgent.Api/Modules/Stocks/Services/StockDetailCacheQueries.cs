@@ -18,6 +18,7 @@ internal static class StockDetailCacheQueries
         var points = await dbContext.KLinePoints
             .AsNoTracking()
             .Where(x => x.Symbol == symbol && x.Interval == interval)
+            .Where(StockKLinePointFilters.HasUsableHighLowEntity)
             .OrderByDescending(x => x.Date)
             .Take(take)
             .Select(x => new KLinePointDto(x.Date, x.Open, x.Close, x.High, x.Low, x.Volume))

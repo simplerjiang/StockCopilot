@@ -8,6 +8,42 @@ namespace SimplerJiangAiAgent.Api.Tests;
 public class StockSignalAndGuidanceTests
 {
     [Fact]
+    public void SignalService_CapsConfidenceAt20_WhenPositivePlusNegativeDirectionalEvidenceCountIsOne()
+    {
+        var service = new StockSignalService();
+
+        var result = service.Evaluate(BuildStrongPositiveDetail(), BuildImpact(positive: 1, neutral: 4, negative: 0));
+
+        Assert.True(result.Confidence <= 20);
+        Assert.Contains(result.Evidence, item => item.Contains("样本不足", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(3, 0)]
+    [InlineData(4, 0)]
+    public void SignalService_CapsConfidenceAt35_WhenPositivePlusNegativeDirectionalEvidenceCountIsThreeOrFour(int positive, int negative)
+    {
+        var service = new StockSignalService();
+
+        var result = service.Evaluate(BuildStrongPositiveDetail(), BuildImpact(positive, neutral: 5, negative));
+
+        Assert.True(result.Confidence <= 35);
+        Assert.Contains(result.Evidence, item => item.Contains("样本偏少", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SignalService_DoesNotApplySmallSampleCaps_WhenPositivePlusNegativeDirectionalEvidenceCountIsAtLeastFive()
+    {
+        var service = new StockSignalService();
+
+        var result = service.Evaluate(BuildStrongPositiveDetail(), BuildImpact(positive: 5, neutral: 0, negative: 0));
+
+        Assert.True(result.Confidence > 35);
+        Assert.DoesNotContain(result.Evidence, item => item.Contains("样本不足", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Evidence, item => item.Contains("样本偏少", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void SignalService_BuildsEvidenceAndCounterEvidence()
     {
         var service = new StockSignalService();
@@ -106,5 +142,60 @@ public class StockSignalAndGuidanceTests
         Assert.NotEmpty(result.Reasons);
         Assert.Equal(0.8m, result.MarketStageMultiplier);
         Assert.NotNull(result.MarketContext);
+    }
+
+    private static StockDetailDto BuildStrongPositiveDetail()
+    {
+        var quote = new StockQuoteDto(
+            "sh600001",
+            "样本股",
+            15m,
+            1m,
+            8m,
+            10m,
+            12m,
+            15.2m,
+            14.8m,
+            2m,
+            DateTime.Now,
+            Array.Empty<StockNewsDto>(),
+            Array.Empty<StockIndicatorDto>());
+
+        var kline = new List<KLinePointDto>
+        {
+            new(DateTime.Today.AddDays(-4), 10m, 10m, 10.2m, 9.8m, 1000),
+            new(DateTime.Today.AddDays(-3), 11m, 11m, 11.2m, 10.8m, 1200),
+            new(DateTime.Today.AddDays(-2), 12m, 12m, 12.2m, 11.8m, 1300),
+            new(DateTime.Today.AddDays(-1), 13.5m, 13.5m, 13.7m, 13.3m, 1400),
+            new(DateTime.Today, 15m, 15m, 15.2m, 14.8m, 1500)
+        };
+
+        return new StockDetailDto(quote, kline, Array.Empty<MinuteLinePointDto>(), Array.Empty<IntradayMessageDto>());
+    }
+
+    private static StockNewsImpactDto BuildImpact(int positive, int neutral, int negative)
+    {
+        var items = Enumerable.Range(1, Math.Max(positive + neutral + negative, 1))
+            .Select(index => new StockNewsImpactItemDto(
+                $"事件{index}",
+                "测试源",
+                DateTime.Now,
+                null,
+                "测试",
+                1m,
+                1m,
+                "样本",
+                1,
+                index <= positive ? "利好" : index <= positive + neutral ? "中性" : "利空",
+                index <= positive ? 50 : index <= positive + neutral ? 0 : -50,
+                "测试"))
+            .ToList();
+
+        return new StockNewsImpactDto(
+            "sh600001",
+            "样本股",
+            DateTime.Now,
+            new StockNewsImpactSummaryDto(positive, neutral, negative, "测试", 80, 20),
+            items);
     }
 }

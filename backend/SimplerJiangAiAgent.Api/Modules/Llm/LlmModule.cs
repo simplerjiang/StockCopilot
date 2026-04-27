@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Linq;
 using System.Text;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
@@ -217,7 +218,7 @@ public sealed class LlmModule : IModule
         secureAdminGroup.MapGet("/antigravity/auth-status", (AntigravityOAuthService oauthService) =>
         {
             var status = oauthService.GetAuthStatus();
-            return Results.Ok(new { status = status.Status, error = status.Error });
+            return Results.Ok(new { status = status.Status, error = SanitizePublicErrorMessage(status.Error) });
         })
         .WithName("AntigravityAuthStatus")
         .WithOpenApi();
@@ -246,7 +247,7 @@ public sealed class LlmModule : IModule
             }
             catch (Exception ex)
             {
-                return Results.BadRequest(new { message = ex.Message });
+                return Results.BadRequest(new { message = SanitizePublicErrorMessage(ex) });
             }
         })
         .WithName("AntigravityAuthComplete")
@@ -266,8 +267,15 @@ public sealed class LlmModule : IModule
                 return Results.BadRequest(new { message = "Prompt 不能为空" });
             }
 
-            var result = await llmService.ChatAsync(provider, new LlmChatRequest(request.Prompt, request.Model, request.Temperature, request.UseInternet));
-            return Results.Ok(new LlmChatResponseDto(result.Content));
+            try
+            {
+                var result = await llmService.ChatAsync(provider, new LlmChatRequest(request.Prompt, request.Model, request.Temperature, request.UseInternet));
+                return Results.Ok(new LlmChatResponseDto(result.Content));
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { message = SanitizePublicErrorMessage(ex) });
+            }
         })
         .WithName("TestLlmProvider")
         .WithOpenApi();
@@ -353,7 +361,7 @@ public sealed class LlmModule : IModule
             }
             catch (Exception ex)
             {
-                return Results.Ok(new { success = false, message = $"启动失败：{ex.Message}" });
+                return Results.Ok(new { success = false, message = $"启动失败：{SanitizePublicErrorMessage(ex)}" });
             }
         })
         .WithName("StartOllama")
@@ -377,7 +385,7 @@ public sealed class LlmModule : IModule
             }
             catch (Exception ex)
             {
-                return Results.Ok(new { success = false, message = $"停止失败：{ex.Message}" });
+                return Results.Ok(new { success = false, message = $"停止失败：{SanitizePublicErrorMessage(ex)}" });
             }
         })
         .WithName("StopOllama")
@@ -417,15 +425,15 @@ public sealed class LlmModule : IModule
                 if (resp.IsSuccessStatusCode)
                     return Results.Ok(new { success = true, message = $"模型 {model} 拉取完成" });
                 else
-                    return Results.Ok(new { success = false, message = $"拉取失败：{result}" });
+                    return Results.Ok(new { success = false, message = $"拉取失败：{SanitizePublicErrorMessage(result)}" });
             }
             catch (TaskCanceledException)
             {
-                return Results.Ok(new { success = false, message = "拉取超时（>10分钟），请手动执行 ollama pull " + model });
+                return Results.Ok(new { success = false, message = SanitizePublicErrorMessage("拉取超时（>10分钟），请手动执行 ollama pull " + model) });
             }
             catch (Exception ex)
             {
-                return Results.Ok(new { success = false, message = $"拉取异常：{ex.Message}" });
+                return Results.Ok(new { success = false, message = $"拉取异常：{SanitizePublicErrorMessage(ex)}" });
             }
         })
         .WithName("PullOllamaModel")
@@ -536,7 +544,7 @@ public sealed class LlmModule : IModule
             }
             catch (Exception ex)
             {
-                return Results.BadRequest(new { message = ex.Message });
+                return Results.BadRequest(new { message = SanitizePublicErrorMessage(ex) });
             }
         })
         .WithName("ChatLlmProvider")
@@ -583,8 +591,9 @@ public sealed class LlmModule : IModule
             }
             catch (Exception ex)
             {
-                fileLogWriter.Write("LLM-AUDIT", $"traceId={traceId} stage=error-stream provider={provider} type={ex.GetType().Name} message={EscapeForAudit(ex.Message)}");
-                await context.Response.WriteAsync($"data: {ex.Message}\n\n", context.RequestAborted);
+                var sanitizedMessage = SanitizePublicErrorMessage(ex);
+                fileLogWriter.Write("LLM-AUDIT", $"traceId={traceId} stage=error-stream provider={provider} type={ex.GetType().Name} message={EscapeForAudit(sanitizedMessage)}");
+                await context.Response.WriteAsync($"data: {sanitizedMessage}\n\n", context.RequestAborted);
             }
 
             return Results.Empty;
@@ -657,6 +666,12 @@ public sealed class LlmModule : IModule
             ? normalized
             : normalized[..maxLength] + "...(truncated)";
     }
+
+    private static string SanitizePublicErrorMessage(Exception exception)
+        => SanitizePublicErrorMessage(exception.Message);
+
+    private static string SanitizePublicErrorMessage(string? message)
+        => ErrorSanitizer.SanitizeErrorMessage(message) ?? string.Empty;
 
     private static string? ResolveOllamaExecutablePath()
     {

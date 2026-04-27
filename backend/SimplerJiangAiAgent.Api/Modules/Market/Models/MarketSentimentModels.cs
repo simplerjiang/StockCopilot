@@ -1,5 +1,11 @@
 namespace SimplerJiangAiAgent.Api.Modules.Market.Models;
 
+public static class MarketAmountUnitContracts
+{
+    public const string Cny = "CNY";
+    public const string CnyUnitLabel = "元";
+}
+
 public sealed record MarketSentimentSummaryDto(
     DateTime SnapshotTime,
     string SessionPhase,
@@ -25,7 +31,14 @@ public sealed record MarketSentimentSummaryDto(
     decimal LimitUpCount5dAvg,
     decimal BrokenBoardRate5dAvg,
     bool IsDegraded = false,
-    string? DegradeReason = null);
+    string? DegradeReason = null)
+{
+    public decimal TotalTurnoverCny => TotalTurnover;
+
+    public string TotalTurnoverUnit => MarketAmountUnitContracts.Cny;
+
+    public string TotalTurnoverUnitLabel => MarketAmountUnitContracts.CnyUnitLabel;
+}
 
 public sealed record MarketSentimentHistoryPointDto(
     DateTime TradingDate,
@@ -150,7 +163,9 @@ public sealed record SectorRotationDetailDto(
     SectorRotationListItemDto Snapshot,
     IReadOnlyList<SectorRotationHistoryPointDto> History,
     IReadOnlyList<SectorRotationLeaderDto> Leaders,
-    IReadOnlyList<SectorRotationNewsDto> News);
+    IReadOnlyList<SectorRotationNewsDto> News,
+    bool IsDegraded = false,
+    string? DegradeReason = null);
 
 public sealed record StockMarketContextDto(
     string? StageLabel,
@@ -162,4 +177,8 @@ public sealed record StockMarketContextDto(
     decimal SuggestedPositionScale,
     string? ExecutionFrequencyLabel,
     bool CounterTrendWarning,
-    bool IsMainlineAligned);
+    bool IsMainlineAligned)
+{
+    public string? StockSectorCode => SectorCode;
+    public string? MainlineSectorCode { get; init; }
+}

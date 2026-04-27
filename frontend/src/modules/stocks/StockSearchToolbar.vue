@@ -23,6 +23,7 @@ const props = defineProps({
   historyError: { type: String, default: '' },
   historyList: { type: Array, default: () => [] },
   sortedHistoryList: { type: Array, default: () => [] },
+  invalidHistoryCount: { type: Number, default: 0 },
   contextMenu: { type: Object, required: true },
   getChangeClass: { type: Function, required: true },
   formatPercent: { type: Function, required: true }
@@ -43,7 +44,8 @@ const emit = defineEmits([
   'refresh-history',
   'apply-history-symbol',
   'open-context-menu',
-  'delete-history-item'
+  'delete-history-item',
+  'cleanup-invalid-history'
 ])
 
 watch(() => props.searchOpen, open => { if (!open) selectedSearchIndex.value = -1 })
@@ -190,6 +192,10 @@ const handleSearchKeydown = event => {
           </button>
         </div>
         <p v-else class="muted">暂无历史数据。</p>
+        <p v-if="invalidHistoryCount" class="muted history-cleanup-note">
+          已自动隐藏 {{ invalidHistoryCount }} 条无效历史。
+          <button type="button" class="history-cleanup-button" @click="$emit('cleanup-invalid-history')">清理无效记录</button>
+        </p>
         <p v-if="historyError" class="muted error-text">{{ historyError }}</p>
         <p v-if="historyLoading && !historyList.length" class="muted">历史数据刷新中...</p>
       </div>
@@ -331,6 +337,23 @@ const handleSearchKeydown = event => {
   display: grid;
   gap: 0.35rem;
   position: relative;
+
+.history-cleanup-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.history-cleanup-button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  background: var(--color-bg-surface-alt);
+  color: var(--color-text-heading);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
 }
 
 .history-chip-row {

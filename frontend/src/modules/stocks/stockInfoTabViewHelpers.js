@@ -50,12 +50,15 @@ const normalizeRealtimeOverviewSection = (payload, legacyPayload) => {
     decliners: Number(source?.decliners ?? source?.Decliners ?? 0),
     flatCount: Number(source?.flatCount ?? source?.FlatCount ?? 0),
     limitUpCount: Number(source?.limitUpCount ?? source?.LimitUpCount ?? 0),
-    limitDownCount: Number(source?.limitDownCount ?? source?.LimitDownCount ?? 0)
+    limitDownCount: Number(source?.limitDownCount ?? source?.LimitDownCount ?? 0),
+    isStale: Boolean(source?.isStale ?? source?.IsStale ?? false),
+    status: source?.status ?? source?.Status ?? 'ok'
   }
 }
 
 export const normalizeRealtimeOverview = payload => payload ? ({
   snapshotTime: payload?.snapshotTime ?? payload?.SnapshotTime ?? '',
+  isStale: Boolean(payload?.isStale ?? payload?.IsStale ?? false),
   indices: Array.isArray(payload?.indices ?? payload?.Indices) ? (payload.indices ?? payload.Indices).map(normalizeRealtimeQuote) : [],
   mainCapitalFlow: normalizeRealtimeOverviewSection(payload?.mainCapitalFlow, payload?.MainCapitalFlow),
   northboundFlow: normalizeRealtimeOverviewSection(payload?.northboundFlow, payload?.NorthboundFlow),

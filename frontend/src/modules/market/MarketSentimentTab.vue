@@ -1,4 +1,5 @@
 <script setup>
+defineOptions({ name: 'MarketSentimentTab' })
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import MarketTemperatureBar from './MarketTemperatureBar.vue'
 import IndexMetricStrip from './IndexMetricStrip.vue'
@@ -9,6 +10,7 @@ import SectorRankingList from './SectorRankingList.vue'
 import SectorDetailPanel from './SectorDetailPanel.vue'
 import SentimentHistoryStrip from './SentimentHistoryStrip.vue'
 import DataAuditPanel from './DataAuditPanel.vue'
+import { isNorthboundStatusAvailable } from '../../utils/northboundStatus.js'
 
 // ── UI state ──
 const boardType = ref('concept')
@@ -99,6 +101,7 @@ const localizeDegradeCode = code => {
   if (code === 'broken_board_unavailable') return '炸板统计暂未同步完成'
   if (code === 'max_streak_unavailable') return '连板高度暂未同步完成'
   if (code === 'sector_rankings_unavailable') return '板块排行暂未同步完成'
+  if (code === 'sector_members_unavailable') return '板块成分股涨跌与龙头数据待补齐'
   if (code === 'sync_incomplete') return '本次同步只完成了部分市场数据'
   return ''
 }
@@ -123,6 +126,8 @@ const isMaxStreakUnavailable = computed(() => isSummaryDegraded.value && hasDegr
 const isTopSectorUnavailable = computed(() => hasSectorRankingGap(summary.value?.degradeReason) || hasSectorRankingGap(sectorPageStatus.value.degradeReason))
 const isTurnoverUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'market_turnover_unavailable'))
 const isBreadthUnavailable = computed(() => isSummaryDegraded.value && hasDegradeCode(summary.value?.degradeReason, 'market_breadth_unavailable'))
+const isSectorMembersUnavailableReason = computed(() => hasDegradeCode(summary.value?.degradeReason, 'sector_members_unavailable') || hasDegradeCode(sectorPageStatus.value.degradeReason, 'sector_members_unavailable'))
+const hasOnlyUnavailableSectorMembers = computed(() => sectors.value.length > 0 && sectors.value.every(item => item.membersUnavailable))
 
 // ── Centralized unavailability (passed to children as explicit props) ──
 const isDegradedContext = computed(() => isSummaryDegraded.value || sectorPageStatus.value.isDegraded)
@@ -144,6 +149,7 @@ const mainFlowUnavailable = computed(() => {
 const northboundUnavailable = computed(() => {
   const flow = realtimeOverview.value?.northboundFlow
   if (!flow) return true
+  if (!isNorthboundStatusAvailable(flow)) return true
   return _showAsUnavailable(flow.totalNetInflow, null, _hasUsableTs(flow.snapshotTime))
 })
 const diffusionUnavailable = computed(() => _showAsUnavailable(displaySummary.value?.diffusionScore, null, false))
@@ -197,6 +203,7 @@ const sectorEmptyBody = computed(() => {
 const toolbarBoardCountText = computed(() => {
   if (!initialDashboardResolved.value) return '榜单加载中'
   if (isMarketDegraded.value && !sectors.value.length) return '榜单暂无数据'
+  if (isSectorMembersUnavailableReason.value || hasOnlyUnavailableSectorMembers.value) return `降级快照：${total.value} 个板块，成分股待补齐`
   return `共 ${total.value} 个板块`
 })
 
@@ -214,6 +221,15 @@ const historyDisplayItems = computed(() => history.value.map(item => ({
 
 // ── Normalizers ──
 const normalizeSummary = payload => payload ? ({
+  ...(() => {
+    const totalTurnoverCny = payload.totalTurnoverCny ?? payload.TotalTurnoverCny
+    const hasTotalTurnoverCny = totalTurnoverCny != null
+    return {
+      totalTurnover: Number(hasTotalTurnoverCny ? totalTurnoverCny : (payload.totalTurnover ?? payload.TotalTurnover ?? 0)),
+      totalTurnoverUnit: hasTotalTurnoverCny ? 'CNY' : (payload.totalTurnoverUnit ?? payload.TotalTurnoverUnit ?? ''),
+      totalTurnoverUnitLabel: hasTotalTurnoverCny ? '元' : (payload.totalTurnoverUnitLabel ?? payload.TotalTurnoverUnitLabel ?? '')
+    }
+  })(),
   snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
   sessionPhase: payload.sessionPhase ?? payload.SessionPhase ?? '',
   stageLabel: payload.stageLabel ?? payload.StageLabel ?? '混沌',
@@ -226,7 +242,6 @@ const normalizeSummary = payload => payload ? ({
   advancers: normalizeOptionalNumber(payload.advancers ?? payload.Advancers),
   decliners: normalizeOptionalNumber(payload.decliners ?? payload.Decliners),
   flatCount: normalizeOptionalNumber(payload.flatCount ?? payload.FlatCount),
-  totalTurnover: Number(payload.totalTurnover ?? payload.TotalTurnover ?? 0),
   top3SectorTurnoverShare: normalizeOptionalNumber(payload.top3SectorTurnoverShare ?? payload.Top3SectorTurnoverShare),
   top10SectorTurnoverShare: normalizeOptionalNumber(payload.top10SectorTurnoverShare ?? payload.Top10SectorTurnoverShare),
   diffusionScore: normalizeOptionalNumber(payload.diffusionScore ?? payload.DiffusionScore),
@@ -251,37 +266,59 @@ const normalizeHistoryItem = item => ({
   brokenBoardCount: Number(item.brokenBoardCount ?? item.BrokenBoardCount ?? 0)
 })
 
-const normalizeSectorItem = item => ({
-  boardType: item.boardType ?? item.BoardType ?? '',
-  sectorCode: item.sectorCode ?? item.SectorCode ?? '',
-  sectorName: item.sectorName ?? item.SectorName ?? '',
-  changePercent: Number(item.changePercent ?? item.ChangePercent ?? 0),
-  mainNetInflow: Number(item.mainNetInflow ?? item.MainNetInflow ?? 0),
-  breadthScore: normalizeOptionalNumber(item.breadthScore ?? item.BreadthScore),
-  continuityScore: Number(item.continuityScore ?? item.ContinuityScore ?? 0),
-  strengthScore: Number(item.strengthScore ?? item.StrengthScore ?? 0),
-  newsSentiment: item.newsSentiment ?? item.NewsSentiment ?? '中性',
-  newsHotCount: Number(item.newsHotCount ?? item.NewsHotCount ?? 0),
-  leaderSymbol: item.leaderSymbol ?? item.LeaderSymbol ?? '',
-  leaderName: item.leaderName ?? item.LeaderName ?? '',
-  leaderChangePercent: normalizeOptionalNumber(item.leaderChangePercent ?? item.LeaderChangePercent),
-  rankNo: Number(item.rankNo ?? item.RankNo ?? 0),
-  snapshotTime: item.snapshotTime ?? item.SnapshotTime ?? '',
-  rankChange5d: Number(item.rankChange5d ?? item.RankChange5d ?? 0),
-  rankChange10d: Number(item.rankChange10d ?? item.RankChange10d ?? 0),
-  rankChange20d: Number(item.rankChange20d ?? item.RankChange20d ?? 0),
-  strengthAvg5d: Number(item.strengthAvg5d ?? item.StrengthAvg5d ?? 0),
-  strengthAvg10d: Number(item.strengthAvg10d ?? item.StrengthAvg10d ?? 0),
-  strengthAvg20d: Number(item.strengthAvg20d ?? item.StrengthAvg20d ?? 0),
-  diffusionRate: normalizeOptionalNumber(item.diffusionRate ?? item.DiffusionRate),
-  advancerCount: normalizeOptionalNumber(item.advancerCount ?? item.AdvancerCount),
-  declinerCount: normalizeOptionalNumber(item.declinerCount ?? item.DeclinerCount),
-  flatMemberCount: normalizeOptionalNumber(item.flatMemberCount ?? item.FlatMemberCount),
-  limitUpMemberCount: normalizeOptionalNumber(item.limitUpMemberCount ?? item.LimitUpMemberCount),
-  leaderStabilityScore: Number(item.leaderStabilityScore ?? item.LeaderStabilityScore ?? 0),
-  mainlineScore: Number(item.mainlineScore ?? item.MainlineScore ?? 0),
-  isMainline: Boolean(item.isMainline ?? item.IsMainline ?? false)
-})
+const isLegacyMemberPlaceholder = item => {
+  const breadthScore = normalizeOptionalNumber(item.breadthScore ?? item.BreadthScore)
+  const diffusionRate = normalizeOptionalNumber(item.diffusionRate ?? item.DiffusionRate)
+  const advancerCount = normalizeOptionalNumber(item.advancerCount ?? item.AdvancerCount)
+  const declinerCount = normalizeOptionalNumber(item.declinerCount ?? item.DeclinerCount)
+  const flatMemberCount = normalizeOptionalNumber(item.flatMemberCount ?? item.FlatMemberCount)
+  const leaderName = String(item.leaderName ?? item.LeaderName ?? '').trim()
+  const leaderSymbol = String(item.leaderSymbol ?? item.LeaderSymbol ?? '').trim()
+  return breadthScore === 50 && diffusionRate === 50 && Number(advancerCount ?? 0) === 0 && Number(declinerCount ?? 0) === 0 && Number(flatMemberCount ?? 0) === 0 && !leaderName && !leaderSymbol
+}
+
+const normalizeSectorItem = (item, options = {}) => {
+  const normalized = {
+    boardType: item.boardType ?? item.BoardType ?? '',
+    sectorCode: item.sectorCode ?? item.SectorCode ?? '',
+    sectorName: item.sectorName ?? item.SectorName ?? '',
+    changePercent: Number(item.changePercent ?? item.ChangePercent ?? 0),
+    mainNetInflow: Number(item.mainNetInflow ?? item.MainNetInflow ?? 0),
+    breadthScore: normalizeOptionalNumber(item.breadthScore ?? item.BreadthScore),
+    continuityScore: Number(item.continuityScore ?? item.ContinuityScore ?? 0),
+    strengthScore: Number(item.strengthScore ?? item.StrengthScore ?? 0),
+    newsSentiment: item.newsSentiment ?? item.NewsSentiment ?? '中性',
+    newsHotCount: Number(item.newsHotCount ?? item.NewsHotCount ?? 0),
+    leaderSymbol: item.leaderSymbol ?? item.LeaderSymbol ?? '',
+    leaderName: item.leaderName ?? item.LeaderName ?? '',
+    leaderChangePercent: normalizeOptionalNumber(item.leaderChangePercent ?? item.LeaderChangePercent),
+    rankNo: Number(item.rankNo ?? item.RankNo ?? 0),
+    snapshotTime: item.snapshotTime ?? item.SnapshotTime ?? '',
+    rankChange5d: Number(item.rankChange5d ?? item.RankChange5d ?? 0),
+    rankChange10d: Number(item.rankChange10d ?? item.RankChange10d ?? 0),
+    rankChange20d: Number(item.rankChange20d ?? item.RankChange20d ?? 0),
+    strengthAvg5d: normalizeOptionalNumber(item.strengthAvg5d ?? item.StrengthAvg5d),
+    strengthAvg10d: normalizeOptionalNumber(item.strengthAvg10d ?? item.StrengthAvg10d),
+    strengthAvg20d: normalizeOptionalNumber(item.strengthAvg20d ?? item.StrengthAvg20d),
+    diffusionRate: normalizeOptionalNumber(item.diffusionRate ?? item.DiffusionRate),
+    advancerCount: normalizeOptionalNumber(item.advancerCount ?? item.AdvancerCount),
+    declinerCount: normalizeOptionalNumber(item.declinerCount ?? item.DeclinerCount),
+    flatMemberCount: normalizeOptionalNumber(item.flatMemberCount ?? item.FlatMemberCount),
+    limitUpMemberCount: normalizeOptionalNumber(item.limitUpMemberCount ?? item.LimitUpMemberCount),
+    leaderStabilityScore: Number(item.leaderStabilityScore ?? item.LeaderStabilityScore ?? 0),
+    mainlineScore: Number(item.mainlineScore ?? item.MainlineScore ?? 0),
+    isMainline: Boolean(item.isMainline ?? item.IsMainline ?? false)
+  }
+  const hasLeader = Boolean(String(normalized.leaderName ?? '').trim() || String(normalized.leaderSymbol ?? '').trim())
+  const hasMemberDistribution = [normalized.advancerCount, normalized.declinerCount, normalized.flatMemberCount, normalized.limitUpMemberCount]
+    .some(value => Number(value ?? 0) > 0)
+  const memberFieldsAreNull = [normalized.breadthScore, normalized.diffusionRate, normalized.advancerCount, normalized.declinerCount, normalized.flatMemberCount]
+    .some(value => value === null)
+  return {
+    ...normalized,
+    membersUnavailable: !hasLeader && !hasMemberDistribution && (options.membersUnavailable || memberFieldsAreNull || isLegacyMemberPlaceholder(item))
+  }
+}
 
 const normalizeRealtimeSectorItem = item => ({
   boardType: item.boardType ?? item.BoardType ?? '',
@@ -376,7 +413,9 @@ const normalizeNorthbound = payload => payload ? ({
   shanghaiNetInflow: normalizeOptionalNumber(payload.shanghaiNetInflow ?? payload.ShanghaiNetInflow),
   shenzhenNetInflow: normalizeOptionalNumber(payload.shenzhenNetInflow ?? payload.ShenzhenNetInflow),
   shanghaiBalance: normalizeOptionalNumber(payload.shanghaiBalance ?? payload.ShanghaiBalance),
-  shenzhenBalance: normalizeOptionalNumber(payload.shenzhenBalance ?? payload.ShenzhenBalance)
+  shenzhenBalance: normalizeOptionalNumber(payload.shenzhenBalance ?? payload.ShenzhenBalance),
+  isStale: toBoolean(payload.isStale ?? payload.IsStale ?? false),
+  status: payload.status ?? payload.Status ?? 'ok'
 }) : null
 
 const normalizeBreadth = payload => payload ? ({
@@ -397,6 +436,7 @@ const normalizeBreadth = payload => payload ? ({
 
 const normalizeRealtimeOverview = payload => payload ? ({
   snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
+  isStale: toBoolean(payload.isStale ?? payload.IsStale ?? false),
   indices: Array.isArray(payload.indices ?? payload.Indices) ? (payload.indices ?? payload.Indices).map(normalizeRealtimeQuote) : [],
   mainCapitalFlow: normalizeMainFlow(payload.mainCapitalFlow ?? payload.MainCapitalFlow ?? null),
   northboundFlow: normalizeNorthbound(payload.northboundFlow ?? payload.NorthboundFlow ?? null),
@@ -506,7 +546,10 @@ const fetchDashboard = async ({ resetPage = false, preserveSyncFeedback = false 
       isDegraded: toBoolean(sectorPayload?.isDegraded ?? sectorPayload?.IsDegraded ?? false),
       degradeReason: sectorPayload?.degradeReason ?? sectorPayload?.DegradeReason ?? ''
     }
-    sectorBaseItems.value = Array.isArray(sectorPayload?.items ?? sectorPayload?.Items) ? (sectorPayload.items ?? sectorPayload.Items).map(normalizeSectorItem) : []
+    const sectorMembersUnavailable = hasDegradeCode(sectorPageStatus.value.degradeReason, 'sector_members_unavailable')
+    sectorBaseItems.value = Array.isArray(sectorPayload?.items ?? sectorPayload?.Items)
+      ? (sectorPayload.items ?? sectorPayload.Items).map(item => normalizeSectorItem(item, { membersUnavailable: sectorMembersUnavailable }))
+      : []
     sectors.value = [...sectorBaseItems.value]
     await fetchRealtimeSectorBoard({ silent: true })
     const nextSelected = sectors.value.some(i => i.sectorCode === selectedSectorCode.value) ? selectedSectorCode.value : sectors.value[0]?.sectorCode || ''
@@ -736,6 +779,8 @@ onUnmounted(() => {
         :top3-sector-turnover-share5d-avg="displaySummary?.top3SectorTurnoverShare5dAvg ?? null"
         :top10-sector-turnover-share5d-avg="displaySummary?.top10SectorTurnoverShare5dAvg ?? null"
         :total-turnover="displaySummary?.totalTurnover ?? 0"
+        :total-turnover-unit="displaySummary?.totalTurnoverUnit ?? ''"
+        :total-turnover-unit-label="displaySummary?.totalTurnoverUnitLabel ?? ''"
         :advancers="displaySummary?.advancers ?? null"
         :decliners="displaySummary?.decliners ?? null"
         :main-flow-unavailable="mainFlowUnavailable"

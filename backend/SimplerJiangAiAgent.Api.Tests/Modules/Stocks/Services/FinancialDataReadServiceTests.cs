@@ -244,6 +244,7 @@ public sealed class FinancialDataReadServiceTests : IDisposable
         Assert.NotNull(detail);
         Assert.Equal("600519", detail!.Symbol);
         Assert.Equal("2024-12-31", detail.ReportDate);
+        Assert.Equal(FinancialAmountUnits.CnyYuan, detail.MonetaryUnit);
         Assert.Equal(4, detail.CompanyType);
         Assert.True(detail.BalanceSheet.ContainsKey("TOTAL_ASSETS"));
         Assert.True(detail.IncomeStatement.ContainsKey("NETPROFIT"));
@@ -408,6 +409,57 @@ public sealed class FinancialDataReadServiceTests : IDisposable
         Assert.Equal(-4.50485863, Convert.ToDouble(detail.IncomeStatement["*净利润_同比"]), precision: 6);
         Assert.Equal(65.66, Convert.ToDouble(detail.IncomeStatement["基本每股收益"]), precision: 4);
         Assert.Equal(16.42, Convert.ToDouble(detail.BalanceSheet["资产负债率"]), precision: 4);
+    }
+
+    [Fact]
+    public void GetReportSummaryAndTrend_ThsChannel_ScalesCoreAmountsFromWanYuanToYuan()
+    {
+        using (var db = new LiteDatabase($"Filename={_dbPath};Connection=direct"))
+        {
+            var col = db.GetCollection("financial_reports");
+            var doc = new BsonDocument
+            {
+                ["_id"] = ObjectId.NewObjectId(),
+                ["Symbol"] = "600519",
+                ["ReportDate"] = "2025-12-31",
+                ["ReportType"] = "Annual",
+                ["CompanyType"] = 4,
+                ["SourceChannel"] = "THS",
+                ["BalanceSheet"] = new BsonDocument
+                {
+                    ["*资产合计"] = 30383500.0,
+                    ["*负债合计"] = 4987600.0,
+                    ["资产负债率"] = 16.42,
+                },
+                ["IncomeStatement"] = new BsonDocument
+                {
+                    ["*营业总收入"] = 17205400.0,
+                    ["*净利润"] = 8531000.0,
+                    ["基本每股收益"] = 65.66,
+                },
+                ["CashFlow"] = new BsonDocument(),
+                ["CollectedAt"] = DateTime.UtcNow,
+                ["UpdatedAt"] = DateTime.UtcNow,
+            };
+            col.Insert(doc);
+        }
+
+        using var svc = CreateService();
+        var summary = svc.GetReportSummary("600519");
+        var trend = svc.GetTrendSummary("600519");
+
+        Assert.NotNull(summary);
+        Assert.Equal(FinancialAmountUnits.CnyYuan, summary!.MonetaryUnit);
+        var period = Assert.Single(summary.Periods);
+        Assert.Equal(30383500.0 * 10000.0, Convert.ToDouble(period.KeyMetrics["TotalAssets"]), precision: 2);
+        Assert.Equal(17205400.0 * 10000.0, Convert.ToDouble(period.KeyMetrics["TotalRevenue"]), precision: 2);
+        Assert.Equal(8531000.0 * 10000.0, Convert.ToDouble(period.KeyMetrics["NetProfit"]), precision: 2);
+
+        Assert.NotNull(trend);
+        Assert.Equal(FinancialAmountUnits.CnyYuan, trend!.MonetaryUnit);
+        Assert.Equal(30383500.0 * 10000.0, trend.TotalAssets.Single().Value!.Value, precision: 2);
+        Assert.Equal(17205400.0 * 10000.0, trend.Revenue.Single().Value!.Value, precision: 2);
+        Assert.Equal(8531000.0 * 10000.0, trend.NetProfit.Single().Value!.Value, precision: 2);
     }
 
     [Fact]

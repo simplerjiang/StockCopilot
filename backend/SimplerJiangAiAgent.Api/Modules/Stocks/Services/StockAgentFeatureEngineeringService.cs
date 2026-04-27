@@ -6,7 +6,7 @@ public interface IStockAgentFeatureEngineeringService
 {
     StockAgentPreparedContextDto Prepare(
         string symbol,
-        StockQuoteDto quote,
+        StockQuoteDto? quote,
         IReadOnlyList<KLinePointDto> kLines,
         IReadOnlyList<MinuteLinePointDto> minuteLines,
         IReadOnlyList<IntradayMessageDto> messages,
@@ -25,7 +25,7 @@ public sealed class StockAgentFeatureEngineeringService : IStockAgentFeatureEngi
 
     public StockAgentPreparedContextDto Prepare(
         string symbol,
-        StockQuoteDto quote,
+        StockQuoteDto? quote,
         IReadOnlyList<KLinePointDto> kLines,
         IReadOnlyList<MinuteLinePointDto> minuteLines,
         IReadOnlyList<IntradayMessageDto> messages,
@@ -73,7 +73,7 @@ public sealed class StockAgentFeatureEngineeringService : IStockAgentFeatureEngi
         var return5d = CalculateReturnPercent(kLines.TakeLast(5).Select(item => item.Close).ToArray());
         var return20d = CalculateReturnPercent(kLines.TakeLast(20).Select(item => item.Close).ToArray());
         var atrPercent = CalculateAtrPercent(kLines);
-        var latestClose = kLines.LastOrDefault()?.Close ?? quote.Price;
+        var latestClose = kLines.LastOrDefault()?.Close ?? quote?.Price ?? 0m;
         var breakoutReference = kLines.TakeLast(20).DefaultIfEmpty().Max(item => item?.High ?? latestClose);
         var breakoutDistance = latestClose == 0m
             ? 0m
@@ -83,13 +83,21 @@ public sealed class StockAgentFeatureEngineeringService : IStockAgentFeatureEngi
         var vwap = CalculateVwap(minuteLines);
         var sessionPhase = ResolveSessionPhase(requestTime, minuteLines);
 
-        var peBand = ResolvePeBand(quote.PeRatio);
-        var marketCapBand = ResolveMarketCapBand(quote.FloatMarketCap);
-        var highTurnoverRisk = quote.TurnoverRate >= 12m;
-        var volumeSpikeRisk = quote.VolumeRatio >= 3m;
+        var peRatio = quote?.PeRatio ?? 0m;
+        var floatMarketCap = quote?.FloatMarketCap ?? 0m;
+        var turnoverRate = quote?.TurnoverRate ?? 0m;
+        var volumeRatio = quote?.VolumeRatio ?? 0m;
+        var peBand = ResolvePeBand(peRatio);
+        var marketCapBand = ResolveMarketCapBand(floatMarketCap);
+        var highTurnoverRisk = turnoverRate >= 12m;
+        var volumeSpikeRisk = volumeRatio >= 3m;
         var counterTrendRisk = positiveCount > 0 && negativeCount > 0;
 
         var degradedFlags = new List<string>();
+        if (quote is null)
+        {
+            degradedFlags.Add("quote_unavailable");
+        }
         if (filteredCount > 0)
         {
             degradedFlags.Add("market_noise_filtered");
@@ -138,13 +146,13 @@ public sealed class StockAgentFeatureEngineeringService : IStockAgentFeatureEngi
                 sessionPhase),
             new StockAgentValuationFeatureSummaryDto(
                 peBand,
-                quote.PeRatio > 0 ? quote.PeRatio : null,
+                peRatio > 0 ? peRatio : null,
                 marketCapBand,
-                quote.FloatMarketCap > 0 ? quote.FloatMarketCap : null,
-                quote.VolumeRatio > 0 ? quote.VolumeRatio : null,
-                quote.ShareholderCount),
+                floatMarketCap > 0 ? floatMarketCap : null,
+                volumeRatio > 0 ? volumeRatio : null,
+                quote?.ShareholderCount),
             new StockAgentRiskFeatureSummaryDto(
-                decimal.Round(Math.Min(100m, atrPercent * 8m + quote.TurnoverRate * 2m), 2),
+                decimal.Round(Math.Min(100m, atrPercent * 8m + turnoverRate * 2m), 2),
                 highTurnoverRisk,
                 volumeSpikeRisk,
                 counterTrendRisk,

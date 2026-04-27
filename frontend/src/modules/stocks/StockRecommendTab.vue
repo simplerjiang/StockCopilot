@@ -3,6 +3,9 @@ import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watc
 import RecommendReportCard from './recommend/RecommendReportCard.vue'
 import RecommendFeed from './recommend/RecommendFeed.vue'
 import RecommendProgress from './recommend/RecommendProgress.vue'
+import EmbeddingDegradedBanner from '../../components/EmbeddingDegradedBanner.vue'
+import { useEmbeddingStatus } from '../../composables/useEmbeddingStatus.js'
+import { formatNorthboundUnavailableText } from '../../utils/northboundStatus.js'
 
 // ---------- State ----------
 const activeTab = ref('report') // 'report' | 'debate' | 'progress'
@@ -13,6 +16,12 @@ const sseEvents = ref([])
 const followUpText = ref('')
 const followUpSending = ref(false)
 const followUpError = ref('')
+const {
+  status: embeddingStatus,
+  loading: embeddingStatusLoading,
+  error: embeddingStatusError,
+  refreshEmbeddingStatus
+} = useEmbeddingStatus()
 
 // Market sidebar state (preserved from original)
 const realtimeContextEnabled = ref(localStorage.getItem('stock_recommend_realtime_context_enabled') !== 'false')
@@ -33,8 +42,11 @@ let elapsedTimer = null
 let eventSource = null
 let eventSourceSessionId = null
 let sseRetryCount = 0
+let sseReconnectTimer = null
 let seenSseEventIds = new Map()
-const SSE_MAX_RETRIES = 3
+const SSE_MAX_RETRIES = 5
+const SSE_INITIAL_RETRY_DELAY_SECONDS = 1
+const SSE_MAX_RETRY_DELAY_SECONDS = 30
 let componentAlive = true
 let failedSseSessionId = null
 let activeSessionLoadToken = 0
@@ -43,7 +55,10 @@ const TURN_LIVE_STATUSES = new Set(['Pending', 'Queued', 'Running'])
 const TURN_RUNNING_STATUSES = new Set(['Queued', 'Running'])
 const TURN_TERMINAL_STATUSES = new Set(['Completed', 'Failed', 'Cancelled'])
 const SESSION_TERMINAL_STATUSES = new Set(['Completed', 'Degraded', 'Failed', 'Closed', 'TimedOut'])
-const SSE_RETRY_DELAYS_SECONDS = [1, 2, 5]
+const getSseRetryDelaySeconds = retryCount => Math.min(
+  SSE_INITIAL_RETRY_DELAY_SECONDS * (2 ** Math.max(0, retryCount - 1)),
+  SSE_MAX_RETRY_DELAY_SECONDS
+)
 
 const formatSseEventTime = value => value ? cnDateTimeFormatter.format(new Date(value)) : '暂无'
 
@@ -274,16 +289,25 @@ const normalizeRealtimeOverviewSection = source => source ? ({
   advancers: Number(source.advancers ?? source.Advancers ?? 0),
   decliners: Number(source.decliners ?? source.Decliners ?? 0),
   limitUpCount: Number(source.limitUpCount ?? source.LimitUpCount ?? 0),
-  limitDownCount: Number(source.limitDownCount ?? source.LimitDownCount ?? 0)
+  limitDownCount: Number(source.limitDownCount ?? source.LimitDownCount ?? 0),
+  isStale: Boolean(source.isStale ?? source.IsStale ?? false),
+  status: source.status ?? source.Status ?? 'ok'
 }) : null
 
 const normalizeRealtimeOverview = payload => payload ? ({
   snapshotTime: payload.snapshotTime ?? payload.SnapshotTime ?? '',
+  isStale: Boolean(payload.isStale ?? payload.IsStale ?? false),
   indices: Array.isArray(payload.indices ?? payload.Indices) ? (payload.indices ?? payload.Indices).map(normalizeRealtimeQuote) : [],
   mainCapitalFlow: normalizeRealtimeOverviewSection(payload.mainCapitalFlow ?? payload.MainCapitalFlow ?? null),
   northboundFlow: normalizeRealtimeOverviewSection(payload.northboundFlow ?? payload.NorthboundFlow ?? null),
   breadth: normalizeRealtimeOverviewSection(payload.breadth ?? payload.Breadth ?? null)
 }) : null
+
+const formatNorthboundPill = flow => {
+  const unavailableText = formatNorthboundUnavailableText(flow, '不可用')
+  if (unavailableText) return unavailableText
+  return formatSignedAmount(flow.totalNetInflow)
+}
 
 const normalizeRealtimeSector = item => ({
   sectorCode: item.sectorCode ?? item.SectorCode ?? '',
@@ -486,13 +510,16 @@ const handleNewRecommend = async (userPrompt) => {
 }
 
 // ---------- SSE ----------
-const connectSse = (sessionId) => {
+const connectSse = (sessionId, options = {}) => {
+  const resetRetryState = options.resetRetryState !== false
   closeSse()
-  failedSseSessionId = null
-  sseRetryCount = 0
-  sseReconnectDelaySeconds.value = null
-  sseBackendStatusText.value = ''
-  seenSseEventIds = new Map()
+  if (resetRetryState) {
+    failedSseSessionId = null
+    sseRetryCount = 0
+    sseReconnectDelaySeconds.value = null
+    sseBackendStatusText.value = ''
+    seenSseEventIds = new Map()
+  }
   isRunning.value = true
   eventSourceSessionId = sessionId
   statusPhase.value = 'connecting'
@@ -575,7 +602,7 @@ const connectSse = (sessionId) => {
 
   eventSource.onerror = () => {
     sseRetryCount++
-    const nextDelay = SSE_RETRY_DELAYS_SECONDS[Math.min(sseRetryCount - 1, SSE_RETRY_DELAYS_SECONDS.length - 1)]
+    const nextDelay = getSseRetryDelaySeconds(sseRetryCount)
     sseReconnectDelaySeconds.value = nextDelay
     if (sseRetryCount >= SSE_MAX_RETRIES) {
       failedSseSessionId = sessionId
@@ -587,11 +614,24 @@ const connectSse = (sessionId) => {
       void loadSessionDetail(sessionId).then(updateSseBackendStatusFromSession)
       return
     }
-    statusMessage.value = `SSE 连接中断，浏览器将在约 ${nextDelay} 秒后自动重试（${sseRetryCount}/${SSE_MAX_RETRIES}）`
+    statusMessage.value = `SSE 连接中断，将在约 ${nextDelay} 秒后自动重连（${sseRetryCount}/${SSE_MAX_RETRIES}）`
+    closeSse()
+    sseReconnectTimer = setTimeout(() => {
+      sseReconnectTimer = null
+      if (!componentAlive) return
+      if (failedSseSessionId === sessionId) return
+      const activeId = activeSession.value?.id ?? activeSession.value?.Id
+      if (activeId != null && activeId !== sessionId) return
+      connectSse(sessionId, { resetRetryState: false })
+    }, nextDelay * 1000)
   }
 }
 
 const closeSse = () => {
+  if (sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer)
+    sseReconnectTimer = null
+  }
   if (eventSource) {
     eventSource.close()
     eventSource = null
@@ -909,8 +949,30 @@ const handleClearSession = () => {
 }
 
 const inputPlaceholder = computed(() =>
-  activeSession.value ? '追问: 半导体再深入看看...' : '输入你的问题，例如：今天有什么值得关注的板块？'
+  activeSession.value ? '请输入追问内容，例如：半导体再深入看看...' : '请输入推荐问题，例如：今天有什么值得关注的板块？'
 )
+
+const newSessionTitle = computed(() => isRunning.value
+  ? '推荐正在运行，请等待完成或先停止分析后再新建。'
+  : '清空当前推荐视图并开始新问题')
+
+const marketRefreshTitle = computed(() => {
+  if (!realtimeContextEnabled.value) return '推荐前市场快照已隐藏，请先显示快照。'
+  if (marketLoading.value) return '市场快照正在刷新，请稍候。'
+  return '刷新推荐前市场快照'
+})
+
+const followUpPlaceholder = computed(() => isRunning.value
+  ? '请输入新问题，可打断当前分析...'
+  : inputPlaceholder.value)
+
+const followUpSendTitle = computed(() => {
+  if (followUpSending.value) return '追问正在发送，请稍候。'
+  if (!followUpText.value.trim()) return '请输入问题或追问内容后再发送。'
+  return isRunning.value ? '打断当前分析并发送新问题' : '发送问题或追问'
+})
+
+const showFollowUpEmptyHint = computed(() => !followUpSending.value && !followUpText.value.trim())
 
 const defaultQuickActions = [
   { label: '板块深挖', prompt: '板块再选几只股票' },
@@ -988,6 +1050,7 @@ onMounted(() => {
     statusPhase.value = 'idle'
     isRunning.value = false
   }
+  refreshEmbeddingStatus()
   fetchMarketContext()
   // V048-S2 #82: 切走再切回时自动检测运行中会话并续上 SSE，
   // 避免推荐 Tab 默认空白、必须手点左侧条目才能恢复
@@ -1046,7 +1109,7 @@ watch(realtimeContextEnabled, value => {
   <section class="panel">
     <div class="panel-header">
       <h2>股票推荐</h2>
-      <p class="muted">13-Agent 多阶段辩论推荐系统</p>
+      <p class="muted">多角色分阶段辩论推荐系统</p>
     </div>
 
     <div class="recommend-split">
@@ -1055,12 +1118,12 @@ watch(realtimeContextEnabled, value => {
         <section class="recommend-market-card">
           <div class="recommend-market-head">
             <div>
-              <p class="recommend-market-kicker">Realtime Context</p>
+              <p class="recommend-market-kicker">实时市场上下文</p>
               <h3>推荐前市场快照</h3>
               <p class="muted">先看指数、资金和实时板块榜，再决定让推荐系统往哪个方向发力。</p>
             </div>
             <div class="session-selector">
-              <button class="session-new market-toggle" @click="fetchMarketContext" :disabled="marketLoading || !realtimeContextEnabled">刷新快照</button>
+              <button class="session-new market-toggle" @click="fetchMarketContext" :disabled="marketLoading || !realtimeContextEnabled" :title="marketRefreshTitle">刷新快照</button>
               <button class="session-new market-toggle secondary" @click="realtimeContextEnabled = !realtimeContextEnabled">
                 {{ realtimeContextEnabled ? '隐藏快照' : '显示快照' }}
               </button>
@@ -1081,7 +1144,7 @@ watch(realtimeContextEnabled, value => {
               </div>
               <div class="recommend-market-pills">
                 <span class="market-pill">主力 {{ formatSignedAmount(realtimeOverview.mainCapitalFlow?.mainNetInflow) }}</span>
-                <span class="market-pill">北向 {{ formatSignedAmount(realtimeOverview.northboundFlow?.totalNetInflow) }}</span>
+                <span class="market-pill">北向 {{ formatNorthboundPill(realtimeOverview.northboundFlow) }}</span>
                 <span class="market-pill">涨跌 {{ realtimeOverview.breadth?.advancers ?? 0 }} / {{ realtimeOverview.breadth?.decliners ?? 0 }}</span>
                 <span class="market-pill">涨停 {{ realtimeOverview.breadth?.limitUpCount ?? 0 }} / 跌停 {{ realtimeOverview.breadth?.limitDownCount ?? 0 }}</span>
                 <span class="market-pill">时间 {{ formatDate(realtimeOverview.snapshotTime) }}</span>
@@ -1104,7 +1167,7 @@ watch(realtimeContextEnabled, value => {
         <section class="session-history">
           <div class="session-history-head">
             <h4>历史推荐</h4>
-            <button class="session-new" @click="handleClearSession" :disabled="isRunning">新建推荐</button>
+            <button class="session-new" @click="handleClearSession" :disabled="isRunning" :title="newSessionTitle">新建推荐</button>
           </div>
           <div v-if="!sessionHistory.length" class="muted" style="padding:0.5rem 0">暂无历史推荐记录。</div>
           <div v-else class="session-list">
@@ -1130,6 +1193,13 @@ watch(realtimeContextEnabled, value => {
 
       <!-- Main content area -->
       <div class="recommend-main">
+        <EmbeddingDegradedBanner
+          :status="embeddingStatus"
+          :loading="embeddingStatusLoading"
+          :error="embeddingStatusError"
+          @refresh="refreshEmbeddingStatus"
+        />
+
         <!-- Status banner -->
         <div v-if="statusPhase !== 'idle'" class="status-banner" :class="'status-' + statusPhase">
           <span class="status-indicator" :class="{ 'status-pulse': statusPhase === 'submitting' || statusPhase === 'connecting' || statusPhase === 'running' }"></span>
@@ -1188,18 +1258,22 @@ watch(realtimeContextEnabled, value => {
           <div class="quick-actions">
             <button v-for="action in quickActions" :key="action.label"
               class="quick-btn" @click="handleQuickAction(action.prompt)"
-              :disabled="followUpSending">
+              :disabled="followUpSending"
+              :title="followUpSending ? '追问正在发送，请稍候。' : action.prompt">
               {{ action.label }}
             </button>
           </div>
           <div class="follow-up-input-row">
             <input v-model="followUpText" class="follow-up-input" type="text"
-              :placeholder="isRunning ? '输入新问题可打断当前分析...' : inputPlaceholder"
+              :placeholder="followUpPlaceholder"
+              :title="followUpSendTitle"
               :disabled="followUpSending"
               @keydown.enter="handleFollowUpSubmit" />
             <button class="follow-up-send" @click="handleFollowUpSubmit"
-              :disabled="!followUpText.trim() || followUpSending">{{ isRunning ? '打断并发送' : '发送' }}</button>
+              :disabled="!followUpText.trim() || followUpSending"
+              :title="followUpSendTitle">{{ isRunning ? '打断并发送' : '发送' }}</button>
           </div>
+          <p v-if="showFollowUpEmptyHint" class="follow-up-hint">请输入问题或追问内容后再发送。</p>
           <p v-if="followUpError" class="follow-up-error">{{ followUpError }}</p>
         </div>
       </div>
@@ -1533,6 +1607,7 @@ watch(realtimeContextEnabled, value => {
   cursor: pointer; font-size: 0.85rem;
 }
 .follow-up-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.follow-up-hint { color: var(--color-text-secondary); font-size: 0.82rem; margin: 0; }
 .follow-up-error { color: var(--color-market-fall); font-size: 0.82rem; margin: 0; }
 
 /* Session history summaries */

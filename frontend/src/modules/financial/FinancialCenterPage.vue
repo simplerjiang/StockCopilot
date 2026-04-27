@@ -6,6 +6,8 @@ import FinancialDetailDrawer from './FinancialDetailDrawer.vue'
 import FinancialCollectPanel from './FinancialCollectPanel.vue'
 import { useFinancialCenterQuery } from './useFinancialCenterQuery.js'
 import { DEFAULT_QUERY } from './financialCenterConstants.js'
+import EmbeddingDegradedBanner from '../../components/EmbeddingDegradedBanner.vue'
+import { useEmbeddingStatus } from '../../composables/useEmbeddingStatus.js'
 
 const COLLECT_TAB_KEY = 'financial-data-test'
 
@@ -23,6 +25,12 @@ const {
 const drawerVisible = ref(false)
 const drawerItem = ref(null)
 const collectPanelOpen = ref(false)
+const {
+  status: embeddingStatus,
+  loading: embeddingStatusLoading,
+  error: embeddingStatusError,
+  refreshEmbeddingStatus
+} = useEmbeddingStatus()
 
 const collectTabAvailable = computed(() => {
   if (typeof window === 'undefined') return false
@@ -107,6 +115,7 @@ const refresh = () => fetchReports()
 
 onMounted(() => {
   fetchReports()
+  refreshEmbeddingStatus()
 })
 </script>
 
@@ -132,6 +141,13 @@ onMounted(() => {
         >{{ collectPanelOpen ? '▼ 收起采集' : '▶ 采集' }}</button>
       </div>
     </header>
+
+    <EmbeddingDegradedBanner
+      :status="embeddingStatus"
+      :loading="embeddingStatusLoading"
+      :error="embeddingStatusError"
+      @refresh="refreshEmbeddingStatus"
+    />
 
     <FinancialCollectPanel v-if="collectPanelOpen" @collect-success="handleCollectSuccess" />
 
@@ -165,6 +181,10 @@ onMounted(() => {
       :visible="drawerVisible"
       :item="drawerItem"
       :report-id="drawerItem?.id ?? null"
+      :embedding-status="embeddingStatus"
+      :embedding-loading="embeddingStatusLoading"
+      :embedding-error="embeddingStatusError"
+      :embedding-refresh="refreshEmbeddingStatus"
       @close="onCloseDetail"
     />
   </div>

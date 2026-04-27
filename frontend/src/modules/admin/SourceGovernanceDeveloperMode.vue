@@ -1,12 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { summarizeReasoningSafeText } from '../../utils/reasoningSanitizer'
+import { clearAdminToken, readAdminToken, writeAdminToken } from './adminTokenStorage.js'
 
 const DEV_MODE_KEY = 'source_governance_dev_mode'
 
 const username = ref('')
 const password = ref('')
-const token = ref('local-bypass')
+const token = ref(readAdminToken() || 'local-bypass')
 const loginError = ref('')
 const loginLoading = ref(false)
 
@@ -77,7 +78,7 @@ const login = async () => {
 
     const data = await response.json()
     token.value = data.token
-    localStorage.setItem('admin_token', token.value)
+    writeAdminToken(token.value)
   } catch (error) {
     loginError.value = error.message || '登录失败'
   } finally {
@@ -87,7 +88,7 @@ const login = async () => {
 
 const logout = () => {
   token.value = ''
-  localStorage.removeItem('admin_token')
+  clearAdminToken()
   developerModeEnabled.value = false
   localStorage.removeItem(DEV_MODE_KEY)
 }

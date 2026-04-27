@@ -570,6 +570,10 @@ public sealed class AppDbContext : DbContext
         modelBuilder.Entity<RecommendationStageSnapshot>()
             .HasIndex(x => new { x.TurnId, x.StageType, x.StageRunIndex });
         modelBuilder.Entity<RecommendationStageSnapshot>()
+            .HasIndex(x => new { x.TurnId, x.StageRunIndex })
+            .IsUnique()
+            .HasDatabaseName("UX_RecommendationStageSnapshots_TurnId_StageRunIndex");
+        modelBuilder.Entity<RecommendationStageSnapshot>()
             .Property(x => x.StageType).HasConversion<string>().HasMaxLength(64);
         modelBuilder.Entity<RecommendationStageSnapshot>()
             .Property(x => x.Status).HasConversion<string>().HasMaxLength(32);

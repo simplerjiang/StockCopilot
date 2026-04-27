@@ -1,26 +1,47 @@
 <script setup>
-import { onActivated } from 'vue'
+import { computed, onActivated, watch } from 'vue'
 import { usePersistedRef, readLayoutValue } from './useLayoutPersistence'
 
 const props = defineProps({
-  hasUnreadAlerts: { type: Boolean, default: false }
+  hasUnreadAlerts: { type: Boolean, default: false },
+  hasStock: { type: Boolean, default: true }
 })
 
 const tabs = [
-  { key: 'plans', label: '交易计划', icon: '📋' },
-  { key: 'news',  label: '新闻影响', icon: '📰' },
-  { key: 'ai',    label: 'AI 分析',  icon: '🤖' },
+  { key: 'plans', label: '交易计划', icon: '📋', requiresStock: true },
+  { key: 'news',  label: '新闻影响', icon: '📰', requiresStock: true },
+  { key: 'ai',    label: 'AI 分析',  icon: '🤖', requiresStock: true },
   { key: 'board', label: '全局总览', icon: '🌐' },
-  { key: 'financial', label: '财务报表', icon: '📊' }
+  { key: 'financial', label: '财务报表', icon: '📊', requiresStock: true }
 ]
 
 const activeTab = usePersistedRef('sidebar_active_tab', 'plans')
+const fallbackTabKey = 'board'
+const isTabDisabled = tab => Boolean(tab?.requiresStock && !props.hasStock)
+const canUseTabKey = tabKey => {
+  const tab = tabs.find(item => item.key === tabKey)
+  return Boolean(tab) && !isTabDisabled(tab)
+}
+const resolvedActiveTab = computed(() => canUseTabKey(activeTab.value) ? activeTab.value : fallbackTabKey)
+
+const selectTab = tab => {
+  if (isTabDisabled(tab)) return
+  activeTab.value = tab.key
+}
+
+watch(() => props.hasStock, hasStock => {
+  if (!hasStock && !canUseTabKey(activeTab.value)) {
+    activeTab.value = fallbackTabKey
+  }
+})
 
 // Bug #58: keep-alive re-activation — restore sidebar tab from localStorage
 onActivated(() => {
   const stored = readLayoutValue('sidebar_active_tab', 'plans')
-  if (stored !== activeTab.value) {
+  if (canUseTabKey(stored) && stored !== activeTab.value) {
     activeTab.value = stored
+  } else if (!canUseTabKey(activeTab.value)) {
+    activeTab.value = fallbackTabKey
   }
 })
 </script>
@@ -32,10 +53,13 @@ onActivated(() => {
         v-for="tab in tabs"
         :key="tab.key"
         role="tab"
-        :aria-selected="activeTab === tab.key"
+        :aria-selected="resolvedActiveTab === tab.key"
+        :aria-disabled="isTabDisabled(tab)"
+        :disabled="isTabDisabled(tab)"
+        :title="isTabDisabled(tab) ? '选择股票后可用' : tab.label"
         class="sc-tabs__item"
-        :class="{ 'sc-tabs__item--active': activeTab === tab.key }"
-        @click="activeTab = tab.key"
+        :class="{ 'sc-tabs__item--active': resolvedActiveTab === tab.key, 'sc-tabs__item--disabled': isTabDisabled(tab) }"
+        @click="selectTab(tab)"
       >
         <span class="sc-tabs__icon">{{ tab.icon }}</span>
         <span class="sc-tabs__label">{{ tab.label }}</span>
@@ -43,11 +67,11 @@ onActivated(() => {
       </button>
     </div>
     <div class="sc-tabs__panel">
-      <div v-show="activeTab === 'plans'"><slot name="plans" /></div>
-      <div v-show="activeTab === 'news'"><slot name="news" /></div>
-      <div v-show="activeTab === 'ai'"><slot name="ai" /></div>
-      <div v-show="activeTab === 'board'"><slot name="board" /></div>
-      <div v-show="activeTab === 'financial'"><slot name="financial" :active="activeTab === 'financial'" /></div>
+      <div v-show="resolvedActiveTab === 'plans'"><slot name="plans" /></div>
+      <div v-show="resolvedActiveTab === 'news'"><slot name="news" /></div>
+      <div v-show="resolvedActiveTab === 'ai'"><slot name="ai" /></div>
+      <div v-show="resolvedActiveTab === 'board'"><slot name="board" /></div>
+      <div v-show="resolvedActiveTab === 'financial'"><slot name="financial" :active="resolvedActiveTab === 'financial'" /></div>
     </div>
   </div>
 </template>
@@ -96,6 +120,16 @@ onActivated(() => {
 .sc-tabs__item--active {
   color: var(--color-accent);
   font-weight: 600;
+}
+
+.sc-tabs__item--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sc-tabs__item--disabled:hover {
+  color: var(--color-text-secondary);
+  background: transparent;
 }
 
 .sc-tabs__item--active::after {

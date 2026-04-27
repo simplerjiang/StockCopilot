@@ -121,7 +121,8 @@ describe('FinancialDetailDrawer - 加载与渲染', () => {
     expect(text).toContain('来源渠道')
     expect(text).toContain('采集时间')
     expect(text).toContain('更新时间')
-    expect(text).toContain('Report ID')
+    expect(text).not.toContain('Report ID')
+    expect(text).not.toContain(baseItem.id)
     // 三表 label
     expect(text).toContain('总资产')
     expect(text).toContain('股东权益合计')

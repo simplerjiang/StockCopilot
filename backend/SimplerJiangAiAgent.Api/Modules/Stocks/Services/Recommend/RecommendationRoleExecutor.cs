@@ -42,6 +42,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
     private readonly IRecommendToolDispatcher _toolDispatcher;
     private readonly ILogger<RecommendationRoleExecutor> _logger;
     private readonly ISessionFileLogger? _sessionLogger;
+    private readonly IRecommendSectorCodeNameResolver? _sectorCodeNameResolver;
 
     public RecommendationRoleExecutor(
         ILlmService llmService,
@@ -49,7 +50,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         IRecommendRoleContractRegistry contractRegistry,
         IRecommendToolDispatcher toolDispatcher,
         ILogger<RecommendationRoleExecutor> logger)
-        : this(llmService, eventBus, contractRegistry, toolDispatcher, logger, null)
+        : this(llmService, eventBus, contractRegistry, toolDispatcher, logger, null, null)
     {
     }
 
@@ -59,7 +60,8 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         IRecommendRoleContractRegistry contractRegistry,
         IRecommendToolDispatcher toolDispatcher,
         ILogger<RecommendationRoleExecutor> logger,
-        ISessionFileLogger? sessionLogger)
+        ISessionFileLogger? sessionLogger,
+        IRecommendSectorCodeNameResolver? sectorCodeNameResolver = null)
     {
         _llmService = llmService;
         _eventBus = eventBus;
@@ -67,6 +69,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         _toolDispatcher = toolDispatcher;
         _logger = logger;
         _sessionLogger = sessionLogger;
+        _sectorCodeNameResolver = sectorCodeNameResolver;
     }
 
     public async Task<RecommendRoleExecutionResult> ExecuteAsync(RecommendRoleExecutionContext context, CancellationToken ct = default)
@@ -151,10 +154,12 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
 
                 if (TryExtractFinalJsonObject(content, out var cleanedContent))
                 {
+                    var normalizedContent = await NormalizeSectorCodeNamesAsync(cleanedContent, ct);
+
                     _eventBus.Publish(new RecommendEvent(
                         RecommendEventType.RoleSummaryReady, context.SessionId, context.TurnId,
                         context.StageId, context.StageType, context.RoleId, lastTraceId,
-                        cleanedContent, null, DateTime.UtcNow));
+                        normalizedContent, null, DateTime.UtcNow));
 
                     _eventBus.Publish(new RecommendEvent(
                         RecommendEventType.RoleCompleted, context.SessionId, context.TurnId,
@@ -162,7 +167,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
                         $"角色 {context.RoleId} 执行完成 (工具调用 {toolCallCount} 次)", null, DateTime.UtcNow));
 
                     return new RecommendRoleExecutionResult(
-                        context.RoleId, Success: true, OutputJson: cleanedContent,
+                        context.RoleId, Success: true, OutputJson: normalizedContent,
                         ErrorCode: null, ErrorMessage: null, LlmTraceId: lastTraceId,
                         ToolCallCount: toolCallCount);
                 }
@@ -274,6 +279,25 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
             // Not JSON → not a tool error structure
         }
         return false;
+    }
+
+    private async Task<string> NormalizeSectorCodeNamesAsync(string json, CancellationToken ct)
+    {
+        if (_sectorCodeNameResolver is null)
+        {
+            return json;
+        }
+
+        try
+        {
+            var codeNameMap = await _sectorCodeNameResolver.GetLatestCodeNameMapAsync(ct);
+            return RecommendSectorCodeNameNormalizer.NormalizeJson(json, codeNameMap);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Recommend sector code/name normalization failed; returning original role output.");
+            return json;
+        }
     }
 
     private static string BuildPrompt(RecommendRoleContract contract, RecommendRoleExecutionContext context)

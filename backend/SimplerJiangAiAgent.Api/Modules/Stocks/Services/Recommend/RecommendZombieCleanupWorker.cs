@@ -78,8 +78,22 @@ public sealed class RecommendZombieCleanupWorker : BackgroundService
         if (zombieTurns.Count > 0 || zombieSessions.Count > 0)
             await db.SaveChangesAsync(ct);
 
+        var repairedStageRunIndexes = await RepairDuplicateStageRunIndexesAsync(db, _logger, ct);
+        if (repairedStageRunIndexes > 0)
+        {
+            await RecommendSessionSchemaInitializer.EnsureAsync(db, ct);
+        }
+
         // Cascade: fail orphaned RoleStates where parent Turn is already terminal
         await CleanupOrphanedRoleStatesAsync(db, ct);
+    }
+
+    internal static async Task<int> RepairDuplicateStageRunIndexesAsync(
+        AppDbContext db,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        return await RecommendStageRunIndexRepairer.RepairDuplicateStageRunIndexesAsync(db, logger, ct);
     }
 
     private async Task CleanupOrphanedRoleStatesAsync(AppDbContext db, CancellationToken ct)
