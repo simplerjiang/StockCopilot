@@ -99,6 +99,7 @@ export function useTradingWorkbench(symbolRef) {
   const activeTurn = ref(null)
   const reportBlocks = ref([])
   const decision = ref(null)
+  const ragCitations = ref([])
   const feedItems = ref([])
   const loading = ref(false)
   const error = ref(null)
@@ -235,6 +236,7 @@ export function useTradingWorkbench(symbolRef) {
     activeTurn.value = null
     reportBlocks.value = []
     decision.value = null
+    ragCitations.value = []
     feedItems.value = nextFeedItems
   }
 
@@ -334,11 +336,13 @@ export function useTradingWorkbench(symbolRef) {
       if (!isCurrentViewGeneration(generation, signal)) return
       reportBlocks.value = data?.blocks ?? []
       decision.value = data?.finalDecision ?? null
+      ragCitations.value = data?.ragCitations ?? []
     } catch (e) {
       if (e.name !== 'AbortError' && generation === viewGeneration) {
         error.value = e.message
         reportBlocks.value = []
         decision.value = null
+        ragCitations.value = []
       }
     }
   }
@@ -546,6 +550,7 @@ export function useTradingWorkbench(symbolRef) {
     activeTurn,
     reportBlocks,
     decision,
+    ragCitations,
     feedItems,
     loading,
     error,

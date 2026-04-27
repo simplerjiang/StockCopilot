@@ -20,79 +20,117 @@ public class CninfoClient
     }
 
     /// <summary>
-    /// 查询 cninfo 公告列表
+    /// 查询 cninfo 公告列表（自动翻页）
     /// </summary>
     public async Task<List<CninfoAnnouncement>> QueryAnnouncementsAsync(
-        string symbol, string category = "category_ndbg_szsh", int pageSize = 30, CancellationToken ct = default)
+        string symbol, string category = "category_ndbg_szsh", int pageSize = 30, CancellationToken ct = default,
+        int maxTotal = 200)
     {
         var orgId = await ResolveOrgIdAsync(symbol, ct);
         var plate = symbol.StartsWith("6") ? "sh" : "sz";
         var column = symbol.StartsWith("6") ? "sse" : "szse";
 
         const int maxRetries = 3;
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        var allResults = new List<CninfoAnnouncement>();
+        int pageNum = 1;
+
+        while (true)
         {
-            try
+            ct.ThrowIfCancellationRequested();
+            List<CninfoAnnouncement>? pageResults = null;
+            int totalCount = -1;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                var content = new FormUrlEncodedContent(new Dictionary<string, string>
+                try
                 {
-                    ["stock"] = $"{symbol},{orgId}",
-                    ["tabName"] = "fulltext",
-                    ["pageSize"] = pageSize.ToString(),
-                    ["pageNum"] = "1",
-                    ["column"] = column,
-                    ["category"] = category,
-                    ["plate"] = plate,
-                    ["seDate"] = ""
-                });
-
-                var request = new HttpRequestMessage(HttpMethod.Post, "http://www.cninfo.com.cn/new/hisAnnouncement/query")
-                {
-                    Content = content
-                };
-                request.Headers.Add("Referer", "http://www.cninfo.com.cn/new/disclosure");
-                request.Headers.Add("Origin", "http://www.cninfo.com.cn");
-                request.Headers.Add("Accept", "application/json");
-
-                var response = await _httpClient.SendAsync(request, ct);
-                response.EnsureSuccessStatusCode();
-
-                var json = await response.Content.ReadAsStringAsync(ct);
-                var doc = JsonDocument.Parse(json);
-
-                var results = new List<CninfoAnnouncement>();
-                if (doc.RootElement.TryGetProperty("announcements", out var arr) && arr.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in arr.EnumerateArray())
+                    var content = new FormUrlEncodedContent(new Dictionary<string, string>
                     {
-                        var ann = new CninfoAnnouncement
-                        {
-                            AnnouncementId = item.GetProperty("announcementId").GetString() ?? "",
-                            AdjunctUrl = item.GetProperty("adjunctUrl").GetString() ?? "",
-                            Title = item.GetProperty("announcementTitle").GetString() ?? "",
-                            PublishTime = item.TryGetProperty("announcementTime", out var ts) && ts.ValueKind == JsonValueKind.Number
-                                ? DateTimeOffset.FromUnixTimeMilliseconds(ts.GetInt64()).DateTime
-                                : DateTime.MinValue
-                        };
-                        if (!string.IsNullOrEmpty(ann.AdjunctUrl))
-                            results.Add(ann);
-                    }
-                }
+                        ["stock"] = $"{symbol},{orgId}",
+                        ["tabName"] = "fulltext",
+                        ["pageSize"] = pageSize.ToString(),
+                        ["pageNum"] = pageNum.ToString(),
+                        ["column"] = column,
+                        ["category"] = category,
+                        ["plate"] = plate,
+                        ["seDate"] = ""
+                    });
 
-                _logger.LogInformation("cninfo 查询 {Symbol} 分类 {Category} (column={Column}): {Count} 条公告",
-                    symbol, category, column, results.Count);
-                return results;
+                    var request = new HttpRequestMessage(HttpMethod.Post, "http://www.cninfo.com.cn/new/hisAnnouncement/query")
+                    {
+                        Content = content
+                    };
+                    request.Headers.Add("Referer", "http://www.cninfo.com.cn/new/disclosure");
+                    request.Headers.Add("Origin", "http://www.cninfo.com.cn");
+                    request.Headers.Add("Accept", "application/json");
+
+                    var response = await _httpClient.SendAsync(request, ct);
+                    response.EnsureSuccessStatusCode();
+
+                    var json = await response.Content.ReadAsStringAsync(ct);
+                    var doc = JsonDocument.Parse(json);
+
+                    // 解析总条数
+                    if (doc.RootElement.TryGetProperty("totalAnnouncement", out var ta) && ta.ValueKind == JsonValueKind.Number)
+                        totalCount = ta.GetInt32();
+                    else if (doc.RootElement.TryGetProperty("totalRecordNum", out var trn) && trn.ValueKind == JsonValueKind.Number)
+                        totalCount = trn.GetInt32();
+
+                    pageResults = new List<CninfoAnnouncement>();
+                    if (doc.RootElement.TryGetProperty("announcements", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in arr.EnumerateArray())
+                        {
+                            var ann = new CninfoAnnouncement
+                            {
+                                AnnouncementId = item.GetProperty("announcementId").GetString() ?? "",
+                                AdjunctUrl = item.GetProperty("adjunctUrl").GetString() ?? "",
+                                Title = item.GetProperty("announcementTitle").GetString() ?? "",
+                                PublishTime = item.TryGetProperty("announcementTime", out var ts) && ts.ValueKind == JsonValueKind.Number
+                                    ? DateTimeOffset.FromUnixTimeMilliseconds(ts.GetInt64()).DateTime
+                                    : DateTime.MinValue
+                            };
+                            if (!string.IsNullOrEmpty(ann.AdjunctUrl))
+                                pageResults.Add(ann);
+                        }
+                    }
+
+                    break; // 成功，跳出 retry 循环
+                }
+                catch (Exception ex) when (attempt < maxRetries && !ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "cninfo 查询失败 (第 {Attempt}/{Max} 次): {Symbol} {Category} page={Page}",
+                        attempt, maxRetries, symbol, category, pageNum);
+                    await Task.Delay(1000 * attempt, ct);
+                }
             }
-            catch (Exception ex) when (attempt < maxRetries && !ct.IsCancellationRequested)
+
+            // retry 全部失败
+            if (pageResults == null)
             {
-                _logger.LogWarning(ex, "cninfo 查询失败 (第 {Attempt}/{Max} 次): {Symbol} {Category}",
-                    attempt, maxRetries, symbol, category);
-                await Task.Delay(1000 * attempt, ct);
+                _logger.LogError("cninfo 查询最终失败: {Symbol} {Category} page={Page}，已重试 {Max} 次",
+                    symbol, category, pageNum, maxRetries);
+                break;
             }
+
+            allResults.AddRange(pageResults);
+
+            _logger.LogInformation("cninfo 查询 {Symbol} 分类 {Category} (column={Column}) page={Page}: 本页 {PageCount} 条, 累计 {Total} 条, 总计 {TotalCount}",
+                symbol, category, column, pageNum, pageResults.Count, allResults.Count, totalCount);
+
+            // 判断是否还需要翻页
+            if (pageResults.Count == 0)
+                break;
+            if (totalCount >= 0 && allResults.Count >= totalCount)
+                break;
+            if (allResults.Count >= maxTotal)
+                break;
+
+            pageNum++;
+            await Task.Delay(500, ct); // cninfo 频率限制
         }
 
-        _logger.LogError("cninfo 查询最终失败: {Symbol} {Category}，已重试 {Max} 次", symbol, category, maxRetries);
-        return new List<CninfoAnnouncement>();
+        return allResults;
     }
 
     /// <summary>
@@ -163,13 +201,13 @@ public class CninfoClient
         var results = new List<DownloadedPdf>();
 
         // 年报
-        var annuals = await QueryAnnouncementsAsync(symbol, "category_ndbg_szsh", maxCount, ct);
+        var annuals = await QueryAnnouncementsAsync(symbol, "category_ndbg_szsh", ct: ct);
         // 半年报
-        var semis = await QueryAnnouncementsAsync(symbol, "category_bndbg_szsh", maxCount, ct);
+        var semis = await QueryAnnouncementsAsync(symbol, "category_bndbg_szsh", ct: ct);
         // 一季报
-        var q1 = await QueryAnnouncementsAsync(symbol, "category_yjdbg_szsh", maxCount, ct);
+        var q1 = await QueryAnnouncementsAsync(symbol, "category_yjdbg_szsh", ct: ct);
         // 三季报
-        var q3 = await QueryAnnouncementsAsync(symbol, "category_sjdbg_szsh", maxCount, ct);
+        var q3 = await QueryAnnouncementsAsync(symbol, "category_sjdbg_szsh", ct: ct);
 
         var all = annuals.Concat(semis).Concat(q1).Concat(q3)
             .OrderByDescending(a => a.PublishTime)

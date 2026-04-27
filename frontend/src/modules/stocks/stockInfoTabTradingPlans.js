@@ -166,6 +166,85 @@ export const normalizePositionSnapshot = item => item ? ({
   summary: item?.summary ?? item?.Summary ?? ''
 }) : null
 
+const readFirstField = (item, keys) => {
+  if (!item) return undefined
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(item, key)) return item[key]
+  }
+  return undefined
+}
+
+const normalizeSnapshotNumber = (value, defaultWhenMissing = null) => (
+  value === undefined ? defaultWhenMissing : normalizePlanNumber(value)
+)
+
+const normalizePortfolioPosition = item => {
+  if (!item) return null
+  const quantityLots = normalizeSnapshotNumber(readFirstField(item, ['quantityLots', 'QuantityLots', 'quantity', 'Quantity']), 0)
+  const avgCostPrice = normalizeSnapshotNumber(readFirstField(item, ['avgCostPrice', 'AvgCostPrice', 'averageCost', 'AverageCost']))
+
+  return {
+    symbol: readFirstField(item, ['symbol', 'Symbol']) ?? '',
+    name: readFirstField(item, ['name', 'Name']) ?? '',
+    quantityLots,
+    quantity: quantityLots,
+    avgCostPrice,
+    averageCost: avgCostPrice,
+    totalCost: normalizeSnapshotNumber(readFirstField(item, ['totalCost', 'TotalCost']), 0),
+    latestPrice: normalizeSnapshotNumber(readFirstField(item, ['latestPrice', 'LatestPrice'])),
+    marketValue: normalizeSnapshotNumber(readFirstField(item, ['marketValue', 'MarketValue']), 0),
+    unrealizedPnL: normalizeSnapshotNumber(readFirstField(item, ['unrealizedPnL', 'UnrealizedPnL']), 0),
+    unrealizedReturnRate: normalizeSnapshotNumber(readFirstField(item, ['unrealizedReturnRate', 'UnrealizedReturnRate'])),
+    positionRatio: normalizeSnapshotNumber(readFirstField(item, ['positionRatio', 'PositionRatio']))
+  }
+}
+
+export const normalizePortfolioSnapshot = item => {
+  if (!item) return null
+  const positions = readFirstField(item, ['positions', 'Positions'])
+  return {
+    totalCapital: normalizeSnapshotNumber(readFirstField(item, ['totalCapital', 'TotalCapital']), 0),
+    totalCost: normalizeSnapshotNumber(readFirstField(item, ['totalCost', 'TotalCost']), 0),
+    totalMarketValue: normalizeSnapshotNumber(readFirstField(item, ['totalMarketValue', 'TotalMarketValue']), 0),
+    totalUnrealizedPnL: normalizeSnapshotNumber(readFirstField(item, ['totalUnrealizedPnL', 'TotalUnrealizedPnL']), 0),
+    availableCash: normalizeSnapshotNumber(readFirstField(item, ['availableCash', 'AvailableCash']), 0),
+    totalPositionRatio: normalizeSnapshotNumber(readFirstField(item, ['totalPositionRatio', 'TotalPositionRatio']), 0),
+    positions: Array.isArray(positions) ? positions.map(normalizePortfolioPosition).filter(Boolean) : []
+  }
+}
+
+const normalizeExposureMode = item => item ? ({
+  executionMode: readFirstField(item, ['executionMode', 'ExecutionMode']) ?? '',
+  confirmationLevel: readFirstField(item, ['confirmationLevel', 'ConfirmationLevel']) ?? ''
+}) : null
+
+const normalizeSymbolExposure = item => item ? ({
+  symbol: readFirstField(item, ['symbol', 'Symbol']) ?? '',
+  name: readFirstField(item, ['name', 'Name']) ?? '',
+  exposure: normalizeSnapshotNumber(readFirstField(item, ['exposure', 'Exposure']), 0),
+  marketValue: normalizeSnapshotNumber(readFirstField(item, ['marketValue', 'MarketValue']), 0)
+}) : null
+
+const normalizeSectorExposure = item => item ? ({
+  sectorName: readFirstField(item, ['sectorName', 'SectorName']) ?? '',
+  exposure: normalizeSnapshotNumber(readFirstField(item, ['exposure', 'Exposure']), 0),
+  marketValue: normalizeSnapshotNumber(readFirstField(item, ['marketValue', 'MarketValue']), 0)
+}) : null
+
+export const normalizePortfolioExposure = item => {
+  if (!item) return null
+  const symbolExposures = readFirstField(item, ['symbolExposures', 'SymbolExposures'])
+  const sectorExposures = readFirstField(item, ['sectorExposures', 'SectorExposures'])
+  return {
+    totalExposure: normalizeSnapshotNumber(readFirstField(item, ['totalExposure', 'TotalExposure']), 0),
+    pendingExposure: normalizeSnapshotNumber(readFirstField(item, ['pendingExposure', 'PendingExposure']), 0),
+    combinedExposure: normalizeSnapshotNumber(readFirstField(item, ['combinedExposure', 'CombinedExposure']), 0),
+    symbolExposures: Array.isArray(symbolExposures) ? symbolExposures.map(normalizeSymbolExposure).filter(Boolean) : [],
+    sectorExposures: Array.isArray(sectorExposures) ? sectorExposures.map(normalizeSectorExposure).filter(Boolean) : [],
+    currentMode: normalizeExposureMode(readFirstField(item, ['currentMode', 'CurrentMode']))
+  }
+}
+
 export const normalizeTradingPlanAlert = item => ({
   id: item?.id ?? item?.Id ?? '',
   planId: item?.planId ?? item?.PlanId ?? '',

@@ -279,7 +279,9 @@ public static class ResearchSessionSchemaInitializer
             IF COL_LENGTH('dbo.ResearchTurns','RoutingConfidence') IS NULL
                 ALTER TABLE dbo.ResearchTurns ADD RoutingConfidence DECIMAL(18,2) NULL;
             IF COL_LENGTH('dbo.ResearchTurns','RoutingStageIndex') IS NULL
-                ALTER TABLE dbo.ResearchTurns ADD RoutingStageIndex INT NULL;", cancellationToken);
+                ALTER TABLE dbo.ResearchTurns ADD RoutingStageIndex INT NULL;
+            IF COL_LENGTH('dbo.ResearchTurns','RagCitationsJson') IS NULL
+                ALTER TABLE dbo.ResearchTurns ADD RagCitationsJson NVARCHAR(MAX) NULL;", cancellationToken);
 
         // R6: Add missing columns to ResearchDecisionSnapshots
         await dbContext.Database.ExecuteSqlRawAsync(@"
@@ -574,6 +576,7 @@ public static class ResearchSessionSchemaInitializer
         await EnsureSqliteColumnAsync(dbContext, "ResearchTurns", "RoutingReasoning", "TEXT", cancellationToken);
         await EnsureSqliteColumnAsync(dbContext, "ResearchTurns", "RoutingConfidence", "REAL", cancellationToken);
         await EnsureSqliteColumnAsync(dbContext, "ResearchTurns", "RoutingStageIndex", "INTEGER", cancellationToken);
+        await EnsureSqliteColumnAsync(dbContext, "ResearchTurns", "RagCitationsJson", "TEXT", cancellationToken);
 
         // R6: Ensure columns added after initial schema exist on ResearchDecisionSnapshots
         await EnsureSqliteColumnAsync(dbContext, "ResearchDecisionSnapshots", "SupportingEvidenceJson", "TEXT", cancellationToken);

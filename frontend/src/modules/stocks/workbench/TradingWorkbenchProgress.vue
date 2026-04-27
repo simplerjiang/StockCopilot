@@ -1,10 +1,46 @@
 <script setup>
+import { ref } from 'vue'
+
 const props = defineProps({
   stages: { type: Array, default: () => [] },
   isRunning: { type: Boolean, default: false },
   error: { type: String, default: null }
 })
 const emit = defineEmits(['rerun-from-stage'])
+const expandedRoleDetails = ref(new Set())
+
+const parseJson = value => {
+  if (!value) return null
+  try { return JSON.parse(value) } catch { return null }
+}
+
+const formatDetailValue = value => {
+  if (value == null || value === '') return ''
+  if (typeof value === 'string') {
+    const nested = parseJson(value)
+    return nested == null ? value : formatDetailValue(nested)
+  }
+  if (Array.isArray(value)) return value.map(formatDetailValue).filter(Boolean).join('；')
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, val]) => `${key}: ${formatDetailValue(val)}`)
+      .filter(Boolean)
+      .join('；')
+  }
+  return String(value)
+}
+
+const getRoleOutputText = role => formatDetailValue(parseJson(role.outputContentJson)?.content ?? parseJson(role.outputContentJson))
+const getRoleToolRefs = role => {
+  const parsed = parseJson(role.outputRefsJson)
+  return Array.isArray(parsed) ? parsed : []
+}
+const roleDetailKey = (stage, role, type) => `${stage.key}:${role.roleId}:${type}`
+const toggleRoleDetail = key => {
+  const next = new Set(expandedRoleDetails.value)
+  next.has(key) ? next.delete(key) : next.add(key)
+  expandedRoleDetails.value = next
+}
 
 const roleStatusIcon = status => {
   switch (status) {
@@ -88,6 +124,32 @@ const translateFlag = flag => {
           <span class="wb-role-icon">{{ roleStatusIcon(role.status) }}</span>
           <span class="wb-role-name">{{ role.roleLabel || role.roleId }}</span>
           <span v-if="role.reused" class="wb-role-reused" title="复用上轮结果">♻️</span>
+          <button
+            v-if="getRoleOutputText(role)"
+            class="wb-role-detail-btn"
+            type="button"
+            @click="toggleRoleDetail(roleDetailKey(stage, role, 'output'))"
+          >输出</button>
+          <button
+            v-if="getRoleToolRefs(role).length"
+            class="wb-role-detail-btn"
+            type="button"
+            @click="toggleRoleDetail(roleDetailKey(stage, role, 'tools'))"
+          >MCP</button>
+          <div
+            v-if="expandedRoleDetails.has(roleDetailKey(stage, role, 'output'))"
+            class="wb-role-detail-panel"
+          >{{ getRoleOutputText(role) }}</div>
+          <div
+            v-if="expandedRoleDetails.has(roleDetailKey(stage, role, 'tools'))"
+            class="wb-role-detail-panel"
+          >
+            <strong>MCP 结果</strong>
+            <div v-for="(tool, toolIndex) in getRoleToolRefs(role)" :key="toolIndex">
+              {{ tool.toolName || 'MCP' }} · {{ tool.status || 'Unknown' }} · {{ tool.summary || '' }}
+              <span v-if="tool.resultJson"> · {{ formatDetailValue(parseJson(tool.resultJson)) }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -174,6 +236,7 @@ const translateFlag = flag => {
 .wb-role {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   font-size: 13px;
   color: var(--color-text-secondary);
@@ -184,6 +247,25 @@ const translateFlag = flag => {
 .wb-role-icon { font-size: 12px; width: 14px; text-align: center; }
 .wb-role-name { flex: 1; }
 .wb-role-reused { font-size: 12px; }
+.wb-role-detail-btn {
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-surface-alt);
+  color: var(--color-text-secondary);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wb-role-detail-panel {
+  flex-basis: 100%;
+  margin: 3px 0 4px 18px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--color-accent);
+  background: var(--color-bg-surface-alt);
+  color: var(--color-text-body);
+  border-radius: 4px;
+  word-break: break-word;
+}
 
 /* ── Degraded ──────────────────────────────────── */
 .wb-degraded-flags {

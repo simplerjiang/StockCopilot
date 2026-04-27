@@ -53,6 +53,12 @@ public sealed record IntradayMessageDto(
     string? Url
 );
 
+public sealed record IntradayMessagesResultDto(
+    IReadOnlyList<IntradayMessageDto> Messages,
+    bool Degraded = false,
+    string? Warning = null
+);
+
 public sealed record StockDetailDto(
     StockQuoteDto Quote,
     IReadOnlyList<KLinePointDto> KLines,
@@ -64,7 +70,9 @@ public sealed record StockDetailDto(
 public sealed record StockDetailSummaryDto(
     StockQuoteDto Quote,
     IReadOnlyList<IntradayMessageDto> Messages,
-    StockFundamentalSnapshotDto? FundamentalSnapshot = null
+    StockFundamentalSnapshotDto? FundamentalSnapshot = null,
+    bool MessagesDegraded = false,
+    string? Warning = null
 );
 
 public sealed record StockChartDto(

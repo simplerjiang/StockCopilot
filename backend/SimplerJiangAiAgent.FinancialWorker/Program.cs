@@ -2,6 +2,7 @@ using SimplerJiangAiAgent.FinancialWorker;
 using SimplerJiangAiAgent.FinancialWorker.Data;
 using SimplerJiangAiAgent.FinancialWorker.Models;
 using SimplerJiangAiAgent.FinancialWorker.Services;
+using SimplerJiangAiAgent.FinancialWorker.Services.Announcement;
 using SimplerJiangAiAgent.FinancialWorker.Services.Pdf;
 using SimplerJiangAiAgent.FinancialWorker.Services.Rag;
 
@@ -75,6 +76,15 @@ builder.Services.AddHttpClient<CninfoClient>(client =>
 
 builder.Services.AddSingleton<FinancialDataOrchestrator>();
 
+builder.Services.AddHttpClient<AnnouncementPdfCollector>(client =>
+{
+    client.DefaultRequestHeaders.Add("User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+    client.DefaultRequestHeaders.Add("Accept", "*/*");
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+builder.Services.AddSingleton<AnnouncementPdfProcessor>();
+
 builder.Services.AddSingleton<IPdfTextExtractor, DocnetExtractor>();
 builder.Services.AddSingleton<IPdfTextExtractor, PdfPigExtractor>();
 builder.Services.AddSingleton<IPdfTextExtractor, IText7Extractor>();
@@ -142,6 +152,17 @@ app.MapPost("/api/pdf-collect/{symbol}", async (string symbol, PdfProcessingPipe
     return Results.Ok(result);
 })
 .WithName("PdfCollect");
+
+// v0.4.7 S2+S3: 东方财富公告 PDF 采集 + RAG 入库
+app.MapPost("/api/announcement-pdf-collect/{symbol}", async (string symbol, AnnouncementPdfCollector collector, AnnouncementPdfProcessor processor, CancellationToken ct) =>
+{
+    var downloaded = await collector.CollectAsync(symbol, 10, ct);
+    var chunksIndexed = downloaded.Count > 0
+        ? await processor.ProcessAsync(downloaded, ct)
+        : 0;
+    return Results.Ok(new { downloaded = downloaded.Count, chunksIndexed, files = downloaded });
+})
+.WithName("AnnouncementPdfCollect");
 
 // v0.4.1 §S2：单文件重新解析（同步，覆盖 stageLogs，更新 LastReparsedAt）
 app.MapPost("/api/pdf-reparse/{id}", async (string id, IPdfProcessingPipeline pipeline, CancellationToken ct) =>
@@ -222,6 +243,32 @@ app.MapGet("/api/embedding/status", (RagDbContext ragDb, IEmbedder embedder) =>
     });
 });
 
+// v0.4.7: Embedding backfill — fill missing embeddings for all chunks
+app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embedder, CancellationToken ct) =>
+{
+    if (!embedder.IsAvailable)
+        return Results.Ok(new { filled = 0, message = "Embedder not available (Ollama offline or model missing)" });
+
+    var missing = ragDb.GetChunkIdsWithoutEmbedding(500);
+    if (missing.Count == 0)
+        return Results.Ok(new { filled = 0, message = "All chunks already have embeddings" });
+
+    var filled = 0;
+    foreach (var (chunkId, text) in missing)
+    {
+        ct.ThrowIfCancellationRequested();
+        var embedding = await embedder.EmbedAsync(text, ct);
+        if (embedding != null)
+        {
+            ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
+            filled++;
+        }
+    }
+
+    return Results.Ok(new { filled, total = missing.Count });
+})
+.WithName("EmbeddingBackfill");
+
 // v0.4.2 S6: RAG search endpoint
 app.MapPost("/api/rag/search", async (
     RagSearchRequest request,
@@ -246,6 +293,7 @@ app.MapPost("/api/rag/search", async (
         request.Symbol,
         request.ReportDate,
         request.ReportType,
+        request.SourceType,
         topK,
         ct);
 

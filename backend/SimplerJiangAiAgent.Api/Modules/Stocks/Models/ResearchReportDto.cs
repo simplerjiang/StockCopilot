@@ -63,4 +63,5 @@ public sealed record ResearchFinalDecisionDto(
 public sealed record ResearchTurnReportDto(
     long TurnId,
     IReadOnlyList<ResearchReportBlockDto> Blocks,
-    ResearchFinalDecisionDto? FinalDecision);
+    ResearchFinalDecisionDto? FinalDecision,
+    IReadOnlyList<RagCitationDto> RagCitations);

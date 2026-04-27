@@ -1,9 +1,12 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
+using Models = SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -15,6 +18,11 @@ public interface IResearchRunner
 public sealed class ResearchRunner : IResearchRunner
 {
     private const int MaxDebateRounds = 3;
+
+    private static readonly JsonSerializerOptions Utf8JsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     private static readonly IReadOnlyList<string> FullAnalystTeamRoleIds =
     [
@@ -353,9 +361,10 @@ public sealed class ResearchRunner : IResearchRunner
         {
             var innerMsg = ex.InnerException?.Message;
             var fullMsg = innerMsg is not null ? $"{ex.Message} -> {innerMsg}" : ex.Message;
+            var sanitizedFullMsg = ErrorSanitizer.SanitizeErrorMessage(fullMsg) ?? string.Empty;
             _logger.LogError(ex, "Turn {TurnId} failed: {Detail}", turnId, fullMsg);
             turn.Status = ResearchTurnStatus.Failed;
-            turn.StopReason = fullMsg.Length > 2000 ? fullMsg[..2000] : fullMsg;
+            turn.StopReason = sanitizedFullMsg.Length > 2000 ? sanitizedFullMsg[..2000] : sanitizedFullMsg;
             turn.CompletedAt = DateTime.UtcNow;
             session.Status = ResearchSessionStatus.Failed;
             session.UpdatedAt = DateTime.UtcNow;
@@ -363,7 +372,7 @@ public sealed class ResearchRunner : IResearchRunner
 
             _eventBus.Publish(new ResearchEvent(
                 ResearchEventType.TurnFailed, session.Id, turn.Id, null, null, null,
-                $"Turn failed: {fullMsg}", null, DateTime.UtcNow));
+                $"Turn failed: {sanitizedFullMsg}", null, DateTime.UtcNow));
         }
         finally
         {
@@ -387,7 +396,7 @@ public sealed class ResearchRunner : IResearchRunner
             StageRunIndex = stageRunIndex,
             ExecutionMode = stageDef.ExecutionMode,
             Status = ResearchStageStatus.Running,
-            ActiveRoleIdsJson = JsonSerializer.Serialize(effectiveRoleIds),
+            ActiveRoleIdsJson = JsonSerializer.Serialize(effectiveRoleIds, Utf8JsonOptions),
             StartedAt = DateTime.UtcNow
         };
         _dbContext.ResearchStageSnapshots.Add(stage);
@@ -437,7 +446,7 @@ public sealed class ResearchRunner : IResearchRunner
             : ResearchStageStatus.Completed;
         stage.CompletedAt = DateTime.UtcNow;
         stage.Summary = $"{outputs.Count} outputs, {degradedFlags.Count} degraded";
-        if (degradedFlags.Count > 0) stage.DegradedFlagsJson = JsonSerializer.Serialize(degradedFlags);
+        if (degradedFlags.Count > 0) stage.DegradedFlagsJson = JsonSerializer.Serialize(degradedFlags, Utf8JsonOptions);
         if (failed) stage.StopReason = "Role failure with required tools";
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -610,7 +619,7 @@ public sealed class ResearchRunner : IResearchRunner
             roleState.OutputContentJson = r.OutputContentJson;
             roleState.OutputRefsJson = r.OutputRefsJson;
             roleState.LlmTraceId = r.LlmTraceId;
-            roleState.DegradedFlagsJson = r.DegradedFlags.Count > 0 ? JsonSerializer.Serialize(r.DegradedFlags) : null;
+            roleState.DegradedFlagsJson = r.DegradedFlags.Count > 0 ? JsonSerializer.Serialize(r.DegradedFlags, Utf8JsonOptions) : null;
             roleState.ErrorCode = r.ErrorCode;
             roleState.ErrorMessage = r.ErrorMessage;
             roleState.CompletedAt = DateTime.UtcNow;
@@ -618,6 +627,16 @@ public sealed class ResearchRunner : IResearchRunner
             if (r.Status == ResearchRoleStatus.Failed) failed = true;
             if (r.Status == ResearchRoleStatus.Degraded) degradedFlags.AddRange(r.DegradedFlags);
             if (r.OutputContentJson is not null) outputs.Add($"[{r.RoleId}]\n{r.OutputContentJson}");
+
+            // Collect RAG citations from role results
+            if (r.RagCitations is { Count: > 0 })
+            {
+                var existing = turn.RagCitationsJson is not null
+                    ? JsonSerializer.Deserialize<List<Models.RagCitationDto>>(turn.RagCitationsJson) ?? new()
+                    : new List<Models.RagCitationDto>();
+                existing.AddRange(r.RagCitations);
+                turn.RagCitationsJson = JsonSerializer.Serialize(existing, Utf8JsonOptions);
+            }
         }
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -650,10 +669,21 @@ public sealed class ResearchRunner : IResearchRunner
         roleState.OutputContentJson = result.OutputContentJson;
         roleState.OutputRefsJson = result.OutputRefsJson;
         roleState.LlmTraceId = result.LlmTraceId;
-        roleState.DegradedFlagsJson = result.DegradedFlags.Count > 0 ? JsonSerializer.Serialize(result.DegradedFlags) : null;
+        roleState.DegradedFlagsJson = result.DegradedFlags.Count > 0 ? JsonSerializer.Serialize(result.DegradedFlags, Utf8JsonOptions) : null;
         roleState.ErrorCode = result.ErrorCode;
         roleState.ErrorMessage = result.ErrorMessage;
         roleState.CompletedAt = DateTime.UtcNow;
+
+        // Collect RAG citations from role results
+        if (result.RagCitations is { Count: > 0 })
+        {
+            var existing = turn.RagCitationsJson is not null
+                ? JsonSerializer.Deserialize<List<Models.RagCitationDto>>(turn.RagCitationsJson) ?? new()
+                : new List<Models.RagCitationDto>();
+            existing.AddRange(result.RagCitations);
+            turn.RagCitationsJson = JsonSerializer.Serialize(existing, Utf8JsonOptions);
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return result;
@@ -792,7 +822,7 @@ public sealed class ResearchRunner : IResearchRunner
             // Surface degradation without breaking the pipeline
             _eventBus.Publish(new ResearchEvent(
                 ResearchEventType.DegradedNotice, sessionId, turnId, null, null, null,
-                $"Report block generation failed for {stageDef.StageType}: {ex.Message}",
+                $"Report block generation failed for {stageDef.StageType}: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}",
                 null, DateTime.UtcNow));
         }
     }

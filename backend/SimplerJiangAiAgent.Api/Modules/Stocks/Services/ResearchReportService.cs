@@ -119,9 +119,9 @@ public sealed class ResearchReportService : IResearchReportService
 
     public async Task<ResearchTurnReportDto?> GetTurnReportAsync(long turnId, CancellationToken cancellationToken = default)
     {
-        var turnExists = await _dbContext.ResearchTurns
-            .AsNoTracking().AnyAsync(t => t.Id == turnId, cancellationToken);
-        if (!turnExists) return null;
+        var turn = await _dbContext.ResearchTurns
+            .AsNoTracking().FirstOrDefaultAsync(t => t.Id == turnId, cancellationToken);
+        if (turn is null) return null;
 
         var blocks = await _dbContext.ResearchReportBlocks
             .AsNoTracking()
@@ -139,7 +139,11 @@ public sealed class ResearchReportService : IResearchReportService
 
         var decision = await GetFinalDecisionAsync(turnId, cancellationToken);
 
-        return new ResearchTurnReportDto(turnId, blocks, decision);
+        var ragCitations = !string.IsNullOrEmpty(turn.RagCitationsJson)
+            ? JsonSerializer.Deserialize<List<RagCitationDto>>(turn.RagCitationsJson) ?? new List<RagCitationDto>()
+            : new List<RagCitationDto>();
+
+        return new ResearchTurnReportDto(turnId, blocks, decision, ragCitations);
     }
 
     public async Task<ResearchFinalDecisionDto?> GetFinalDecisionAsync(long turnId, CancellationToken cancellationToken = default)

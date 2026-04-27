@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Nodes;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
@@ -133,6 +134,11 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         CancellationToken cancellationToken)
     {
         var quote = await _dataService.GetQuoteAsync(symbol, source);
+        if (quote is null)
+        {
+            throw new InvalidOperationException($"未找到股票 {symbol} 的行情数据");
+        }
+
         var kLines = await _dataService.GetKLineAsync(symbol, interval, count, source);
         var minuteLines = await _dataService.GetMinuteLineAsync(symbol, source);
         var messages = await _dataService.GetIntradayMessagesAsync(symbol, source);
@@ -225,7 +231,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         }
         catch (Exception ex)
         {
-            return new StockAgentResultDto(definition.Id, definition.Name, false, ex.Message, null, null);
+            return new StockAgentResultDto(definition.Id, definition.Name, false, ErrorSanitizer.SanitizeErrorMessage(ex.Message), null, null);
         }
     }
 

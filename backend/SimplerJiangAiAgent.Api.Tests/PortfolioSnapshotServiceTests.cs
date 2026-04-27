@@ -30,6 +30,19 @@ public sealed class PortfolioSnapshotServiceTests
             UnrealizedReturnRate = 0m,
             UpdatedAt = DateTime.UtcNow
         });
+        // V048-S1 #89: 持仓必须有交易流水支撑
+        dbContext.TradeExecutions.Add(new TradeExecution
+        {
+            Symbol = "sh600000",
+            Name = "浦发银行",
+            Direction = TradeDirection.Buy,
+            TradeType = TradeType.Normal,
+            ExecutedPrice = 10m,
+            Quantity = 1000,
+            ExecutedAt = DateTime.UtcNow.AddDays(-1),
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            ComplianceTag = ComplianceTag.Unplanned
+        });
         await dbContext.SaveChangesAsync();
 
         var quoteService = new FakeStockDataService();
@@ -84,6 +97,31 @@ public sealed class PortfolioSnapshotServiceTests
                 UnrealizedReturnRate = 0.066667m,
                 UpdatedAt = DateTime.UtcNow
             });
+        dbContext.TradeExecutions.AddRange(
+            new TradeExecution
+            {
+                Symbol = "sh600000",
+                Name = "浦发银行",
+                Direction = TradeDirection.Buy,
+                TradeType = TradeType.Normal,
+                ExecutedPrice = 10m,
+                Quantity = 1000,
+                ExecutedAt = DateTime.UtcNow.AddDays(-2),
+                CreatedAt = DateTime.UtcNow.AddDays(-2),
+                ComplianceTag = ComplianceTag.Unplanned
+            },
+            new TradeExecution
+            {
+                Symbol = "sz000001",
+                Name = "平安银行",
+                Direction = TradeDirection.Buy,
+                TradeType = TradeType.Normal,
+                ExecutedPrice = 7.5m,
+                Quantity = 1000,
+                ExecutedAt = DateTime.UtcNow.AddDays(-2),
+                CreatedAt = DateTime.UtcNow.AddDays(-2),
+                ComplianceTag = ComplianceTag.Unplanned
+            });
         await dbContext.SaveChangesAsync();
 
         var quoteService = new FakeStockDataService();
@@ -106,6 +144,169 @@ public sealed class PortfolioSnapshotServiceTests
         Assert.Equal(8m, fallback.LatestPrice);
         Assert.Equal(8000m, fallback.MarketValue);
         Assert.Equal(500m, fallback.UnrealizedPnL);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    //  V048-S1 #88 / #89 新增单元测试
+    // ─────────────────────────────────────────────────────────────────
+
+    // V048-S1 #88: 持仓账务公式必须自洽——成本 + 浮盈 == 市值；浮盈/成本 == 收益率
+    [Fact]
+    public async Task GetSnapshotAsync_Accounting_ShouldBeSelfConsistent()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserPortfolioSettings.Add(new UserPortfolioSettings { TotalCapital = 10000m, UpdatedAt = DateTime.UtcNow });
+        dbContext.StockPositions.Add(new StockPosition
+        {
+            Symbol = "sh603099",
+            Name = "长白山",
+            QuantityLots = 1,
+            AverageCostPrice = 35.53m,
+            TotalCost = 35.53m,
+            UpdatedAt = DateTime.UtcNow
+        });
+        dbContext.TradeExecutions.Add(new TradeExecution
+        {
+            Symbol = "sh603099",
+            Name = "长白山",
+            Direction = TradeDirection.Buy,
+            TradeType = TradeType.Normal,
+            ExecutedPrice = 35.53m,
+            Quantity = 1,
+            ExecutedAt = DateTime.UtcNow.AddDays(-1),
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            ComplianceTag = ComplianceTag.Unplanned
+        });
+        await dbContext.SaveChangesAsync();
+
+        var fake = new FakeStockDataService();
+        fake.SetQuote("sh603099", 33.64m, "长白山");
+        var service = new PortfolioSnapshotService(dbContext, fake);
+
+        var snapshot = await service.GetSnapshotAsync();
+        var pos = Assert.Single(snapshot.Positions);
+
+        // 市值 = last price × qty
+        Assert.Equal(33.64m, pos.MarketValue);
+        // 浮盈 = 市值 - 成本
+        Assert.Equal(33.64m - 35.53m, pos.UnrealizedPnL);
+        // 公式自洽：成本 + 浮盈 == 市值
+        Assert.Equal(pos.MarketValue, pos.TotalCost + pos.UnrealizedPnL);
+        // 收益率 = 浮盈 / 成本
+        var expectedRate = (33.64m - 35.53m) / 35.53m;
+        Assert.InRange(pos.UnrealizedReturnRate ?? 0m, expectedRate - 0.0001m, expectedRate + 0.0001m);
+    }
+
+    // V048-S1 #88: 历史 orphan 持仓（TotalCost=0 但 avgCost>0）应自愈
+    [Fact]
+    public async Task GetSnapshotAsync_ShouldSelfHeal_WhenTotalCostIsZero()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserPortfolioSettings.Add(new UserPortfolioSettings { TotalCapital = 10000m, UpdatedAt = DateTime.UtcNow });
+        dbContext.StockPositions.Add(new StockPosition
+        {
+            Symbol = "sh603099",
+            Name = "长白山",
+            QuantityLots = 1,
+            AverageCostPrice = 35.53m,
+            TotalCost = 0m,       // 历史脏数据
+            UpdatedAt = DateTime.UtcNow
+        });
+        dbContext.TradeExecutions.Add(new TradeExecution
+        {
+            Symbol = "sh603099",
+            Name = "长白山",
+            Direction = TradeDirection.Buy,
+            TradeType = TradeType.Normal,
+            ExecutedPrice = 35.53m,
+            Quantity = 1,
+            ExecutedAt = DateTime.UtcNow.AddDays(-1),
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            ComplianceTag = ComplianceTag.Unplanned
+        });
+        await dbContext.SaveChangesAsync();
+
+        var fake = new FakeStockDataService();
+        fake.SetQuote("sh603099", 33.64m, "长白山");
+        var snapshot = await new PortfolioSnapshotService(dbContext, fake).GetSnapshotAsync();
+
+        var pos = Assert.Single(snapshot.Positions);
+        Assert.Equal(35.53m, pos.TotalCost);
+        // 浮盈不再 == 市值（不再 +33.64）
+        Assert.NotEqual(pos.MarketValue, pos.UnrealizedPnL);
+        Assert.Equal(33.64m - 35.53m, pos.UnrealizedPnL);
+    }
+
+    // V048-S1 #89: 无任何交易记录时，持仓必须为空；可用资金 = 本金
+    [Fact]
+    public async Task GetSnapshotAsync_ShouldFilterOrphanPositions_WithoutTradeRecords()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserPortfolioSettings.Add(new UserPortfolioSettings { TotalCapital = 10000m, UpdatedAt = DateTime.UtcNow });
+        // orphan 持仓，无对应交易
+        dbContext.StockPositions.Add(new StockPosition
+        {
+            Symbol = "sh603099",
+            Name = "长白山",
+            QuantityLots = 1,
+            AverageCostPrice = 35.53m,
+            TotalCost = 35.53m,
+            UpdatedAt = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var snapshot = await new PortfolioSnapshotService(dbContext, new FakeStockDataService()).GetSnapshotAsync();
+
+        Assert.Empty(snapshot.Positions);
+        // 无持仓 → 可用资金 == 本金
+        Assert.Equal(10000m, snapshot.AvailableCash);
+        Assert.Equal(0m, snapshot.TotalCost);
+        Assert.Equal(0m, snapshot.TotalMarketValue);
+    }
+
+    // V048-S1 #89: availableCash = 本金 − Σ(持仓成本) + Σ(已实现盈亏)
+    [Fact]
+    public async Task GetSnapshotAsync_AvailableCash_ShouldIncludeRealizedPnL()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.UserPortfolioSettings.Add(new UserPortfolioSettings { TotalCapital = 10000m, UpdatedAt = DateTime.UtcNow });
+        dbContext.StockPositions.Add(new StockPosition
+        {
+            Symbol = "sh600000",
+            Name = "浦发银行",
+            QuantityLots = 100,
+            AverageCostPrice = 10m,
+            TotalCost = 1000m,
+            UpdatedAt = DateTime.UtcNow
+        });
+        dbContext.TradeExecutions.AddRange(
+            new TradeExecution
+            {
+                Symbol = "sh600000", Name = "浦发银行",
+                Direction = TradeDirection.Buy, TradeType = TradeType.Normal,
+                ExecutedPrice = 10m, Quantity = 100,
+                ExecutedAt = DateTime.UtcNow.AddDays(-3), CreatedAt = DateTime.UtcNow.AddDays(-3),
+                ComplianceTag = ComplianceTag.Unplanned
+            },
+            // 已实现盈利 200 的卖出
+            new TradeExecution
+            {
+                Symbol = "sh600000", Name = "浦发银行",
+                Direction = TradeDirection.Sell, TradeType = TradeType.Normal,
+                ExecutedPrice = 12m, Quantity = 100,
+                ExecutedAt = DateTime.UtcNow.AddDays(-1), CreatedAt = DateTime.UtcNow.AddDays(-1),
+                RealizedPnL = 200m,
+                ComplianceTag = ComplianceTag.Unplanned
+            });
+        await dbContext.SaveChangesAsync();
+
+        var fake = new FakeStockDataService();
+        fake.SetQuote("sh600000", 12m, "浦发银行");
+
+        var snapshot = await new PortfolioSnapshotService(dbContext, fake).GetSnapshotAsync();
+
+        // availableCash = 10000 - 1000 + 200 = 9200
+        Assert.Equal(9200m, snapshot.AvailableCash);
     }
 
     private static AppDbContext CreateDbContext()

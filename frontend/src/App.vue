@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch } from 'vue'
 import StockInfoTab from './modules/stocks/StockInfoTab.vue'
 import NewsArchiveTab from './modules/stocks/NewsArchiveTab.vue'
 import StockRecommendTab from './modules/stocks/StockRecommendTab.vue'
@@ -49,25 +49,92 @@ const selectAdminTab = (tabKey) => {
 
 /* ── 时钟 ── */
 const clockText = ref('')
+const tradingSessionLabel = ref('')
+const tradingSessionClass = ref('')
 let clockTimer = null
+const HEALTH_CHECK_INTERVAL_MS = 45000
+const HEALTH_CHECK_INTERVAL_OFFHOURS_MS = 120000
+
+const getChinaAStockTradingSession = () => {
+  const now = new Date()
+  // Convert to China time (UTC+8)
+  const chinaOffset = 8 * 60
+  const localOffset = now.getTimezoneOffset()
+  const chinaTime = new Date(now.getTime() + (chinaOffset + localOffset) * 60000)
+  const day = chinaTime.getDay()
+  const hour = chinaTime.getHours()
+  const minute = chinaTime.getMinutes()
+  const timeMinutes = hour * 60 + minute
+
+  if (day === 0 || day === 6) {
+    return { label: '非交易日', cls: 'session-closed' }
+  }
+
+  // 9:15-9:30 集合竞价
+  if (timeMinutes >= 555 && timeMinutes < 570) {
+    return { label: '集合竞价', cls: 'session-auction' }
+  }
+  // 9:30-11:30 上午交易
+  if (timeMinutes >= 570 && timeMinutes < 690) {
+    return { label: '交易中', cls: 'session-open' }
+  }
+  // 11:30-13:00 午间休市
+  if (timeMinutes >= 690 && timeMinutes < 780) {
+    return { label: '午间休市', cls: 'session-break' }
+  }
+  // 13:00-15:00 下午交易
+  if (timeMinutes >= 780 && timeMinutes < 900) {
+    return { label: '交易中', cls: 'session-open' }
+  }
+  // 其他时间已收盘
+  return { label: '已收盘', cls: 'session-closed' }
+}
+
+const isMarketOpen = computed(() => tradingSessionClass.value === 'session-open' || tradingSessionClass.value === 'session-auction')
+
 const updateClock = () => {
   const now = new Date()
-  clockText.value = [now.getHours(), now.getMinutes(), now.getSeconds()]
-    .map(n => String(n).padStart(2, '0')).join(':')
+  const pad2 = n => String(n).padStart(2, '0')
+  const dateText = `${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`
+  const timeText = [now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map(pad2).join(':')
+  clockText.value = `${dateText} ${timeText}`
+  const session = getChinaAStockTradingSession()
+  tradingSessionLabel.value = session.label
+  tradingSessionClass.value = session.cls
 }
 
 /* ── 连接状态 ── */
 const backendOnline = ref(null) // null=unknown, true=online, false=offline
+const lastHealthCheckedAt = ref('')
+const lastHealthError = ref('')
 let healthTimer = null
+const formatHealthCheckedAt = value => {
+  if (!value) return '尚未检查'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
 const checkHealth = async () => {
+  lastHealthCheckedAt.value = new Date().toISOString()
   try {
     const r = await fetch('/api/app/version', { signal: AbortSignal.timeout(5000) })
-    backendOnline.value = r.ok
-  } catch {
+    if (!r.ok) throw new Error(`版本接口返回 ${r.status}`)
+    const data = await r.json()
+    if (typeof data?.version !== 'string' || !data.version.trim()) throw new Error('版本接口未返回有效版本号')
+    appVersion.value = data.version
+    backendOnline.value = true
+    lastHealthError.value = ''
+  } catch (err) {
+    appVersion.value = ''
     backendOnline.value = false
+    lastHealthError.value = err?.name === 'TimeoutError' ? '版本检查超时' : (err?.message || '版本检查失败')
   }
 }
 const connectionLabel = computed(() => backendOnline.value === null ? '检测中' : backendOnline.value ? '已连接' : '离线')
+const connectionTitle = computed(() => {
+  const parts = [`状态：${connectionLabel.value}`, `最近检查：${formatHealthCheckedAt(lastHealthCheckedAt.value)}`]
+  if (lastHealthError.value) parts.push(`错误：${lastHealthError.value}`)
+  return parts.join('\n')
+})
 
 /* ── Tab 指示线 ── */
 const tabNavRef = ref(null)
@@ -99,6 +166,11 @@ const onboardingStatus = ref({
   recommendedTabKey: 'admin-llm'
 })
 const appVersion = ref('')
+const versionBadgeTitle = computed(() => {
+  const parts = [`版本：${appVersion.value || '未知'}`, `连接：${connectionLabel.value}`, `最近版本检查：${formatHealthCheckedAt(lastHealthCheckedAt.value)}`]
+  if (lastHealthError.value) parts.push(`错误：${lastHealthError.value}`)
+  return parts.join('\n')
+})
 
 const getTabFromLocation = () => {
   const tab = new URLSearchParams(window.location.search).get('tab')
@@ -108,6 +180,26 @@ const getTabFromLocation = () => {
 const activeTab = ref(getTabFromLocation())
 
 const activeComponent = computed(() => tabs.find(tab => tab.key === activeTab.value)?.component)
+
+// Only keep-alive lightweight tabs to avoid memory bloat (#114)
+// Excluded: StockRecommendTab, TradeLogTab, NewsArchiveTab, FinancialCenterPage (heavy data/SSE)
+const keepAliveWhitelist = ['StockInfoTab', 'MarketSentimentTab', 'AdminLlmSettings', 'FinancialConfigPage']
+
+const appViewError = ref(null)
+const appViewErrorMessage = computed(() => appViewError.value?.message || '当前页面组件出现错误。')
+
+const resetAppViewError = () => {
+  appViewError.value = null
+}
+
+onErrorCaptured((err, instance, info) => {
+  console.error('[App error boundary]', err, info)
+  appViewError.value = {
+    message: err?.message || '当前页面组件出现错误。',
+    info: info || ''
+  }
+  return false
+})
 
 const setActiveTab = tabKey => {
   if (validTabKeys.has(tabKey)) {
@@ -130,7 +222,16 @@ const syncLocation = () => {
 
 watch(activeTab, syncLocation, { immediate: true })
 
-watch(activeTab, () => nextTick(updateIndicator))
+// Adjust health check frequency based on market hours
+watch(isMarketOpen, (open) => {
+  if (healthTimer) clearInterval(healthTimer)
+  healthTimer = setInterval(checkHealth, open ? HEALTH_CHECK_INTERVAL_MS : HEALTH_CHECK_INTERVAL_OFFHOURS_MS)
+})
+
+watch(activeTab, () => {
+  resetAppViewError()
+  nextTick(updateIndicator)
+})
 
 const openOnboardingTab = () => {
   setActiveTab(onboardingStatus.value.recommendedTabKey || 'admin-llm')
@@ -196,22 +297,12 @@ const handleNavigateTab = (e) => {
 onMounted(async () => {
   updateClock()
   clockTimer = setInterval(updateClock, 1000)
-  checkHealth()
-  healthTimer = setInterval(checkHealth, 300000)
+  await checkHealth()
+  healthTimer = setInterval(checkHealth, isMarketOpen.value ? HEALTH_CHECK_INTERVAL_MS : HEALTH_CHECK_INTERVAL_OFFHOURS_MS)
   document.addEventListener('click', closeSettings)
   window.addEventListener('navigate-stock', handleNavigateStock)
   window.addEventListener('navigate-trade-log', handleNavigateTradeLog)
   window.addEventListener('navigate-tab', handleNavigateTab)
-
-  try {
-    const versionResponse = await fetch('/api/app/version')
-    if (versionResponse.ok) {
-      const versionData = await versionResponse.json()
-      appVersion.value = versionData.version || ''
-    }
-  } catch {
-    appVersion.value = ''
-  }
 
   await loadOnboardingStatus({ allowAutoRedirect: true })
   nextTick(updateIndicator)
@@ -235,7 +326,7 @@ onBeforeUnmount(() => {
           <path d="M8 1L14.5 8L8 15L1.5 8L8 1Z" fill="currentColor"/>
         </svg>
         <span class="brand-text">SimplerJiang AI Agent</span>
-        <span v-if="appVersion" class="version-badge">v{{ appVersion }}</span>
+        <span v-if="appVersion" class="version-badge" :title="versionBadgeTitle">v{{ appVersion }}</span>
       </div>
       <nav ref="tabNavRef" class="nav-tabs">
         <button
@@ -251,10 +342,11 @@ onBeforeUnmount(() => {
         <div class="nav-indicator" :style="indicatorStyle" />
       </nav>
       <div class="header-status">
-        <span class="connection-indicator" :class="{ online: backendOnline === true, offline: backendOnline === false }" :title="connectionLabel">
+        <span class="connection-indicator" :class="{ online: backendOnline === true, offline: backendOnline === false }" :title="connectionTitle">
           <span class="connection-dot" />
           <span class="connection-label">{{ connectionLabel }}</span>
         </span>
+        <span class="trading-session-badge" :class="tradingSessionClass">{{ tradingSessionLabel }}</span>
         <span class="header-clock">{{ clockText }}</span>
         <div ref="settingsRef" class="settings-dropdown-wrap">
           <button class="settings-trigger" :class="{ active: settingsOpen || adminTabs.some(t => t.key === activeTab) }" @click.stop="toggleSettings" title="管理设置">
@@ -285,7 +377,13 @@ onBeforeUnmount(() => {
         <button class="btn btn-sm btn-warning btn-pill" @click="openOnboardingTab">去配置</button>
       </section>
 
-      <keep-alive>
+      <section v-if="appViewError" class="app-error-boundary" role="alert">
+        <strong>页面组件已进入可恢复错误态</strong>
+        <p>{{ appViewErrorMessage }}</p>
+        <p v-if="appViewError.info" class="muted">位置：{{ appViewError.info }}</p>
+        <button class="btn btn-sm btn-primary btn-pill" @click="resetAppViewError">重试当前页面</button>
+      </section>
+      <keep-alive :include="keepAliveWhitelist" v-else>
         <component
           :is="activeComponent"
           @settings-saved="loadOnboardingStatus()"
@@ -409,6 +507,30 @@ onBeforeUnmount(() => {
   font-family: var(--font-family-mono);
 }
 
+.trading-session-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.trading-session-badge.session-open {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.15);
+}
+.trading-session-badge.session-auction {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.15);
+}
+.trading-session-badge.session-break {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+.trading-session-badge.session-closed {
+  color: var(--color-text-on-dark-muted);
+  background: rgba(148, 163, 184, 0.12);
+}
+
 .connection-indicator {
   display: inline-flex;
   align-items: center;
@@ -500,6 +622,24 @@ onBeforeUnmount(() => {
   flex: 1;
   padding: var(--space-5);
   overflow-y: auto;
+}
+
+.app-error-boundary {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border: 1px solid var(--color-danger-border, rgba(239, 68, 68, 0.35));
+  border-radius: var(--radius-lg);
+  background: var(--color-danger-bg, rgba(254, 242, 242, 0.95));
+  color: var(--color-text-primary);
+}
+
+.app-error-boundary p {
+  margin: 0;
+}
+
+.app-error-boundary .btn {
+  justify-self: start;
 }
 
 /* ── Onboarding Banner ── */

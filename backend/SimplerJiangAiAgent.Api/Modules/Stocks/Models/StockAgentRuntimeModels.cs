@@ -190,7 +190,11 @@ public sealed record StockCopilotMcpMarketContextDto(
     string? StockSectorName,
     string? MainlineSectorName,
     string? SectorCode,
-    decimal? MainlineScore);
+    decimal? MainlineScore)
+{
+    public string? StockSectorCode => SectorCode;
+    public string? MainlineSectorCode { get; init; }
+}
 
 public sealed record MarketContextIndexDto(string Symbol, string Name, decimal Price, decimal ChangePercent);
 public sealed record MarketContextCapitalFlowDto(decimal MainNetInflow, string AmountUnit, DateTime SnapshotTime);
@@ -209,7 +213,11 @@ public sealed record StockCopilotMarketContextDataDto(
     MarketContextCapitalFlowDto? MainCapitalFlow = null,
     MarketContextNorthboundDto? NorthboundFlow = null,
     MarketContextBreadthDto? Breadth = null,
-    string? MarketTrendSummary = null);
+    string? MarketTrendSummary = null)
+{
+    public string? StockSectorCode => SectorCode;
+    public string? MainlineSectorCode { get; init; }
+}
 
 public sealed record StockCopilotSentimentCountDto(
     int PositiveCount,
@@ -240,13 +248,13 @@ public sealed record StockCopilotCompanyOverviewDataDto(
     string Symbol,
     string Name,
     string? SectorName,
-    decimal Price,
-    decimal ChangePercent,
+    decimal? Price,
+    decimal? ChangePercent,
     decimal? FloatMarketCap,
     decimal? PeRatio,
     decimal? VolumeRatio,
     int? ShareholderCount,
-    DateTime QuoteTimestamp,
+    DateTime? QuoteTimestamp,
     DateTime? FundamentalUpdatedAt,
     int FundamentalFactCount,
     string? MainBusiness,
@@ -357,7 +365,8 @@ public sealed record StockCopilotFinalAnswerDto(
     string GroundingMode,
     decimal? ConfidenceScore,
     bool NeedsToolExecution,
-    IReadOnlyList<string> Constraints);
+    IReadOnlyList<string> Constraints,
+    IReadOnlyList<StockCopilotMcpEvidenceDto> RagCitations);
 
 public sealed record StockCopilotLoopBudgetDto(
     int MaxRounds,

@@ -20,8 +20,14 @@ const formatDate = value => {
   return cnDateTimeFormatter.format(date)
 }
 const formatSignedPercent = value => {
+  if (value === null || value === undefined || value === '') return '—'
   const n = Number(value ?? 0)
+  if (!Number.isFinite(n)) return '—'
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
+}
+const formatOneDecimal = value => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n.toFixed(1) : '—'
 }
 const isSparseSectorDetail = payload => {
   if (!payload?.snapshot) return false
@@ -36,6 +42,7 @@ const getWindowStrength = item => {
 }
 const strengthColor = value => value > 0 ? '#ff5c5c' : value < 0 ? '#1ee88f' : '#c2cad8'
 const allBreadthZero = snapshot => {
+  if ([snapshot.advancerCount, snapshot.declinerCount, snapshot.flatMemberCount].some(value => value == null)) return true
   return Number(snapshot.advancerCount ?? 0) === 0 && Number(snapshot.declinerCount ?? 0) === 0 && Number(snapshot.flatMemberCount ?? 0) === 0
 }
 
@@ -95,7 +102,7 @@ const navigateToLeader = leader => {
           <div v-for="item in detail.history.slice(0, 5)" :key="item.tradingDate" class="trend-item">
             <span>{{ formatDate(item.tradingDate).slice(5, 10) }}</span>
             <span :class="{ positive: item.changePercent >= 0, negative: item.changePercent < 0, 'market-rise': item.changePercent >= 0, 'market-fall': item.changePercent < 0 }">{{ formatSignedPercent(item.changePercent) }}</span>
-            <span :style="{ color: strengthColor(getWindowStrength(item)) }">强度 {{ getWindowStrength(item).toFixed(1) }}</span>
+            <span :style="{ color: strengthColor(getWindowStrength(item)) }">强度 {{ formatOneDecimal(getWindowStrength(item)) }}</span>
           </div>
         </div>
       </section>

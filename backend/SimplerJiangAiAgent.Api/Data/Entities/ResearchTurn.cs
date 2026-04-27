@@ -35,6 +35,7 @@ public sealed class ResearchTurn
     public int? RoutingStageIndex { get; set; }
     public string? StopReason { get; set; }
     public string? DegradedFlagsJson { get; set; }
+    public string? RagCitationsJson { get; set; }
     public DateTime RequestedAt { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }

@@ -165,6 +165,10 @@ describe('NewsArchiveTab', () => {
         page: 1,
         pageSize: 20,
         total: 1,
+        readableTotal: 1,
+        readableRate: 1,
+        urlUnavailableTotal: 0,
+        urlUnavailableRate: 0,
         items: [
           {
             level: 'market',
@@ -189,10 +193,48 @@ describe('NewsArchiveTab', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/news/archive?page=1&pageSize=20')
     expect(wrapper.text()).toContain('全量资讯库')
+    expect(wrapper.text()).toContain('资讯归档控制台')
+    expect(wrapper.text()).not.toContain('News Archive Console')
     expect(wrapper.text()).toContain('美联储前景偏谨慎，市场保持观望')
     expect(wrapper.text()).toContain('原题：Fed outlook keeps markets cautious')
     expect(wrapper.text()).toContain('宏观货币')
     expect(wrapper.text()).toContain('大盘')
+    expect(wrapper.text()).toContain('可读 1 条 · 100.0%')
+    expect(wrapper.text()).toContain('无原文 0 条 · 0.0%')
+  })
+
+  it('renders archive readability summary from api totals', async () => {
+    const fetchMock = vi.fn(async () => makeResponse({
+      json: async () => ({
+        page: 1,
+        pageSize: 20,
+        total: 3784,
+        readableTotal: 2650,
+        readableRate: 0.7003,
+        urlUnavailableTotal: 1134,
+        urlUnavailableRate: 0.2997,
+        items: [
+          {
+            level: 'market',
+            sectorName: '大盘环境',
+            title: 'Market archive sample',
+            source: 'CNBC Finance',
+            sentiment: '中性',
+            publishTime: '2026-04-26T08:00:00Z',
+            isAiProcessed: true
+          }
+        ]
+      })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(NewsArchiveTab)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('共 3784 条资讯')
+    expect(wrapper.text()).toContain('可读 2650 条 · 70.0%')
+    expect(wrapper.text()).toContain('无原文 1134 条 · 30.0%')
   })
 
   it('submits keyword and filters to archive api', async () => {
@@ -284,7 +326,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     const runningButton = wrapper.find('.archive-process-button')
-    expect(runningButton.text()).toContain('等待首轮结果')
+    expect(runningButton.text()).toContain('后台清洗启动中...')
     expect(runningButton.attributes('disabled')).toBeDefined()
     expect(runningButton.classes()).toContain('is-running')
     expect(wrapper.text()).toContain('暂停后台清洗')
@@ -295,7 +337,7 @@ describe('NewsArchiveTab', () => {
     await vi.advanceTimersByTimeAsync(2000)
     await flushFakeTimers()
 
-    expect(runningButton.text()).toContain('后台清洗进行中')
+    expect(runningButton.text()).toContain('清洗中：已处理 1 条，剩余 1 条（第 1 轮）')
     expect(wrapper.text()).toContain('已处理 1 条（大盘 1 / 板块 0 / 个股 0）')
     expect(wrapper.text()).toContain('剩余 1 条（大盘 0 / 板块 1 / 个股 0）')
     expect(wrapper.text()).toContain('累计轮次 1')
@@ -362,7 +404,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     const runningButton = wrapper.find('.archive-process-button')
-    expect(runningButton.text()).toContain('后台清洗进行中')
+    expect(runningButton.text()).toContain('清洗中：已处理 1 条，剩余 3 条（第 1 轮）')
     expect(runningButton.attributes('disabled')).toBeDefined()
     expect(runningButton.classes()).toContain('is-running')
     expect(wrapper.text()).toContain('暂停后台清洗')
@@ -623,7 +665,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     expect(fetchMock.mock.calls.filter(([url, options]) => url === '/api/news/archive/process-pending' && options?.method === 'POST')).toHaveLength(2)
-    expect(wrapper.find('.archive-process-button').text()).toContain('后台清洗进行中')
+    expect(wrapper.find('.archive-process-button').text()).toContain('清洗中：已处理 1 条，剩余 1 条（第 1 轮）')
     expect(wrapper.text()).toContain('暂停后台清洗')
 
     wrapper.unmount()
@@ -675,7 +717,7 @@ describe('NewsArchiveTab', () => {
     await flushFakeTimers()
 
     expect(fetchMock.mock.calls.filter(([url, options]) => url === '/api/news/archive/process-pending/restart' && options?.method === 'POST')).toHaveLength(1)
-    expect(wrapper.find('.archive-process-button').text()).toContain('等待首轮结果')
+    expect(wrapper.find('.archive-process-button').text()).toContain('后台清洗启动中...')
     expect(wrapper.text()).toContain('暂停后台清洗')
     expect(wrapper.text()).not.toContain('重新开始清洗')
 

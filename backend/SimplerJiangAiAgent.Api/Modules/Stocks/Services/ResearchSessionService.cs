@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
@@ -88,7 +89,7 @@ public sealed class ResearchSessionService : IResearchSessionService
                 ParseJsonStringArray(ss.DegradedFlagsJson),
                 ss.RoleStates.OrderBy(rs => rs.RunIndex).Select(rs => new ResearchRoleStateDto(
                     rs.Id, rs.RoleId, rs.RunIndex, rs.Status.ToString(),
-                    rs.ErrorCode, rs.ErrorMessage, rs.LlmTraceId,
+                    rs.ErrorCode, ErrorSanitizer.SanitizeErrorMessage(rs.ErrorMessage), rs.LlmTraceId,
                     rs.OutputRefsJson, rs.OutputContentJson, ParseJsonStringArray(rs.DegradedFlagsJson),
                     rs.StartedAt, rs.CompletedAt)).ToArray(),
                 ss.StartedAt, ss.CompletedAt)).ToArray()

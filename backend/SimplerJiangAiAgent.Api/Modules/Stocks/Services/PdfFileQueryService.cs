@@ -75,28 +75,20 @@ public class PdfFileQueryService : IPdfFileQueryService
 
         var col = _db!.GetCollection("pdf_files");
 
-        var parts = new List<string>();
-        var pars = new BsonDocument();
-        var idx = 0;
-
+        // Expand symbol aliases so that sh600519 / 600519 / SH600519 all match
+        IReadOnlyCollection<string>? symbolAliases = null;
         if (!string.IsNullOrWhiteSpace(query.Symbol))
         {
-            pars[$"p{idx}"] = query.Symbol.Trim();
-            parts.Add($"$.Symbol = @p{idx}");
-            idx++;
+            symbolAliases = FinancialDataReadService.BuildSymbolAliases(query.Symbol.Trim());
         }
+
+        // LiteDB query: use reportType predicate in query; filter symbol in-memory for alias support
+        BsonExpression? predicate = null;
         if (!string.IsNullOrWhiteSpace(query.ReportType))
         {
-            pars[$"p{idx}"] = query.ReportType.Trim();
-            parts.Add($"$.ReportType = @p{idx}");
-            idx++;
+            var pars = new BsonDocument { ["p0"] = query.ReportType.Trim() };
+            predicate = BsonExpression.Create("$.ReportType = @p0", pars);
         }
-
-        BsonExpression? predicate = parts.Count == 0
-            ? null
-            : BsonExpression.Create(string.Join(" AND ", parts), pars);
-
-        var total = predicate is null ? col.Count() : col.Count(predicate);
 
         var queryable = col.Query();
         if (predicate is not null)
@@ -104,14 +96,23 @@ public class PdfFileQueryService : IPdfFileQueryService
             queryable = queryable.Where(predicate);
         }
 
-        // 默认按 LastParsedAt desc
-        var docs = queryable
+        var allDocs = queryable
             .OrderByDescending(BsonExpression.Create("$.LastParsedAt"))
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
             .ToList();
 
-        var items = docs.Select(MapListItem).ToList();
+        // Apply symbol alias filter in memory
+        if (symbolAliases is not null)
+        {
+            allDocs = allDocs.Where(doc => symbolAliases.Contains(SafeString(doc, "Symbol"))).ToList();
+        }
+
+        var total = allDocs.Count;
+        var pagedDocs = allDocs
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        var items = pagedDocs.Select(MapListItem).ToList();
         return new PagedResult<PdfFileListItem>(items, total, page, pageSize);
     }
 

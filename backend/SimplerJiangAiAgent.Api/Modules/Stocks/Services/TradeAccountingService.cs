@@ -214,6 +214,10 @@ public sealed class TradeAccountingService : ITradeAccountingService
         }
         else switch (p)
         {
+            case "day":
+                periodStart = from ?? TimeZoneInfo.ConvertTimeToUtc(nowCst.Date, cst);
+                periodEnd = to ?? endOfTodayCstUtc;
+                break;
             case "week":
                 periodStart = from ?? endOfTodayCstUtc.AddDays(-7);
                 periodEnd = to ?? endOfTodayCstUtc;
@@ -354,6 +358,40 @@ public sealed class TradeAccountingService : ITradeAccountingService
             position.AverageCostPrice = avgCostPrice;
             position.TotalCost = totalCost;
             position.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Bug #88: 同步计算 MarketValue / UnrealizedPnL / UnrealizedReturnRate
+        if (quantity > 0)
+        {
+            // 优先用已有最新价，否则从行情快照取，最后用成本价兜底
+            var latestPrice = position.LatestPrice;
+            if (latestPrice is null or <= 0)
+            {
+                var snapshot = await _db.StockQuoteSnapshots
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.Symbol == symbol);
+                latestPrice = snapshot?.Price;
+            }
+            latestPrice ??= avgCostPrice;
+
+            if (latestPrice > 0)
+            {
+                var mv = decimal.Round(latestPrice.Value * quantity, 2, MidpointRounding.AwayFromZero);
+                var pnl = decimal.Round(mv - totalCost, 2, MidpointRounding.AwayFromZero);
+                position.LatestPrice = latestPrice;
+                position.MarketValue = mv;
+                position.UnrealizedPnL = pnl;
+                position.UnrealizedReturnRate = totalCost != 0
+                    ? decimal.Round(pnl / totalCost, 6, MidpointRounding.AwayFromZero)
+                    : 0;
+            }
+        }
+        else
+        {
+            position.LatestPrice = null;
+            position.MarketValue = null;
+            position.UnrealizedPnL = null;
+            position.UnrealizedReturnRate = null;
         }
 
         await _db.SaveChangesAsync();

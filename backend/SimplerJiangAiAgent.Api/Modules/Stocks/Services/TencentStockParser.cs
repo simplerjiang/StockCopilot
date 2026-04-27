@@ -20,7 +20,7 @@ internal static class TencentStockParser
     public static StockQuoteDto ParseQuote(string symbol, string payload)
     {
         var fields = payload.Split('~');
-        var name = GetField(fields, 1, symbol);
+        var name = StockNameNormalizer.NormalizeDisplayName(GetField(fields, 1, symbol));
         var price = ParseDecimal(GetField(fields, 3));
         var prevClose = ParseDecimal(GetField(fields, 4));
         if (prevClose <= 0)

@@ -36,7 +36,8 @@ public sealed class TradingBehaviorService : ITradingBehaviorService
         // ── 计划执行率 ──
         var plannedTrades30 = await _db.Set<TradeExecution>()
             .CountAsync(t => t.ExecutedAt >= date30 && t.PlanId != null);
-        var planExecutionRate = trades30Days > 0 ? (decimal)plannedTrades30 / trades30Days : 1m;
+        // V048-S1 #90: 交易数 = 0 时不能兜底默认值，返回 null → 前端显示 N/A
+        decimal? planExecutionRate = trades30Days > 0 ? (decimal)plannedTrades30 / trades30Days : (decimal?)null;
 
         // ── 连续亏损 ──
         var sellTrades = await _db.Set<TradeExecution>()
@@ -80,14 +81,27 @@ public sealed class TradingBehaviorService : ITradingBehaviorService
         var isOverTrading = avgDaily30 > 0 && avgDaily7 > avgDaily30 * 1.5m;
 
         // ── 纪律分数 ──
-        int score = 100;
-        if (planExecutionRate < 0.5m) score -= 20;
-        else if (planExecutionRate < 0.8m) score -= 10;
-        if (currentLossStreak >= 3) score -= 15;
-        if (isOverTrading) score -= 15;
-        if (chasingBuyRate > 0.5m) score -= 20;
-        else if (chasingBuyRate > 0.3m) score -= 10;
-        if (score < 0) score = 0;
+        // V048-S1 #90: 交易数 = 0 时不打分，返回 null
+        int? score;
+        if (trades30Days == 0)
+        {
+            score = null;
+        }
+        else
+        {
+            int calc = 100;
+            if (planExecutionRate is decimal rate)
+            {
+                if (rate < 0.5m) calc -= 20;
+                else if (rate < 0.8m) calc -= 10;
+            }
+            if (currentLossStreak >= 3) calc -= 15;
+            if (isOverTrading) calc -= 15;
+            if (chasingBuyRate > 0.5m) calc -= 20;
+            else if (chasingBuyRate > 0.3m) calc -= 10;
+            if (calc < 0) calc = 0;
+            score = calc;
+        }
 
         // ── 告警生成 ──
         var alerts = new List<BehaviorAlertDto>();
@@ -119,7 +133,7 @@ public sealed class TradingBehaviorService : ITradingBehaviorService
         }
 
         // 计划外交易占比 > 50%
-        if (trades30Days > 0 && planExecutionRate < 0.5m)
+        if (trades30Days > 0 && planExecutionRate is decimal pr && pr < 0.5m)
         {
             alerts.Add(new BehaviorAlertDto("LowDiscipline", "danger", "近 30 天计划外交易占比超过 50%，纪律执行偏低"));
         }
@@ -131,7 +145,7 @@ public sealed class TradingBehaviorService : ITradingBehaviorService
             AvgDailyTrades30Days: Math.Round(avgDaily30, 1),
             PlannedTrades30Days: plannedTrades30,
             TotalTrades30Days: trades30Days,
-            PlanExecutionRate: Math.Round(planExecutionRate, 3),
+            PlanExecutionRate: planExecutionRate.HasValue ? Math.Round(planExecutionRate.Value, 3) : (decimal?)null,
             CurrentLossStreak: currentLossStreak,
             MaxLossStreak30Days: maxLossStreak,
             ChasingBuyCount30Days: chasingBuyCount,

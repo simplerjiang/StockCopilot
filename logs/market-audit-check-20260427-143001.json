@@ -1,0 +1,29 @@
+{
+  "startedAtLocal": "2026-04-27 14:30:01",
+  "endedAtLocal": "2026-04-27 14:30:31",
+  "baseUrl": "http://localhost:5119",
+  "sync": {
+    "ok": false,
+    "error": "timed out",
+    "response": null
+  },
+  "audit": {
+    "ok": false,
+    "error": null,
+    "response": null
+  },
+  "requiredSourceKeys": [
+    "bkzj_board_rankings",
+    "bkzj_board_rankings_industry",
+    "bkzj_board_rankings_concept",
+    "bkzj_board_rankings_style",
+    "ths_continuous_limit_up",
+    "eastmoney_market_fs_sh_sz"
+  ],
+  "sourceStatuses": {},
+  "missingKeys": [],
+  "latestRecentSyncReasons": null,
+  "latestSyncSourceHealthy": null,
+  "latestSyncBusinessComplete": null,
+  "exitCode": 2
+}

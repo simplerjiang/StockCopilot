@@ -6,7 +6,13 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
 internal static class SinaCompanyNewsParser
 {
+    private static readonly TimeZoneInfo ChinaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
     public static IReadOnlyList<IntradayMessageDto> ParseCompanyNews(string html)
+    {
+        return ParseCompanyNews(html, DateTime.UtcNow);
+    }
+
+    internal static IReadOnlyList<IntradayMessageDto> ParseCompanyNews(string html, DateTime nowUtc)
     {
         if (string.IsNullOrWhiteSpace(html))
         {
@@ -36,31 +42,32 @@ internal static class SinaCompanyNewsParser
             var url = link.GetAttributeValue("href", null);
             var timeText = timeNode?.InnerText?.Trim();
 
-            var publishedAt = ParseTime(timeText);
+            var publishedAt = ParseTime(timeText, nowUtc);
             list.Add(new IntradayMessageDto(title, "新浪", publishedAt, url));
         }
 
         return list;
     }
 
-    private static DateTime ParseTime(string? timeText)
+    private static DateTime ParseTime(string? timeText, DateTime nowUtc)
     {
         if (string.IsNullOrWhiteSpace(timeText))
         {
-            return DateTime.UtcNow;
-        }
-
-        if (DateTime.TryParse(timeText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed))
-        {
-            return parsed;
+            return nowUtc;
         }
 
         if (TimeSpan.TryParse(timeText, CultureInfo.InvariantCulture, out var time))
         {
-            var today = DateTime.Today;
-            return new DateTime(today.Year, today.Month, today.Day, time.Hours, time.Minutes, 0);
+            var today = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc), ChinaTimeZone).Date;
+            var local = new DateTime(today.Year, today.Month, today.Day, time.Hours, time.Minutes, 0, DateTimeKind.Unspecified);
+            return TimeZoneInfo.ConvertTimeToUtc(local, ChinaTimeZone);
         }
 
-        return DateTime.UtcNow;
+        if (DateTime.TryParse(timeText, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified), ChinaTimeZone);
+        }
+
+        return nowUtc;
     }
 }

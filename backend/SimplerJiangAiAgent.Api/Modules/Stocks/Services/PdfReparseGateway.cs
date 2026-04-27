@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using SimplerJiangAiAgent.Api.Infrastructure;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -55,7 +56,7 @@ public sealed class HttpPdfReparseGateway : IPdfReparseGateway
                 {
                     DocumentFound = true,
                     Success = false,
-                    Error = $"FinancialWorker 返回 {(int)resp.StatusCode}: {body}"
+                    Error = $"FinancialWorker 返回 {(int)resp.StatusCode}: {ErrorSanitizer.SanitizeErrorMessage(body)}"
                 };
             }
 
@@ -65,7 +66,7 @@ public sealed class HttpPdfReparseGateway : IPdfReparseGateway
                 DocumentFound = ReadBool(json, "documentFound", true),
                 PhysicalFileMissing = ReadBool(json, "physicalFileMissing", false),
                 Success = ReadBool(json, "success", false),
-                Error = ReadString(json, "error"),
+                Error = ErrorSanitizer.SanitizeErrorMessage(ReadString(json, "error")),
             };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -79,7 +80,7 @@ public sealed class HttpPdfReparseGateway : IPdfReparseGateway
             {
                 DocumentFound = true,
                 Success = false,
-                Error = $"FinancialWorker 不可达: {ex.Message}"
+                Error = $"FinancialWorker 不可达: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}"
             };
         }
     }

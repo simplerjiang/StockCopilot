@@ -9,7 +9,8 @@ const props = defineProps({
   snapshotTime: { type: String, default: '' },
   isDegraded: { type: Boolean, default: false },
   degradeReason: { type: String, default: '' },
-  syncing: { type: Boolean, default: false }
+  syncing: { type: Boolean, default: false },
+  syncCooldown: { type: Number, default: 0 }
 })
 
 defineEmits(['sync'])
@@ -70,8 +71,8 @@ const timeHHmmss = computed(() => {
     <span class="tb-conf mono">置信度 {{ confidenceText }}</span>
     <span class="tb-ts mono">{{ timeHHmmss }} CST</span>
 
-    <button class="tb-sync" @click="$emit('sync')" :disabled="syncing" :title="isDegraded ? degradeReason : '手动同步'">
-      {{ syncing ? '同步中...' : '同步最新数据' }}
+    <button class="tb-sync" @click="$emit('sync')" :disabled="syncing || syncCooldown > 0" :title="isDegraded ? degradeReason : '手动同步'">
+      {{ syncCooldown > 0 ? `${syncCooldown}s 后可同步` : syncing ? '同步中...' : '同步最新数据' }}
     </button>
   </header>
 </template>

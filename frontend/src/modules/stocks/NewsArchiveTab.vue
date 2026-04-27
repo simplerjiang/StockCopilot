@@ -27,6 +27,11 @@ const sentiment = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const pendingTotal = ref(0)
+const readableTotal = ref(0)
+const readableRate = ref(0)
+const urlUnavailableTotal = ref(0)
+const urlUnavailableRate = ref(0)
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
@@ -64,6 +69,11 @@ const resultSummary = computed(() => `共 ${total.value} 条资讯`)
 const archiveStatsHeadline = computed(() => loading.value ? '资讯库加载中' : resultSummary.value)
 const archiveStatsDetail = computed(() => loading.value ? '统计与分页信息加载中' : pageSummary.value)
 const showPagination = computed(() => !loading.value && !error.value && total.value > 0)
+
+const formatRatioPercent = value => {
+  const normalized = Number(value ?? 0)
+  return Number.isFinite(normalized) ? `${(normalized * 100).toFixed(1)}%` : '0.0%'
+}
 
 const visiblePages = computed(() => {
   const tp = totalPages.value
@@ -283,11 +293,19 @@ const primaryArchiveActionLabel = computed(() => {
   }
 
   if (currentArchiveJobState.value === 'running') {
-    return activeArchiveJobStatus.value?.rounds > 0 ? '后台清洗进行中' : '等待首轮结果'
+    const status = activeArchiveJobStatus.value
+    if (status?.rounds > 0) {
+      return `清洗中：已处理 ${status.processed.total} 条，剩余 ${status.remaining.total} 条（第 ${status.rounds} 轮）`
+    }
+    return '后台清洗启动中...'
   }
 
   if (hasResumableArchiveWork.value) {
     return '继续后台清洗'
+  }
+
+  if (pendingTotal.value > 0) {
+    return `批量清洗待处理（${pendingTotal.value}）`
   }
 
   return '批量清洗待处理'
@@ -359,10 +377,20 @@ const fetchArchive = async ({ resetPage = false } = {}) => {
     const text = await response.text()
     const payload = (text && text.trim()) ? JSON.parse(text) : null
     total.value = Number(payload?.total ?? payload?.Total ?? 0)
+    pendingTotal.value = Number(payload?.pendingTotal ?? payload?.PendingTotal ?? 0)
+    readableTotal.value = Number(payload?.readableTotal ?? payload?.ReadableTotal ?? 0)
+    readableRate.value = Number(payload?.readableRate ?? payload?.ReadableRate ?? 0)
+    urlUnavailableTotal.value = Number(payload?.urlUnavailableTotal ?? payload?.UrlUnavailableTotal ?? 0)
+    urlUnavailableRate.value = Number(payload?.urlUnavailableRate ?? payload?.UrlUnavailableRate ?? 0)
     items.value = Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items).map(normalizeArchiveItem) : []
   } catch (err) {
     items.value = []
     total.value = 0
+    pendingTotal.value = 0
+    readableTotal.value = 0
+    readableRate.value = 0
+    urlUnavailableTotal.value = 0
+    urlUnavailableRate.value = 0
     error.value = err.message || '资讯库加载失败'
   } finally {
     loading.value = false
@@ -735,13 +763,17 @@ onBeforeUnmount(() => {
   <section class="archive-shell">
     <header class="archive-hero">
       <div>
-        <p class="archive-kicker">News Archive Console</p>
+        <p class="archive-kicker">资讯归档控制台</p>
         <h2>全量资讯库</h2>
         <p class="archive-subtitle">统一检索本地事实库中已清洗的个股、板块与大盘资讯，支持译题优先、情绪筛选与原文跳转。</p>
       </div>
       <div class="archive-stats">
         <strong>{{ archiveStatsHeadline }}</strong>
         <span>{{ archiveStatsDetail }}</span>
+        <div v-if="!loading && !error" class="archive-readability-stats" aria-label="资讯可读性汇总">
+          <span><b>可读</b> {{ readableTotal }} 条 · {{ formatRatioPercent(readableRate) }}</span>
+          <span><b>无原文</b> {{ urlUnavailableTotal }} 条 · {{ formatRatioPercent(urlUnavailableRate) }}</span>
+        </div>
       </div>
     </header>
 
@@ -959,6 +991,18 @@ onBeforeUnmount(() => {
 
 .archive-stats span {
   color: var(--color-text-secondary);
+}
+
+.archive-readability-stats {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border-light);
+  font-size: 13px;
+}
+
+.archive-readability-stats b {
+  color: var(--color-text-heading);
 }
 
 .archive-toolbar {

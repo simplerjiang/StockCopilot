@@ -142,6 +142,89 @@ export const stockInfoTabTradingPlanCases = ({
   }
   },
   {
+    title: "blocks invalid long trading-plan stop loss and take profit prices",
+    run: async () => {
+    const { fetchMock } = createChatFetchMock({ handle: async () => null })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '深科技', symbol: 'sz000021', price: 10, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    const createButton = wrapper.findAll('.plan-header-actions .market-news-button').find(button => button.text() === '新建计划')
+    await createButton.trigger('click')
+    await flushPromises()
+
+    const numericInputs = Array.from(getPlanModal()?.querySelectorAll('input[type="number"]') || [])
+    setTeleportedFieldValue(numericInputs[0], '10')
+    setTeleportedFieldValue(numericInputs[2], '11')
+    setTeleportedFieldValue(numericInputs[3], '12')
+    getPlanModal()?.querySelector('.plan-save-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(getPlanModal()?.textContent || '').toContain('买入计划止损价不应高于触发价或当前价')
+    expect(fetchMock.mock.calls.some(([url, options]) => url === '/api/stocks/plans' && options?.method === 'POST')).toBe(false)
+
+    setTeleportedFieldValue(numericInputs[2], '9')
+    setTeleportedFieldValue(numericInputs[3], '8')
+    getPlanModal()?.querySelector('.plan-save-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(getPlanModal()?.textContent || '').toContain('买入计划止盈价不应低于触发价或当前价')
+    expect(fetchMock.mock.calls.some(([url, options]) => url === '/api/stocks/plans' && options?.method === 'POST')).toBe(false)
+  }
+  },
+  {
+    title: "blocks invalid short trading-plan stop loss and take profit prices",
+    run: async () => {
+    const { fetchMock } = createChatFetchMock({ handle: async () => null })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mount(StockInfoTab)
+    wrapper.vm.detail = {
+      quote: { name: '深科技', symbol: 'sz000021', price: 10, change: 0, changePercent: 0 },
+      kLines: [],
+      minuteLines: [],
+      messages: []
+    }
+
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    await flushPromises()
+
+    const createButton = wrapper.findAll('.plan-header-actions .market-news-button').find(button => button.text() === '新建计划')
+    await createButton.trigger('click')
+    await flushPromises()
+
+    setTeleportedFieldValue(getPlanModal()?.querySelector('select'), 'Short')
+    const numericInputs = Array.from(getPlanModal()?.querySelectorAll('input[type="number"]') || [])
+    setTeleportedFieldValue(numericInputs[0], '10')
+    setTeleportedFieldValue(numericInputs[2], '9')
+    setTeleportedFieldValue(numericInputs[3], '8')
+    getPlanModal()?.querySelector('.plan-save-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(getPlanModal()?.textContent || '').toContain('卖出/减仓计划止损价不应低于触发价或当前价')
+    expect(fetchMock.mock.calls.some(([url, options]) => url === '/api/stocks/plans' && options?.method === 'POST')).toBe(false)
+
+    setTeleportedFieldValue(numericInputs[2], '11')
+    setTeleportedFieldValue(numericInputs[3], '11')
+    getPlanModal()?.querySelector('.plan-save-button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(getPlanModal()?.textContent || '').toContain('卖出/减仓计划止盈价不应高于触发价或当前价')
+    expect(fetchMock.mock.calls.some(([url, options]) => url === '/api/stocks/plans' && options?.method === 'POST')).toBe(false)
+  }
+  },
+  {
     title: "loads market context for new manual trading plans without blocking the modal",
     run: async () => {
     const marketContextDeferred = createDeferred()

@@ -2,10 +2,11 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { fetchBackendDelete, fetchBackendGet, fetchBackendPost, fetchBackendPut, isAbortError, parseResponseMessage, replaceAbortController } from './stockInfoTabRequestUtils'
 import { normalizeStockSymbol } from './stockInfoTabFormatting'
-import { normalizeTradingPlan, normalizeTradingPlanAlert } from './stockInfoTabTradingPlans'
+import { normalizePortfolioExposure, normalizePortfolioSnapshot, normalizeTradingPlan, normalizeTradingPlanAlert } from './stockInfoTabTradingPlans'
 import { markdownToSafeHtml } from '../../utils/jsonMarkdownService'
 import { useToast } from '../../composables/useToast.js'
 import { useConfirm } from '../../composables/useConfirm.js'
+import { pickStockMatch } from '../financial/symbolMarketUtil.js'
 import TradeLogPlanWorkspace from './TradeLogPlanWorkspace.vue'
 
 const toast = useToast()
@@ -88,6 +89,7 @@ const state = reactive({
   tradeFormContext: null,
   tradeFormContextLoading: false,
   tradeFormContextError: '',
+  tradeFormSymbolMismatch: '',
 
   selectedPlanContext: null,
   feedbackPlanRuntimeContext: null,
@@ -102,6 +104,7 @@ const state = reactive({
 
   behaviorStats: null,
   behaviorStatsLoading: false,
+  behaviorStatsError: '',
 
   reviewMenuOpen: false,
   reviewGenerating: false,
@@ -116,6 +119,54 @@ const searchResults = ref([])
 const searchOpen = ref(false)
 const searchLoading = ref(false)
 let searchTimer = null
+let stockSearchRequestToken = 0
+let symbolLookupRequestToken = 0
+let lastAutoFilledTradeName = ''
+
+function resetTradeNameAutoFillState() {
+  lastAutoFilledTradeName = ''
+}
+
+function getStockItemName(item) {
+  return item?.Name || item?.name || ''
+}
+
+function getStockItemSymbol(item) {
+  return item?.Symbol || item?.symbol || ''
+}
+
+function isCompleteStockSymbolQuery(query) {
+  return /^([a-z]{2})?\d{6}$/i.test(String(query || '').trim())
+}
+
+function closeStockSuggestions() {
+  searchOpen.value = false
+  searchResults.value = []
+}
+
+function cancelPendingStockSearch() {
+  stockSearchRequestToken += 1
+  clearTimeout(searchTimer)
+  searchTimer = null
+  searchLoading.value = false
+  closeStockSuggestions()
+}
+
+function canAutoFillTradeName() {
+  const currentName = String(state.tradeForm.name || '').trim()
+  return !currentName || (!!lastAutoFilledTradeName && currentName === lastAutoFilledTradeName)
+}
+
+function applyStockHitToTradeForm(hit) {
+  const hitName = getStockItemName(hit)
+  if (!hitName || !canAutoFillTradeName()) return false
+
+  state.tradeForm.name = hitName
+  state.tradeFormSymbolMismatch = ''
+  lastAutoFilledTradeName = hitName
+  closeStockSuggestions()
+  return true
+}
 
 function formatPnL(v) { return v == null ? '-' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) }
 function formatMoney(v) { return v == null ? '-' : Number(v).toFixed(2) }
@@ -354,17 +405,21 @@ const winRateClass = computed(() => {
   if (w < 0.4) return 'text-fall'
   return ''
 })
+// V048-S1 P0-2: 无交易时汇总字段不应渲染实数，返 null 让模板显示 "—"
+const hasSummaryTrades = computed(() => (state.summary?.totalTrades ?? 0) > 0)
 const exposureBarWidth = computed(() => `${Math.min(100, Math.max(0, (state.exposure?.combinedExposure ?? 0) * 100))}%`)
 const exposureBarClass = computed(() => (state.exposure?.combinedExposure ?? 0) > 0.8 ? 'bar-danger' : (state.exposure?.combinedExposure ?? 0) > 0.5 ? 'bar-warning' : 'bar-safe')
 const exposureBadgeClass = computed(() => (state.exposure?.combinedExposure ?? 0) > 0.8 ? 'badge-danger' : (state.exposure?.combinedExposure ?? 0) > 0.5 ? 'badge-warning' : 'badge-success')
 const disciplineScoreClass = computed(() => {
-  const s = state.behaviorStats?.disciplineScore ?? 100
+  const s = state.behaviorStats?.disciplineScore
+  if (s == null) return 'score-neutral'
   if (s >= 80) return 'score-good'
   if (s >= 60) return 'score-warn'
   return 'score-danger'
 })
 const planRateClass = computed(() => {
-  const r = state.behaviorStats?.planExecutionRate ?? 1
+  const r = state.behaviorStats?.planExecutionRate
+  if (r == null) return ''
   if (r >= 0.8) return 'text-rise'
   if (r >= 0.5) return ''
   return 'text-fall'
@@ -631,36 +686,113 @@ async function loadTradingPlanAlerts({ force = false } = {}) {
 
 async function searchStocks(query) {
   if (!query || query.length < 1) {
-    searchResults.value = []
-    searchOpen.value = false
+    cancelPendingStockSearch()
     return
   }
+  const requestToken = ++stockSearchRequestToken
+  const requestedQuery = String(query || '').trim()
   searchLoading.value = true
   try {
-    const res = await fetchBackendGet(`/api/stocks/search?q=${encodeURIComponent(query)}`)
+    const res = await fetchBackendGet(`/api/stocks/search?q=${encodeURIComponent(requestedQuery)}`)
+    if (requestToken !== stockSearchRequestToken) return
     if (res.ok) {
-      searchResults.value = await res.json()
+      const results = await res.json()
+      if (requestToken !== stockSearchRequestToken) return
+      if (String(state.tradeForm.symbol || '').trim() !== requestedQuery) return
+      searchResults.value = Array.isArray(results) ? results : []
+
+      if (isCompleteStockSymbolQuery(requestedQuery)) {
+        const hit = pickStockMatch(searchResults.value, requestedQuery)
+        if (applyStockHitToTradeForm(hit)) return
+      }
+
       searchOpen.value = searchResults.value.length > 0
     }
   } catch {
-    searchResults.value = []
+    if (requestToken === stockSearchRequestToken) closeStockSuggestions()
   } finally {
-    searchLoading.value = false
+    if (requestToken === stockSearchRequestToken) searchLoading.value = false
   }
 }
 
 function onSymbolInput(e) {
   const val = e.target.value
   state.tradeForm.symbol = val
+  stockSearchRequestToken += 1
   clearTimeout(searchTimer)
+  searchTimer = null
+  searchLoading.value = false
+  closeStockSuggestions()
+  if (!String(val || '').trim()) return
   searchTimer = setTimeout(() => searchStocks(val), 300)
 }
 
 function selectStock(item) {
-  state.tradeForm.symbol = item.Symbol || item.symbol
-  state.tradeForm.name = item.Name || item.name
-  searchOpen.value = false
-  searchResults.value = []
+  state.tradeForm.symbol = getStockItemSymbol(item)
+  state.tradeForm.name = getStockItemName(item)
+  lastAutoFilledTradeName = state.tradeForm.name
+  state.tradeFormSymbolMismatch = ''
+  closeStockSuggestions()
+}
+
+// V048-S1 #92: 代码框 blur 时查询 search API，填充/校验名称
+async function lookupStockBySymbol(symbol) {
+  if (!symbol) return null
+  try {
+    const res = await fetchBackendGet(`/api/stocks/search?q=${encodeURIComponent(symbol)}`)
+    if (!res.ok) return null
+    const list = await res.json()
+    if (!Array.isArray(list) || list.length === 0) return null
+    return pickStockMatch(list, symbol)
+  } catch {
+    return null
+  }
+}
+
+async function onSymbolBlur() {
+  const symbol = (state.tradeForm.symbol || '').trim()
+  cancelPendingStockSearch()
+  if (!symbol) {
+    state.tradeFormSymbolMismatch = ''
+    return
+  }
+  const requestToken = ++symbolLookupRequestToken
+  const hit = await lookupStockBySymbol(symbol)
+  if (requestToken !== symbolLookupRequestToken) return
+  if ((state.tradeForm.symbol || '').trim() !== symbol) return
+  if (!hit) {
+    state.tradeFormSymbolMismatch = ''
+    return
+  }
+  const hitName = getStockItemName(hit)
+  const hitSymbol = getStockItemSymbol(hit)
+  // 名称为空 → 自动补齐
+  if (applyStockHitToTradeForm(hit)) {
+    return
+  }
+  // 名称存在但不一致 → 提示
+  if (hitName && state.tradeForm.name && state.tradeForm.name.trim() !== hitName.trim()) {
+    state.tradeFormSymbolMismatch = `${hitSymbol} 应为「${hitName}」，当前名称「${state.tradeForm.name}」`
+  } else {
+    state.tradeFormSymbolMismatch = ''
+  }
+}
+
+async function onNameBlur() {
+  // 名称改动后若与代码不一致也提示
+  const symbol = (state.tradeForm.symbol || '').trim()
+  const name = (state.tradeForm.name || '').trim()
+  if (!symbol || !name) {
+    state.tradeFormSymbolMismatch = ''
+    return
+  }
+  const hit = await lookupStockBySymbol(symbol)
+  const hitName = (hit?.Name || hit?.name || '').trim()
+  if (hitName && hitName !== name) {
+    state.tradeFormSymbolMismatch = `${symbol} 应为「${hitName}」，当前名称「${name}」`
+  } else {
+    state.tradeFormSymbolMismatch = ''
+  }
 }
 
 async function loadPortfolioSnapshot() {
@@ -669,7 +801,9 @@ async function loadPortfolioSnapshot() {
   try {
     const res = await fetchBackendGet('/api/portfolio/snapshot')
     if (res.ok) {
-      state.snapshot = await res.json()
+      state.snapshot = normalizePortfolioSnapshot(await res.json())
+    } else {
+      state.snapshotError = '加载持仓信息失败'
     }
   } catch {
     state.snapshotError = '加载持仓信息失败'
@@ -683,7 +817,9 @@ async function loadExposure() {
   try {
     const res = await fetchBackendGet('/api/portfolio/exposure')
     if (res.ok) {
-      state.exposure = await res.json()
+      state.exposure = normalizePortfolioExposure(await res.json())
+    } else {
+      state.exposureError = '加载暴露数据失败'
     }
   } catch {
     state.exposureError = '加载暴露数据失败'
@@ -693,13 +829,16 @@ async function loadExposure() {
 
 async function loadBehaviorStats() {
   state.behaviorStatsLoading = true
+  state.behaviorStatsError = ''
   try {
     const res = await fetchBackendGet('/api/trades/behavior-stats')
     if (res.ok) {
       state.behaviorStats = await res.json()
+    } else {
+      state.behaviorStatsError = '加载健康度数据失败'
     }
   } catch {
-    // silent
+    state.behaviorStatsError = '加载健康度数据失败'
   }
   state.behaviorStatsLoading = false
 }
@@ -873,6 +1012,15 @@ function viewPlanStock(plan) {
   window.dispatchEvent(new CustomEvent('navigate-stock', {
     detail: { symbol: plan.symbol, name: plan.name }
   }))
+}
+
+// V048-S1 #91: 持仓总览点击行跳股票信息（手册 F 场景）
+function navigateToStockInfo(position) {
+  if (!position?.symbol) return
+  window.dispatchEvent(new CustomEvent('navigate-stock', {
+    detail: { symbol: position.symbol, name: position.name }
+  }))
+  toast.info(`已跳转到 ${position.name || position.symbol} 股票信息`)
 }
 
 function recordTradeFromWorkspace(plan) {
@@ -1097,6 +1245,7 @@ async function saveSettings() {
 function resetTradeForm() {
   Object.assign(state.tradeForm, createEmptyTradeForm())
   state.tradeFormDetailOpen = false
+  resetTradeNameAutoFillState()
 }
 
 function openQuickEntry() {
@@ -1107,6 +1256,7 @@ function openQuickEntry() {
   }
   state.tradeFormContext = null
   state.tradeFormContextError = ''
+  state.tradeFormSymbolMismatch = ''
   resetTradeForm()
   state.tradeForm.executedAt = nowLocalString()
   state.tradeForm.executionAction = '买入执行'
@@ -1220,7 +1370,7 @@ async function handleResetAll() {
   if (!(await showConfirm({ title: '最后确认', message: '真的要删除所有交易记录和持仓？', type: 'danger', confirmText: '删除' }))) return
 
   try {
-    const res = await fetchBackendPost('/api/trades/reset-all', {})
+    const res = await fetchBackendPost('/api/trades/reset-all', { confirmText: 'RESET_ALL_TRADES' })
     if (res.ok) {
       const data = await res.json()
       toast.success(`重置完成：删除交易 ${data.deletedTradeCount} 条、持仓 ${data.deletedPositionCount} 条、复盘 ${data.deletedReviewCount} 条`)
@@ -1287,32 +1437,45 @@ onUnmounted(() => {
       <div class="portfolio-metrics">
         <div class="metric">
           <span class="metric-label">总本金</span>
-          <span class="metric-value">{{ formatMoney(state.snapshot.totalCapital) }}</span>
+          <span class="metric-value" data-testid="portfolio-total-capital">{{ formatMoney(state.snapshot.totalCapital) }}</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">持仓成本</span>
+          <span class="metric-value" data-testid="portfolio-total-cost">{{ formatMoney(state.snapshot.totalCost) }}</span>
         </div>
         <div class="metric">
           <span class="metric-label">总市值</span>
-          <span class="metric-value">{{ formatMoney(state.snapshot.totalMarketValue) }}</span>
+          <span class="metric-value" data-testid="portfolio-total-market-value">{{ formatMoney(state.snapshot.totalMarketValue) }}</span>
         </div>
         <div class="metric">
           <span class="metric-label">总浮盈</span>
-          <span class="metric-value" :class="pnlClass(state.snapshot.totalUnrealizedPnL)">
+          <span class="metric-value" :class="pnlClass(state.snapshot.totalUnrealizedPnL)" data-testid="portfolio-total-unrealized-pnl">
             {{ formatPnL(state.snapshot.totalUnrealizedPnL) }}
           </span>
         </div>
         <div class="metric">
           <span class="metric-label">可用资金</span>
-          <span class="metric-value">{{ formatMoney(state.snapshot.availableCash) }}</span>
+          <span class="metric-value" data-testid="portfolio-available-cash">{{ formatMoney(state.snapshot.availableCash) }}</span>
         </div>
       </div>
       <div class="position-bar">
         <div class="position-bar-fill" :style="{ width: positionBarWidth }" :class="positionBarClass"></div>
       </div>
       <div class="position-list" v-if="state.snapshot.positions?.length">
-        <div class="position-item" v-for="p in state.snapshot.positions" :key="p.symbol">
+        <div class="position-item position-item-clickable"
+             v-for="p in state.snapshot.positions"
+             :key="p.symbol"
+             role="button"
+             tabindex="0"
+             :title="`点击查看 ${p.name || p.symbol} 股票信息`"
+             @click="navigateToStockInfo(p)"
+             @keydown.enter.prevent="navigateToStockInfo(p)"
+             @keydown.space.prevent="navigateToStockInfo(p)">
           <span class="position-symbol">{{ p.name || p.symbol }}</span>
-          <span>{{ p.quantity }}股</span>
-          <span>成本 {{ p.averageCost?.toFixed(2) }}</span>
-          <span :class="pnlClass(p.unrealizedPnL)">{{ formatPnL(p.unrealizedPnL) }}</span>
+          <span>{{ p.quantityLots ?? 0 }}股</span>
+          <span :data-testid="`portfolio-position-cost-${p.symbol}`">成本 {{ formatMoney(p.totalCost) }}</span>
+          <span :data-testid="`portfolio-position-market-value-${p.symbol}`">市值 {{ formatMoney(p.marketValue) }}</span>
+          <span :class="pnlClass(p.unrealizedPnL)" :data-testid="`portfolio-position-pnl-${p.symbol}`">浮盈 {{ formatPnL(p.unrealizedPnL) }}</span>
           <span class="badge badge-pill">{{ formatPercent(p.positionRatio) }}</span>
         </div>
       </div>
@@ -1358,13 +1521,14 @@ onUnmounted(() => {
       </div>
     </div>
     <div v-else-if="state.exposureLoading" class="card loading-state" style="padding:0.5rem">加载暴露数据中...</div>
+    <div v-else-if="state.exposureError" class="card text-danger" style="padding:0.5rem">{{ state.exposureError }}</div>
 
     <!-- 交易健康度 -->
     <div class="behavior-dashboard card" v-if="state.behaviorStats">
       <div class="behavior-header">
         <h4>🧘 交易健康度</h4>
         <span class="discipline-score" :class="disciplineScoreClass" title="满分100分。计划执行率<50%扣20分；连亏≥3笔扣15分；过度交易扣15分；追涨率>50%扣20分">
-          {{ state.behaviorStats.disciplineScore }} 分
+          {{ state.behaviorStats.disciplineScore == null ? '—' : state.behaviorStats.disciplineScore + ' 分' }}
         </span>
       </div>
       <div class="behavior-metrics">
@@ -1375,7 +1539,7 @@ onUnmounted(() => {
         <div class="behavior-metric">
           <span class="metric-label" title="有关联计划的交易占总交易的比例，越高越好">计划执行率</span>
           <span class="metric-value" :class="planRateClass">
-            {{ formatPercent(state.behaviorStats.planExecutionRate) }}
+            {{ state.behaviorStats.planExecutionRate == null ? '—' : formatPercent(state.behaviorStats.planExecutionRate) }}
           </span>
         </div>
         <div class="behavior-metric">
@@ -1399,6 +1563,7 @@ onUnmounted(() => {
       </div>
     </div>
     <div v-else-if="state.behaviorStatsLoading" class="card loading-state" style="padding:0.5rem">加载健康度数据中...</div>
+    <div v-else-if="state.behaviorStatsError" class="card text-danger" style="padding:0.5rem">{{ state.behaviorStatsError }}</div>
 
     <div class="trade-workspace">
       <div class="trade-workspace-main">
@@ -1441,31 +1606,31 @@ onUnmounted(() => {
           <div class="summary-grid">
             <div class="summary-item">
               <span class="summary-label">总盈亏</span>
-              <span class="summary-value" :class="pnlClass(state.summary.totalPnL)">{{ formatPnL(state.summary.totalPnL) }}</span>
+              <span class="summary-value" :class="pnlClass(state.summary.totalPnL)">{{ hasSummaryTrades ? formatPnL(state.summary.totalPnL) : '—' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">胜率</span>
-              <span class="summary-value" :class="winRateClass">{{ formatPercent(state.summary.winRate) }}</span>
+              <span class="summary-value" :class="winRateClass">{{ hasSummaryTrades ? formatPercent(state.summary.winRate) : '—' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">盈亏比</span>
-              <span class="summary-value">{{ state.summary.profitLossRatio === -1 ? '全胜' : (state.summary.profitLossRatio?.toFixed(2) ?? '-') }}</span>
+              <span class="summary-value">{{ !hasSummaryTrades ? '—' : (state.summary.profitLossRatio === -1 ? '全胜' : (state.summary.profitLossRatio == null ? '—' : state.summary.profitLossRatio.toFixed(2))) }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">做T盈亏</span>
-              <span class="summary-value" :class="pnlClass(state.summary.dayTradePnL)">{{ formatPnL(state.summary.dayTradePnL) }}</span>
+              <span class="summary-value" :class="pnlClass(state.summary.dayTradePnL)">{{ hasSummaryTrades ? formatPnL(state.summary.dayTradePnL) : '—' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">计划执行率</span>
-              <span class="summary-value">{{ formatPercent(state.summary.plannedTradeCount / Math.max(1, state.summary.totalTrades)) }}</span>
+              <span class="summary-value">{{ state.behaviorStats?.planExecutionRate == null ? '—' : formatPercent(state.behaviorStats.planExecutionRate) }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">Agent遵守率</span>
-              <span class="summary-value">{{ formatPercent(state.summary.complianceRate) }}</span>
+              <span class="summary-value">{{ !hasSummaryTrades || state.summary.complianceRate == null ? '—' : formatPercent(state.summary.complianceRate) }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-label">最大单笔亏损</span>
-              <span class="summary-value text-fall">{{ formatPnL(state.summary.maxSingleLoss) }}</span>
+              <span class="summary-value text-fall">{{ !hasSummaryTrades || state.summary.maxSingleLoss == null || state.summary.maxSingleLoss === 0 ? '—' : formatPnL(state.summary.maxSingleLoss) }}</span>
             </div>
           </div>
         </div>
@@ -1782,6 +1947,7 @@ onUnmounted(() => {
                      data-testid="trade-symbol"
                      :value="state.tradeForm.symbol"
                      @input="onSymbolInput"
+                     @blur="onSymbolBlur"
                      @focus="state.tradeForm.symbol && searchStocks(state.tradeForm.symbol)"
                      placeholder="输入代码/名称/拼音"
                      required
@@ -1796,10 +1962,13 @@ onUnmounted(() => {
                   <span style="color: var(--color-text-secondary);">{{ item.Code || item.code }}</span>
                 </div>
               </div>
+              <div v-if="state.tradeFormSymbolMismatch" class="text-warning" data-testid="trade-symbol-mismatch" style="font-size:12px;margin-top:4px;">
+                ⚠ 代码与名称不一致，请确认：{{ state.tradeFormSymbolMismatch }}
+              </div>
             </div>
             <div v-if="!showReadonlyTradeIdentity" class="form-group">
               <label>股票名称</label>
-              <input class="input input-sm" data-testid="trade-name" v-model="state.tradeForm.name" required :disabled="!!state.editingTradeId" />
+              <input class="input input-sm" data-testid="trade-name" v-model="state.tradeForm.name" @blur="onNameBlur" required :disabled="!!state.editingTradeId" />
             </div>
             <div v-if="!showReadonlyTradeIdentity" class="form-group">
               <label>方向</label>
@@ -2155,7 +2324,7 @@ onUnmounted(() => {
 }
 .portfolio-metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: var(--space-3);
 }
 .metric {
@@ -2203,6 +2372,15 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--color-border-light);
 }
 .position-item:last-child { border-bottom: none; }
+.position-item-clickable {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.position-item-clickable:hover,
+.position-item-clickable:focus {
+  background-color: var(--color-bg-hover, rgba(0,0,0,0.04));
+  outline: none;
+}
 .position-symbol {
   font-weight: 600;
   min-width: 120px;

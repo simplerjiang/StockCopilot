@@ -183,6 +183,9 @@ function formatSnapshotTime(value) {
             <span>目标价</span>
             <input v-model="workspace.planForm.targetPrice" type="number" step="0.01" placeholder="优先取指挥/趋势目标">
           </label>
+          <p class="plan-field plan-field-wide muted plan-field-hint">
+            保存前会校验止损/止盈与触发价或当前价的方向关系，价格组合不合理时不会写入交易计划。
+          </p>
           <label class="plan-field plan-field-wide">
             <span>预期催化</span>
             <textarea v-model="workspace.planForm.expectedCatalyst" rows="2"></textarea>

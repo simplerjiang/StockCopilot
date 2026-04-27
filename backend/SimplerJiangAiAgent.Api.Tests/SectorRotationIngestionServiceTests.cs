@@ -41,6 +41,7 @@ public sealed class SectorRotationIngestionServiceTests
 		var service = new SectorRotationIngestionService(
 			dbContext,
 			client,
+			new FakeRealtimeMarketClient(),
 			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
 			NullLogger<SectorRotationIngestionService>.Instance);
 
@@ -88,13 +89,14 @@ public sealed class SectorRotationIngestionServiceTests
 		var service = new SectorRotationIngestionService(
 			dbContext,
 			client,
+			new FakeRealtimeMarketClient(),
 			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
 			NullLogger<SectorRotationIngestionService>.Instance);
 
 		await service.SyncAsync();
 
 		var sentiment = await dbContext.MarketSentimentSnapshots.SingleAsync();
-		Assert.Equal("eastmoney_partial", sentiment.SourceTag);
+		Assert.Equal("eastmoney", sentiment.SourceTag);
 		Assert.Equal(0, sentiment.LimitUpCount);
 		Assert.Equal(6, sentiment.LimitDownCount);
 		Assert.Equal(8, sentiment.BrokenBoardCount);
@@ -135,18 +137,80 @@ public sealed class SectorRotationIngestionServiceTests
 		var service = new SectorRotationIngestionService(
 			dbContext,
 			client,
+			new FakeRealtimeMarketClient(),
 			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
 			NullLogger<SectorRotationIngestionService>.Instance);
 
 		await service.SyncAsync();
 
 		var sentiment = await dbContext.MarketSentimentSnapshots.SingleAsync();
-		Assert.Equal("eastmoney_partial", sentiment.SourceTag);
+		Assert.Equal("eastmoney", sentiment.SourceTag);
 		Assert.Equal("同步不完整", sentiment.StageLabelV2);
 		Assert.Equal(0m, sentiment.StageConfidence);
 		Assert.Equal(0m, sentiment.StageScore);
 		Assert.Contains("market_breadth_unavailable", sentiment.RawJson);
 		Assert.Single(await dbContext.SectorRotationSnapshots.ToListAsync());
+	}
+
+	[Fact]
+	public async Task SyncAsync_UsesRealtimeBreadthFallback_WhenPrimaryBreadthFails()
+	{
+		await using var dbContext = CreateDbContext();
+		var client = new FakeSectorRotationClient
+		{
+			BoardRankings = new Dictionary<string, IReadOnlyList<EastmoneySectorBoardRow>>(StringComparer.OrdinalIgnoreCase)
+			{
+				[SectorBoardTypes.Industry] =
+				[
+					new EastmoneySectorBoardRow(SectorBoardTypes.Industry, "BK1001", "半导体", 2.8m, 120m, 40m, 30m, 20m, 30m, 300m, 12m, 1, "{}")
+				]
+			},
+			Leaders = new Dictionary<string, IReadOnlyList<EastmoneySectorLeaderRow>>(StringComparer.OrdinalIgnoreCase)
+			{
+				["BK1001"] =
+				[
+					new EastmoneySectorLeaderRow(1, "688001", "华芯", 7.8m, 90m, false, false)
+				]
+			},
+			ThrowMarketBreadth = true,
+			TotalMarketTurnover = 8888m,
+			LimitUpCount = 42,
+			LimitDownCount = 6,
+			BrokenBoardCount = 8,
+			MaxLimitUpStreak = 4
+		};
+		var realtime = new FakeRealtimeMarketClient
+		{
+			BreadthDistribution = new MarketBreadthDistributionDto(
+				new DateOnly(2026, 4, 24),
+				Advancers: 2200,
+				Decliners: 1800,
+				FlatCount: 150,
+				LimitUpCount: 80,
+				LimitDownCount: 55,
+				Buckets: Array.Empty<MarketBreadthBucketDto>())
+		};
+
+		var service = new SectorRotationIngestionService(
+			dbContext,
+			client,
+			realtime,
+			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
+			NullLogger<SectorRotationIngestionService>.Instance);
+
+		await service.SyncAsync();
+
+		var sentiment = await dbContext.MarketSentimentSnapshots.SingleAsync();
+		// Fallback covers critical breadth: snapshot must be fresh, not PartialStageLabel.
+		Assert.NotEqual("同步不完整", sentiment.StageLabelV2);
+		Assert.True(sentiment.StageScore > 0m, $"Expected stageScore > 0 after fallback, got {sentiment.StageScore}");
+		Assert.Equal(2200, sentiment.Advancers);
+		Assert.Equal(1800, sentiment.Decliners);
+		Assert.Equal(150, sentiment.FlatCount);
+		Assert.Contains("market_breadth_clist_fallback_topic_zdfenbu", sentiment.RawJson);
+		Assert.DoesNotContain("market_breadth_unavailable", sentiment.RawJson);
+		// Bug #6/#79: hasCoreData=true (fallback provides advancers/decliners + limitUp/limitDown present) → not degraded.
+		Assert.Equal("eastmoney", sentiment.SourceTag);
 	}
 
 	[Fact]
@@ -182,6 +246,7 @@ public sealed class SectorRotationIngestionServiceTests
 			var service = new SectorRotationIngestionService(
 				dbContext,
 				client,
+				new FakeRealtimeMarketClient(),
 				Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
 				NullLogger<SectorRotationIngestionService>.Instance);
 
@@ -235,6 +300,7 @@ public sealed class SectorRotationIngestionServiceTests
 		var service = new SectorRotationIngestionService(
 			dbContext,
 			client,
+			new FakeRealtimeMarketClient(),
 			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
 			NullLogger<SectorRotationIngestionService>.Instance);
 
@@ -243,7 +309,7 @@ public sealed class SectorRotationIngestionServiceTests
 		var sentiment = await dbContext.MarketSentimentSnapshots.SingleAsync();
 		Assert.Equal(1, client.GetTotalMarketTurnoverCallCount);
 		Assert.Equal(8888m, sentiment.TotalTurnover);
-		Assert.Equal("eastmoney_partial", sentiment.SourceTag);
+		Assert.Equal("eastmoney", sentiment.SourceTag);
 	}
 
 	[Fact]
@@ -276,6 +342,7 @@ public sealed class SectorRotationIngestionServiceTests
 		var service = new SectorRotationIngestionService(
 			dbContext,
 			client,
+			new FakeRealtimeMarketClient(),
 			Options.Create(new SectorRotationOptions { BoardPageSize = 20, LeaderTake = 5 }),
 			NullLogger<SectorRotationIngestionService>.Instance);
 
@@ -441,6 +508,31 @@ public sealed class SectorRotationIngestionServiceTests
 			}
 
 			return Task.FromResult(MaxLimitUpStreak);
+		}
+	}
+
+	private sealed class FakeRealtimeMarketClient : IEastmoneyRealtimeMarketClient
+	{
+		public bool ThrowBreadthDistribution { get; init; }
+		public MarketBreadthDistributionDto? BreadthDistribution { get; init; }
+
+		public Task<IReadOnlyList<BatchStockQuoteDto>> GetBatchQuotesAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken = default)
+			=> Task.FromResult<IReadOnlyList<BatchStockQuoteDto>>(Array.Empty<BatchStockQuoteDto>());
+
+		public Task<MarketCapitalFlowSnapshotDto?> GetMainCapitalFlowAsync(CancellationToken cancellationToken = default)
+			=> Task.FromResult<MarketCapitalFlowSnapshotDto?>(null);
+
+		public Task<NorthboundFlowSnapshotDto?> GetNorthboundFlowAsync(CancellationToken cancellationToken = default)
+			=> Task.FromResult<NorthboundFlowSnapshotDto?>(null);
+
+		public Task<MarketBreadthDistributionDto?> GetBreadthDistributionAsync(CancellationToken cancellationToken = default)
+		{
+			if (ThrowBreadthDistribution)
+			{
+				throw new HttpRequestException("boom-breadth-distribution");
+			}
+
+			return Task.FromResult(BreadthDistribution);
 		}
 	}
 }

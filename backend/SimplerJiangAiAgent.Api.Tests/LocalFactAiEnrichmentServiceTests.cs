@@ -62,6 +62,200 @@ public sealed class LocalFactAiEnrichmentServiceTests
     }
 
     [Fact]
+    public async Task ProcessSymbolPendingAsync_ShouldBackfillAssociatedCompanyWhenModelReturnsNoClearTarget()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600519",
+            Name = "贵州茅台",
+            SectorName = "白酒",
+            Title = "贵州茅台2025年年度报告",
+            Category = "announcement",
+            Source = "东方财富公告",
+            SourceTag = "eastmoney-announcement",
+            PublishTime = new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var itemId = await dbContext.LocalStockNews.Select(item => item.Id).SingleAsync();
+        var payload = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                id = $"stock:{itemId}",
+                translatedTitle = (string?)null,
+                aiSentiment = "中性",
+                aiTarget = "无明确标的",
+                aiTags = Array.Empty<string>()
+            }
+        });
+        var service = CreateService(dbContext, payload);
+
+        await service.ProcessSymbolPendingAsync("sh600519");
+
+        var stored = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal("贵州茅台", stored.AiTarget);
+        Assert.True(stored.IsAiProcessed);
+    }
+
+    [Fact]
+    public async Task ProcessSymbolPendingAsync_ShouldRejectMismatchedTargetAndPreferAssociatedCompany()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh09969",
+            Name = "诺诚健华",
+            SectorName = "创新药",
+            Title = "诺诚健华发布新药临床进展公告",
+            Category = "company_news",
+            Source = "测试源",
+            SourceTag = "stock-test",
+            PublishTime = new DateTime(2026, 4, 24, 10, 0, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 10, 1, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var itemId = await dbContext.LocalStockNews.Select(item => item.Id).SingleAsync();
+        var payload = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                id = $"stock:{itemId}",
+                translatedTitle = (string?)null,
+                aiSentiment = "中性",
+                aiTarget = "中国电力设备",
+                aiTags = Array.Empty<string>()
+            }
+        });
+        var service = CreateService(dbContext, payload);
+
+        await service.ProcessSymbolPendingAsync("sh09969");
+
+        var stored = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal("诺诚健华", stored.AiTarget);
+        Assert.NotEqual("中国电力设备", stored.AiTarget);
+    }
+
+    [Fact]
+    public async Task ProcessSymbolPendingAsync_ShouldDropMismatchedEntityTagsAndKeepGenericTags()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600519",
+            Name = "贵州茅台",
+            SectorName = "酿酒行业",
+            Title = "贵州茅台：2026年第一季度主要经营数据公告",
+            Category = "announcement",
+            Source = "东方财富公告",
+            SourceTag = "eastmoney-announcement",
+            PublishTime = new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var itemId = await dbContext.LocalStockNews.Select(item => item.Id).SingleAsync();
+        var payload = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                id = $"stock:{itemId}",
+                translatedTitle = (string?)null,
+                aiSentiment = "中性",
+                aiTarget = "中国石化",
+                aiTags = new[] { "中国石化", "行业预期", "经营数据" }
+            }
+        });
+        var service = CreateService(dbContext, payload);
+
+        await service.ProcessSymbolPendingAsync("sh600519");
+
+        var stored = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal("贵州茅台", stored.AiTarget);
+        var tags = JsonSerializer.Deserialize<string[]>(stored.AiTags ?? "[]") ?? [];
+        Assert.DoesNotContain("中国石化", tags);
+        Assert.Contains("行业预期", tags);
+        Assert.Contains("经营数据", tags);
+    }
+
+    [Fact]
+    public async Task ProcessMarketPendingAsync_ShouldDropIndustryTargetWhenNoEvidenceMentionsIt()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalSectorReports.Add(new LocalSectorReport
+        {
+            Level = "market",
+            SectorName = "大盘环境",
+            Title = "A股震荡收跌，市场情绪回落",
+            ArticleSummary = "指数午后走弱，成交额小幅放大。",
+            Source = "测试源",
+            SourceTag = "market-test",
+            PublishTime = new DateTime(2026, 4, 24, 9, 0, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 9, 1, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var itemId = await dbContext.LocalSectorReports.Select(item => item.Id).SingleAsync();
+        var payload = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                id = $"market:{itemId}",
+                translatedTitle = (string?)null,
+                aiSentiment = "中性",
+                aiTarget = "半导体",
+                aiTags = Array.Empty<string>()
+            }
+        });
+        var service = CreateService(dbContext, payload);
+
+        await service.ProcessMarketPendingAsync();
+
+        var stored = await dbContext.LocalSectorReports.SingleAsync();
+        Assert.Null(stored.AiTarget);
+    }
+
+    [Fact]
+    public async Task ProcessMarketPendingAsync_ShouldKeepTargetWhenEvidenceMentionsIt()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalSectorReports.Add(new LocalSectorReport
+        {
+            Level = "market",
+            SectorName = "大盘环境",
+            Title = "低空经济概念活跃，产业链公司集体走强",
+            ArticleSummary = "低空经济政策预期升温，相关标的成交放量。",
+            Source = "测试源",
+            SourceTag = "market-test",
+            PublishTime = new DateTime(2026, 4, 24, 9, 30, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 9, 31, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var itemId = await dbContext.LocalSectorReports.Select(item => item.Id).SingleAsync();
+        var payload = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                id = $"market:{itemId}",
+                translatedTitle = (string?)null,
+                aiSentiment = "利好",
+                aiTarget = "低空经济",
+                aiTags = Array.Empty<string>()
+            }
+        });
+        var service = CreateService(dbContext, payload);
+
+        await service.ProcessMarketPendingAsync();
+
+        var stored = await dbContext.LocalSectorReports.SingleAsync();
+        Assert.Equal("低空经济", stored.AiTarget);
+    }
+
+    [Fact]
     public async Task ArchiveJobCoordinator_ShouldPauseImmediatelyDuringRetryDelay()
     {
         var aiService = new ControlledArchiveJobAiEnrichmentService(cancellationToken =>
@@ -169,7 +363,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(0, firstRun.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（每个层级最多 12 条），已保存部分结果。", firstRun.StopReason);
         Assert.NotNull(firstRun.Continuation);
-        Assert.True(firstRun.Continuation!.MayContinueAutomatically);
+        Assert.False(firstRun.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", firstRun.Continuation.ReasonCode);
 
         var secondRun = await service.ProcessPendingBatchAsync();
@@ -242,7 +436,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(8, summary.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（每个层级最多 5 条），已保存部分结果。", summary.StopReason);
         Assert.NotNull(summary.Continuation);
-        Assert.True(summary.Continuation!.MayContinueAutomatically);
+        Assert.False(summary.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", summary.Continuation.ReasonCode);
         Assert.Equal(2, llmService.CallCount);
         Assert.All(llmService.BatchSizes, size => Assert.InRange(size, 1, 5));
@@ -329,7 +523,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(4, summary.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（最多 20 条），已保存部分结果。", summary.StopReason);
         Assert.NotNull(summary.Continuation);
-        Assert.True(summary.Continuation!.MayContinueAutomatically);
+        Assert.False(summary.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", summary.Continuation.ReasonCode);
         Assert.Equal(1, llmService.CallCount);
         Assert.Equal([20], llmService.BatchSizes);
@@ -388,7 +582,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
         Assert.Equal(5, summary.Remaining.Stock);
         Assert.Equal("本轮已达到单次清洗上限（最多 20 条），已保存部分结果。", summary.StopReason);
         Assert.NotNull(summary.Continuation);
-        Assert.True(summary.Continuation!.MayContinueAutomatically);
+        Assert.False(summary.Continuation!.MayContinueAutomatically);
         Assert.Equal("round_budget_reached", summary.Continuation.ReasonCode);
         Assert.Equal(1, llmService.CallCount);
         Assert.Equal([20], llmService.BatchSizes);
@@ -1493,6 +1687,16 @@ public sealed class LocalFactAiEnrichmentServiceTests
         return new AppDbContext(options);
     }
 
+    private static LocalFactAiEnrichmentService CreateService(AppDbContext dbContext, string llmPayload)
+    {
+        return new LocalFactAiEnrichmentService(
+            dbContext,
+            new StubLlmService(llmPayload),
+            new StubSettingsStore(),
+            Options.Create(new StockSyncOptions()),
+            NullLogger<LocalFactAiEnrichmentService>.Instance);
+    }
+
     private sealed class StubLlmService : ILlmService
     {
         private readonly string _content;
@@ -1821,5 +2025,80 @@ public sealed class LocalFactAiEnrichmentServiceTests
 
             await Task.Delay(20);
         }
+    }
+
+    [Theory]
+    [InlineData("无荒隔靶点")]
+    [InlineData("无明确靶点")]
+    [InlineData("无明确标的")]
+    [InlineData("N/A")]
+    [InlineData("null")]
+    [InlineData("undefined")]
+    [InlineData("未知标签")]
+    [InlineData("a")]
+    [InlineData("这是一个非常非常长的标签文本超过了允许的最大字符数限制")]
+    public void IsGarbageTag_ShouldReturnTrue_ForKnownGarbageOrInvalidTags(string tag)
+    {
+        Assert.True(Modules.Stocks.Services.LocalFactAiTargetPolicy.IsGarbageTag(tag));
+    }
+
+    [Theory]
+    [InlineData("政策红利")]
+    [InlineData("板块轮动")]
+    [InlineData("贵州茅台")]
+    [InlineData("银行")]
+    public void IsGarbageTag_ShouldReturnFalse_ForValidTags(string tag)
+    {
+        Assert.False(Modules.Stocks.Services.LocalFactAiTargetPolicy.IsGarbageTag(tag));
+    }
+
+    [Fact]
+    public async Task ProcessSymbolPendingAsync_ShouldFilterGarbageTags()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600000",
+            Name = "浦发银行",
+            SectorName = "银行",
+            Title = "Bank stocks rise after policy support",
+            Category = "company_news",
+            Source = "WSJ",
+            SourceTag = "wsj-rss",
+            PublishTime = new DateTime(2026, 3, 13, 8, 0, 0),
+            CrawledAt = new DateTime(2026, 3, 13, 8, 5, 0),
+            Url = "https://example.com/garbage-tag"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new LocalFactAiEnrichmentService(
+            dbContext,
+            new StubLlmService("""
+            [
+              {
+                "id": "stock:1",
+                "translatedTitle": "银行股政策利好上涨",
+                "aiSentiment": "利好",
+                "aiTarget": "浦发银行",
+                "aiTags": ["政策红利", "无荒隔靶点", "银行", "N/A", "undefined"]
+              }
+            ]
+            """),
+            new StubSettingsStore(),
+            Options.Create(new StockSyncOptions()),
+            NullLogger<LocalFactAiEnrichmentService>.Instance);
+
+        await service.ProcessSymbolPendingAsync("sh600000");
+
+        var processed = await dbContext.LocalStockNews.FirstAsync();
+        Assert.True(processed.IsAiProcessed);
+        // Garbage tags "无荒隔靶点", "N/A", "undefined" should be filtered
+        var tags = JsonSerializer.Deserialize<string[]>(processed.AiTags!);
+        Assert.NotNull(tags);
+        Assert.DoesNotContain("无荒隔靶点", tags);
+        Assert.DoesNotContain("N/A", tags);
+        Assert.DoesNotContain("undefined", tags);
+        // Valid tags should be present
+        Assert.Contains("政策红利", tags);
     }
 }

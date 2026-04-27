@@ -85,7 +85,7 @@ public static class MarketSentimentSchemaInitializer
             "SmallNetInflow DECIMAL(18,2) NOT NULL, " +
             "TurnoverAmount DECIMAL(18,2) NOT NULL, " +
             "TurnoverShare DECIMAL(18,2) NOT NULL, " +
-            "BreadthScore DECIMAL(18,2) NOT NULL, " +
+            "BreadthScore DECIMAL(18,2) NULL, " +
             "ContinuityScore DECIMAL(18,2) NOT NULL, " +
             "StrengthScore DECIMAL(18,2) NOT NULL, " +
             "NewsSentiment NVARCHAR(16) NOT NULL, " +
@@ -103,11 +103,11 @@ public static class MarketSentimentSchemaInitializer
             "StrengthAvg5d DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_StrengthAvg5d DEFAULT(0), " +
             "StrengthAvg10d DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_StrengthAvg10d DEFAULT(0), " +
             "StrengthAvg20d DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_StrengthAvg20d DEFAULT(0), " +
-            "DiffusionRate DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_DiffusionRate DEFAULT(0), " +
-            "AdvancerCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_AdvancerCount DEFAULT(0), " +
-            "DeclinerCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_DeclinerCount DEFAULT(0), " +
-            "FlatMemberCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_FlatMemberCount DEFAULT(0), " +
-            "LimitUpMemberCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_LimitUpMemberCount DEFAULT(0), " +
+            "DiffusionRate DECIMAL(18,2) NULL, " +
+            "AdvancerCount INT NULL, " +
+            "DeclinerCount INT NULL, " +
+            "FlatMemberCount INT NULL, " +
+            "LimitUpMemberCount INT NULL, " +
             "LeaderStabilityScore DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_LeaderStabilityScore DEFAULT(0), " +
             "MainlineScore DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_MainlineScore DEFAULT(0), " +
             "IsMainline BIT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_IsMainline DEFAULT(0), " +
@@ -122,11 +122,11 @@ public static class MarketSentimentSchemaInitializer
             "IF COL_LENGTH('dbo.SectorRotationSnapshots','StrengthAvg5d') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD StrengthAvg5d DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_StrengthAvg5d DEFAULT(0); " +
             "IF COL_LENGTH('dbo.SectorRotationSnapshots','StrengthAvg10d') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD StrengthAvg10d DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_StrengthAvg10d DEFAULT(0); " +
             "IF COL_LENGTH('dbo.SectorRotationSnapshots','StrengthAvg20d') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD StrengthAvg20d DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_StrengthAvg20d DEFAULT(0); " +
-            "IF COL_LENGTH('dbo.SectorRotationSnapshots','DiffusionRate') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD DiffusionRate DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_DiffusionRate DEFAULT(0); " +
-            "IF COL_LENGTH('dbo.SectorRotationSnapshots','AdvancerCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD AdvancerCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_AdvancerCount DEFAULT(0); " +
-            "IF COL_LENGTH('dbo.SectorRotationSnapshots','DeclinerCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD DeclinerCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_DeclinerCount DEFAULT(0); " +
-            "IF COL_LENGTH('dbo.SectorRotationSnapshots','FlatMemberCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD FlatMemberCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_FlatMemberCount DEFAULT(0); " +
-            "IF COL_LENGTH('dbo.SectorRotationSnapshots','LimitUpMemberCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD LimitUpMemberCount INT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_LimitUpMemberCount DEFAULT(0); " +
+            "IF COL_LENGTH('dbo.SectorRotationSnapshots','DiffusionRate') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD DiffusionRate DECIMAL(18,2) NULL; " +
+            "IF COL_LENGTH('dbo.SectorRotationSnapshots','AdvancerCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD AdvancerCount INT NULL; " +
+            "IF COL_LENGTH('dbo.SectorRotationSnapshots','DeclinerCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD DeclinerCount INT NULL; " +
+            "IF COL_LENGTH('dbo.SectorRotationSnapshots','FlatMemberCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD FlatMemberCount INT NULL; " +
+            "IF COL_LENGTH('dbo.SectorRotationSnapshots','LimitUpMemberCount') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD LimitUpMemberCount INT NULL; " +
             "IF COL_LENGTH('dbo.SectorRotationSnapshots','LeaderStabilityScore') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD LeaderStabilityScore DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_LeaderStabilityScore DEFAULT(0); " +
             "IF COL_LENGTH('dbo.SectorRotationSnapshots','MainlineScore') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD MainlineScore DECIMAL(18,2) NOT NULL CONSTRAINT DF_SectorRotationSnapshots_MainlineScore DEFAULT(0); " +
             "IF COL_LENGTH('dbo.SectorRotationSnapshots','IsMainline') IS NULL ALTER TABLE dbo.SectorRotationSnapshots ADD IsMainline BIT NOT NULL CONSTRAINT DF_SectorRotationSnapshots_IsMainline DEFAULT(0); " +
@@ -168,11 +168,11 @@ public static class MarketSentimentSchemaInitializer
         await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "StrengthAvg5d", "REAL NOT NULL DEFAULT 0", cancellationToken);
         await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "StrengthAvg10d", "REAL NOT NULL DEFAULT 0", cancellationToken);
         await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "StrengthAvg20d", "REAL NOT NULL DEFAULT 0", cancellationToken);
-        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "DiffusionRate", "REAL NOT NULL DEFAULT 0", cancellationToken);
-        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "AdvancerCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
-        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "DeclinerCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
-        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "FlatMemberCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
-        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "LimitUpMemberCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "DiffusionRate", "REAL", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "AdvancerCount", "INTEGER", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "DeclinerCount", "INTEGER", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "FlatMemberCount", "INTEGER", cancellationToken);
+        await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "LimitUpMemberCount", "INTEGER", cancellationToken);
         await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "LeaderStabilityScore", "REAL NOT NULL DEFAULT 0", cancellationToken);
         await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "MainlineScore", "REAL NOT NULL DEFAULT 0", cancellationToken);
         await AddSqliteColumnIfMissingAsync(dbContext, "SectorRotationSnapshots", "IsMainline", "INTEGER NOT NULL DEFAULT 0", cancellationToken);

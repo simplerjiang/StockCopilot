@@ -19,3 +19,10 @@ Sync: FAIL
 Audit: FAIL
 Log written: C:\Users\kong\AiAgent\logs\market-audit-check-20260424-143001.json
 Exit code: 2
+=== Market Audit Daily Check (Once) ===
+Base URL: http://localhost:5119
+Sync: FAIL
+  sync_error: timed out
+Audit: FAIL
+Log written: C:\Users\kong\AiAgent\logs\market-audit-check-20260427-143001.json
+Exit code: 2

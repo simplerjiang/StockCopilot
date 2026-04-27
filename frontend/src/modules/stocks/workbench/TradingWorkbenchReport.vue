@@ -3,15 +3,20 @@ import { computed } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { valueToSafeHtml, translateSignal } from '../../../utils/jsonMarkdownService.js'
+import RagCitationList from '../../financial/RagCitationList.vue'
 
 const props = defineProps({
   blocks: { type: Array, default: () => [] },
   decision: { type: Object, default: null },
   nextActions: { type: Array, default: () => [] },
+  ragCitations: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
-  error: { type: String, default: null }
+  error: { type: String, default: null },
+  turnSummary: { type: Object, default: null }
 })
 defineEmits(['action'])
+
+const STAGE_LABELS = ['公司概览', '分析师团队', '研究辩论', '交易方案', '风险评估', '投资决策']
 
 const blockTypeLabel = type => {
   const map = {
@@ -90,6 +95,26 @@ const actionIcon = type => {
   }
   return map[type] ?? '➡️'
 }
+
+const routingSummary = computed(() => {
+  const summary = props.turnSummary
+  if (!summary?.routingDecision && !summary?.continuationMode) return null
+  const mode = summary.routingDecision || summary.continuationMode
+  const modeLabel = mode === 'PartialRerun' ? '局部重跑' : mode === 'FullRerun' ? '全量重跑' : mode === 'ContinueSession' ? '继续会话' : mode
+  const stageIndex = Number(summary.routingStageIndex)
+  const stageLabel = Number.isInteger(stageIndex) && stageIndex >= 0 && stageIndex < STAGE_LABELS.length
+    ? STAGE_LABELS[stageIndex]
+    : ''
+  const confidence = summary.routingConfidence != null
+    ? `${Math.round(Number(summary.routingConfidence) * 100)}%`
+    : ''
+  return {
+    modeLabel,
+    stageText: stageLabel ? `从 ${stageLabel} 开始` : '',
+    confidence,
+    reason: summary.routingReasoning || ''
+  }
+})
 
 const SOURCE_LABELS = {
   StockProductMcp: '产品分析',
@@ -196,6 +221,16 @@ const evidenceLabel = ev => {
       </div>
     </div>
 
+    <div v-if="routingSummary" class="wb-routing-summary">
+      <div class="wb-routing-title">追问路由</div>
+      <div class="wb-routing-line">
+        <span>{{ routingSummary.modeLabel }}</span>
+        <span v-if="routingSummary.stageText">{{ routingSummary.stageText }}</span>
+        <span v-if="routingSummary.confidence">{{ routingSummary.confidence }}</span>
+      </div>
+      <div v-if="routingSummary.reason" class="wb-routing-reason">{{ routingSummary.reason }}</div>
+    </div>
+
     <!-- Report blocks -->
     <div v-for="block in blocks" :key="block.id" :class="['wb-block', statusCls(block.status)]">
       <div class="wb-block-header">
@@ -256,6 +291,13 @@ const evidenceLabel = ev => {
       </div>
     </div>
 
+    <!-- RAG Citations -->
+    <RagCitationList
+      v-if="ragCitations.length > 0"
+      :citations="ragCitations"
+      :show-details="true"
+    />
+
     <!-- Empty state -->
     <div v-if="!loading && !props.error && blocks.length === 0 && !decision" class="wb-report-empty">
       <p>暂无研究报告</p>
@@ -270,6 +312,30 @@ const evidenceLabel = ev => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.wb-routing-summary {
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--color-bg-surface-alt);
+}
+.wb-routing-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-body);
+  margin-bottom: 4px;
+}
+.wb-routing-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.wb-routing-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
 }
 
 /* ── Decision ──────────────────────────────────── */

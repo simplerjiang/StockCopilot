@@ -52,6 +52,8 @@ public sealed class MarketModule : IModule
         services.AddScoped<ISectorRotationQueryService, SectorRotationQueryService>();
         services.AddScoped<IRealtimeMarketOverviewService, RealtimeMarketOverviewService>();
         services.AddScoped<IRealtimeSectorBoardService, RealtimeSectorBoardService>();
+        // V048-S2 #78: 单实例非阻塞门闸，并发 sync 立即返 429
+        services.AddSingleton<MarketSyncGate>();
         services.AddHostedService<SectorRotationWorker>();
     }
 
@@ -89,11 +91,15 @@ public sealed class MarketModule : IModule
 
         group.MapGet("/sectors", async (string? boardType, int? page, int? pageSize, string? sort, ISectorRotationIngestionService ingestionService, ISectorRotationQueryService queryService) =>
         {
-            var payload = await queryService.GetSectorPageAsync(boardType ?? SectorBoardTypes.Concept, page ?? 1, pageSize ?? 20, sort ?? "strength");
+            var normalized = SectorBoardTypes.TryNormalize(boardType);
+            if (normalized is null)
+                return Results.BadRequest(new { error = "invalid_board_type" });
+
+            var payload = await queryService.GetSectorPageAsync(normalized, page ?? 1, pageSize ?? 20, sort ?? "strength");
             if (payload.Total == 0)
             {
                 await ingestionService.SyncAsync();
-                payload = await queryService.GetSectorPageAsync(boardType ?? SectorBoardTypes.Concept, page ?? 1, pageSize ?? 20, sort ?? "strength");
+                payload = await queryService.GetSectorPageAsync(normalized, page ?? 1, pageSize ?? 20, sort ?? "strength");
             }
 
             return Results.Ok(payload);
@@ -103,7 +109,11 @@ public sealed class MarketModule : IModule
 
         group.MapGet("/sectors/realtime", async (string? boardType, int? take, string? sort, IRealtimeSectorBoardService realtimeSectorBoardService, HttpContext httpContext) =>
         {
-            var payload = await realtimeSectorBoardService.GetPageAsync(boardType ?? SectorBoardTypes.Concept, take ?? 60, sort, httpContext.RequestAborted);
+            var normalized = SectorBoardTypes.TryNormalize(boardType);
+            if (normalized is null)
+                return Results.BadRequest(new { error = "invalid_board_type" });
+
+            var payload = await realtimeSectorBoardService.GetPageAsync(normalized, take ?? 60, sort, httpContext.RequestAborted);
             return Results.Ok(payload);
         })
         .WithName("GetRealtimeSectorBoardPage")
@@ -111,11 +121,15 @@ public sealed class MarketModule : IModule
 
         group.MapGet("/sectors/{sectorCode}", async (string sectorCode, string? boardType, string? window, ISectorRotationIngestionService ingestionService, ISectorRotationQueryService queryService) =>
         {
-            var detail = await queryService.GetSectorDetailAsync(sectorCode, boardType ?? SectorBoardTypes.Concept, window ?? "10d");
+            var normalized = SectorBoardTypes.TryNormalize(boardType);
+            if (normalized is null)
+                return Results.BadRequest(new { error = "invalid_board_type" });
+
+            var detail = await queryService.GetSectorDetailAsync(sectorCode, normalized, window ?? "10d");
             if (detail is null)
             {
                 await ingestionService.SyncAsync();
-                detail = await queryService.GetSectorDetailAsync(sectorCode, boardType ?? SectorBoardTypes.Concept, window ?? "10d");
+                detail = await queryService.GetSectorDetailAsync(sectorCode, normalized, window ?? "10d");
             }
 
             return detail is null ? Results.NotFound() : Results.Ok(detail);
@@ -125,11 +139,15 @@ public sealed class MarketModule : IModule
 
         group.MapGet("/sectors/{sectorCode}/trend", async (string sectorCode, string? boardType, string? window, ISectorRotationIngestionService ingestionService, ISectorRotationQueryService queryService) =>
         {
-            var trend = await queryService.GetSectorTrendAsync(sectorCode, boardType ?? SectorBoardTypes.Concept, window ?? "10d");
+            var normalized = SectorBoardTypes.TryNormalize(boardType);
+            if (normalized is null)
+                return Results.BadRequest(new { error = "invalid_board_type" });
+
+            var trend = await queryService.GetSectorTrendAsync(sectorCode, normalized, window ?? "10d");
             if (trend is null)
             {
                 await ingestionService.SyncAsync();
-                trend = await queryService.GetSectorTrendAsync(sectorCode, boardType ?? SectorBoardTypes.Concept, window ?? "10d");
+                trend = await queryService.GetSectorTrendAsync(sectorCode, normalized, window ?? "10d");
             }
 
             return trend is null ? Results.NotFound() : Results.Ok(trend);
@@ -139,11 +157,15 @@ public sealed class MarketModule : IModule
 
         group.MapGet("/sectors/{sectorCode}/leaders", async (string sectorCode, string? boardType, int? take, ISectorRotationIngestionService ingestionService, ISectorRotationQueryService queryService) =>
         {
-            var leaders = await queryService.GetLeadersAsync(sectorCode, boardType ?? SectorBoardTypes.Concept, Math.Clamp(take ?? 10, 1, 20));
+            var normalized = SectorBoardTypes.TryNormalize(boardType);
+            if (normalized is null)
+                return Results.BadRequest(new { error = "invalid_board_type" });
+
+            var leaders = await queryService.GetLeadersAsync(sectorCode, normalized, Math.Clamp(take ?? 10, 1, 20));
             if (leaders.Count == 0)
             {
                 await ingestionService.SyncAsync();
-                leaders = await queryService.GetLeadersAsync(sectorCode, boardType ?? SectorBoardTypes.Concept, Math.Clamp(take ?? 10, 1, 20));
+                leaders = await queryService.GetLeadersAsync(sectorCode, normalized, Math.Clamp(take ?? 10, 1, 20));
             }
 
             return Results.Ok(leaders);
@@ -153,11 +175,15 @@ public sealed class MarketModule : IModule
 
         group.MapGet("/mainline", async (string? boardType, string? window, int? take, ISectorRotationIngestionService ingestionService, ISectorRotationQueryService queryService) =>
         {
-            var items = await queryService.GetMainlineAsync(boardType ?? SectorBoardTypes.Concept, window ?? "10d", take ?? 6);
+            var normalized = SectorBoardTypes.TryNormalize(boardType);
+            if (normalized is null)
+                return Results.BadRequest(new { error = "invalid_board_type" });
+
+            var items = await queryService.GetMainlineAsync(normalized, window ?? "10d", take ?? 6);
             if (items.Count == 0)
             {
                 await ingestionService.SyncAsync();
-                items = await queryService.GetMainlineAsync(boardType ?? SectorBoardTypes.Concept, window ?? "10d", take ?? 6);
+                items = await queryService.GetMainlineAsync(normalized, window ?? "10d", take ?? 6);
             }
 
             return Results.Ok(items);
@@ -240,14 +266,43 @@ public sealed class MarketModule : IModule
         .WithName("GetMarketHealth")
         .WithDescription("数据源健康状态");
 
-        group.MapPost("/sync", async (ISectorRotationIngestionService ingestionService, HttpContext httpContext) =>
+        group.MapPost("/sync", async (ISectorRotationIngestionService ingestionService, MarketSyncGate gate, HttpContext httpContext) =>
         {
-            await ingestionService.SyncAsync(httpContext.RequestAborted);
-            return Results.Ok(new { synced = true, timestamp = DateTimeOffset.UtcNow });
+            // V048-S2 #78: 已在跑时立即返 429，不阻塞排队，避免并发请求 30s 全超时
+            if (!gate.TryEnter())
+            {
+                var elapsed = (int)Math.Max(1, (DateTimeOffset.UtcNow - gate.StartedAt).TotalSeconds);
+                return Results.Json(new
+                {
+                    status = "throttled",
+                    message = "市场数据同步正在进行中，请稍后重试",
+                    elapsedSeconds = elapsed,
+                    retryAfter = 30
+                }, statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            try
+            {
+                await ingestionService.SyncAsync(httpContext.RequestAborted);
+                return Results.Ok(new { synced = true, timestamp = DateTimeOffset.UtcNow });
+            }
+            catch (Exception)
+            {
+                return Results.Json(new
+                {
+                    synced = false,
+                    degraded = true,
+                    error = "同步过程中部分数据源失败",
+                    timestamp = DateTimeOffset.UtcNow
+                }, statusCode: StatusCodes.Status200OK);
+            }
+            finally
+            {
+                gate.Exit();
+            }
         })
         .WithName("TriggerMarketSync")
-        .WithOpenApi()
-        .RequireRateLimiting("MarketSync");
+        .WithOpenApi();
 
         group.MapGet("/audit", () =>
         {
@@ -331,7 +386,10 @@ public sealed class MarketModule : IModule
                 degradedSources = s.DegradedSources,
                 reasons = BuildReasons(s.DegradedSources),
                 sectorRowCount = s.SectorRowCount,
-                totalTurnover = s.TotalTurnover
+                totalTurnover = s.TotalTurnover,
+                totalTurnoverCny = s.TotalTurnover,
+                totalTurnoverUnit = MarketAmountUnitContracts.Cny,
+                totalTurnoverUnitLabel = MarketAmountUnitContracts.CnyUnitLabel
             });
 
             var computation = DataSourceTracker.LastComputation;

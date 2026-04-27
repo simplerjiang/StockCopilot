@@ -38,7 +38,7 @@ public class HybridRetriever : IRetriever
         int topK = 5,
         CancellationToken ct = default)
     {
-        return await RetrieveAsync(query, SearchMode.Hybrid, symbol, reportDate, reportType, topK, ct);
+        return await RetrieveAsync(query, SearchMode.Hybrid, symbol, reportDate, reportType, null, topK, ct);
     }
 
     public async Task<List<RetrievedChunk>> RetrieveAsync(
@@ -47,6 +47,19 @@ public class HybridRetriever : IRetriever
         string? symbol = null,
         string? reportDate = null,
         string? reportType = null,
+        int topK = 5,
+        CancellationToken ct = default)
+    {
+        return await RetrieveAsync(query, mode, symbol, reportDate, reportType, null, topK, ct);
+    }
+
+    public async Task<List<RetrievedChunk>> RetrieveAsync(
+        string query,
+        SearchMode mode,
+        string? symbol,
+        string? reportDate,
+        string? reportType,
+        string? sourceType,
         int topK = 5,
         CancellationToken ct = default)
     {
@@ -66,14 +79,14 @@ public class HybridRetriever : IRetriever
 
         return mode switch
         {
-            SearchMode.Bm25 => Bm25Search(query, symbol, reportDate, reportType, topK),
-            SearchMode.Vector => await VectorSearch(query, symbol, reportDate, reportType, topK, ct),
-            SearchMode.Hybrid => await HybridSearch(query, symbol, reportDate, reportType, topK, ct),
+            SearchMode.Bm25 => Bm25Search(query, symbol, reportDate, reportType, sourceType, topK),
+            SearchMode.Vector => await VectorSearch(query, symbol, reportDate, reportType, sourceType, topK, ct),
+            SearchMode.Hybrid => await HybridSearch(query, symbol, reportDate, reportType, sourceType, topK, ct),
             _ => new List<RetrievedChunk>()
         };
     }
 
-    private List<RetrievedChunk> Bm25Search(string query, string? symbol, string? reportDate, string? reportType, int topK)
+    private List<RetrievedChunk> Bm25Search(string query, string? symbol, string? reportDate, string? reportType, string? sourceType, int topK)
     {
         var tokenizedQuery = _tokenizer.Tokenize(query);
         if (string.IsNullOrWhiteSpace(tokenizedQuery))
@@ -99,25 +112,25 @@ public class HybridRetriever : IRetriever
             FROM chunks_fts f
             JOIN chunks c ON c.rowid = f.rowid
             WHERE chunks_fts MATCH $query");
-        AppendFilters(sql, symbol, reportDate, reportType);
+        AppendFilters(sql, symbol, reportDate, reportType, sourceType);
         sql.Append(" ORDER BY bm25(chunks_fts) LIMIT $topK");
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql.ToString();
         cmd.Parameters.AddWithValue("$query", tokenizedQuery);
-        AddFilterParams(cmd, symbol, reportDate, reportType);
+        AddFilterParams(cmd, symbol, reportDate, reportType, sourceType);
         cmd.Parameters.AddWithValue("$topK", topK);
 
         return ReadChunks(cmd);
     }
 
-    private async Task<List<RetrievedChunk>> VectorSearch(string query, string? symbol, string? reportDate, string? reportType, int topK, CancellationToken ct)
+    private async Task<List<RetrievedChunk>> VectorSearch(string query, string? symbol, string? reportDate, string? reportType, string? sourceType, int topK, CancellationToken ct)
     {
         var queryEmbedding = await _embedder.EmbedAsync(query, ct);
         if (queryEmbedding == null)
             return new();
 
-        var vectorResults = _ragDb.SearchByVector(queryEmbedding, topK, symbol, reportDate, reportType);
+        var vectorResults = _ragDb.SearchByVector(queryEmbedding, topK, symbol, reportDate, reportType, sourceType);
 
         // Load chunk details
         var results = new List<RetrievedChunk>();
@@ -156,12 +169,12 @@ public class HybridRetriever : IRetriever
         return results;
     }
 
-    private async Task<List<RetrievedChunk>> HybridSearch(string query, string? symbol, string? reportDate, string? reportType, int topK, CancellationToken ct)
+    private async Task<List<RetrievedChunk>> HybridSearch(string query, string? symbol, string? reportDate, string? reportType, string? sourceType, int topK, CancellationToken ct)
     {
         // Run both searches with expanded topK to get more candidates for fusion
         var expandedK = topK * 3;
-        var bm25Task = Task.FromResult(Bm25Search(query, symbol, reportDate, reportType, expandedK));
-        var vectorTask = VectorSearch(query, symbol, reportDate, reportType, expandedK, ct);
+        var bm25Task = Task.FromResult(Bm25Search(query, symbol, reportDate, reportType, sourceType, expandedK));
+        var vectorTask = VectorSearch(query, symbol, reportDate, reportType, sourceType, expandedK, ct);
 
         await Task.WhenAll(bm25Task, vectorTask);
 
@@ -203,7 +216,7 @@ public class HybridRetriever : IRetriever
             .ToList();
     }
 
-    private static void AppendFilters(System.Text.StringBuilder sql, string? symbol, string? reportDate, string? reportType)
+    private static void AppendFilters(System.Text.StringBuilder sql, string? symbol, string? reportDate, string? reportType, string? sourceType)
     {
         if (!string.IsNullOrEmpty(symbol))
             sql.Append(" AND c.symbol = $symbol");
@@ -211,9 +224,11 @@ public class HybridRetriever : IRetriever
             sql.Append(" AND c.report_date = $reportDate");
         if (!string.IsNullOrEmpty(reportType))
             sql.Append(" AND c.report_type = $reportType");
+        if (!string.IsNullOrEmpty(sourceType))
+            sql.Append(" AND c.source_type = $sourceType");
     }
 
-    private static void AddFilterParams(SqliteCommand cmd, string? symbol, string? reportDate, string? reportType)
+    private static void AddFilterParams(SqliteCommand cmd, string? symbol, string? reportDate, string? reportType, string? sourceType)
     {
         if (!string.IsNullOrEmpty(symbol))
             cmd.Parameters.AddWithValue("$symbol", symbol);
@@ -221,6 +236,8 @@ public class HybridRetriever : IRetriever
             cmd.Parameters.AddWithValue("$reportDate", reportDate);
         if (!string.IsNullOrEmpty(reportType))
             cmd.Parameters.AddWithValue("$reportType", reportType);
+        if (!string.IsNullOrEmpty(sourceType))
+            cmd.Parameters.AddWithValue("$sourceType", sourceType);
     }
 
     private static List<RetrievedChunk> ReadChunks(SqliteCommand cmd)

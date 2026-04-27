@@ -48,7 +48,8 @@ public sealed class StockMcpGatewayPhaseATests
             item => Assert.Equal((StockMcpToolNames.WebReadUrl, "external_gated"), (item.ToolName, item.PolicyClass)),
             item => Assert.Equal((StockMcpToolNames.FinancialReport, "local_required"), (item.ToolName, item.PolicyClass)),
             item => Assert.Equal((StockMcpToolNames.FinancialTrend, "local_required"), (item.ToolName, item.PolicyClass)),
-            item => Assert.Equal((StockMcpToolNames.FinancialReportRag, "local_required"), (item.ToolName, item.PolicyClass)));
+            item => Assert.Equal((StockMcpToolNames.FinancialReportRag, "local_required"), (item.ToolName, item.PolicyClass)),
+            item => Assert.Equal((StockMcpToolNames.AnnouncementRag, "local_required"), (item.ToolName, item.PolicyClass)));
     }
 
     [Fact]

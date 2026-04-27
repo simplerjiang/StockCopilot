@@ -20,4 +20,20 @@ public static class SectorBoardTypes
     public const string Style = "style";
 
     public static readonly string[] All = [Industry, Concept, Style];
+
+    /// <summary>
+    /// Normalize and validate boardType. Returns null for invalid values.
+    /// Accepts aliases: "hy" → industry.
+    /// </summary>
+    public static string? TryNormalize(string? boardType)
+    {
+        if (string.IsNullOrWhiteSpace(boardType)) return Concept;
+        return boardType.Trim().ToLowerInvariant() switch
+        {
+            "concept" => Concept,
+            "industry" or "hy" => Industry,
+            "style" => Style,
+            _ => null
+        };
+    }
 }

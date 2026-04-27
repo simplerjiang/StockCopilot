@@ -2,6 +2,11 @@ namespace SimplerJiangAiAgent.Api.Modules.Stocks.Contracts;
 
 public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 
+public static class FinancialAmountUnits
+{
+    public const string CnyYuan = "CNY-yuan";
+}
+
 public sealed record FinancialReportListItem(
     string Id,
     string Symbol,
@@ -22,7 +27,8 @@ public sealed record FinancialReportDetail(
     DateTime? UpdatedAt,
     Dictionary<string, object?> BalanceSheet,
     Dictionary<string, object?> IncomeStatement,
-    Dictionary<string, object?> CashFlow);
+    Dictionary<string, object?> CashFlow,
+    string MonetaryUnit = FinancialAmountUnits.CnyYuan);
 
 public sealed record FinancialReportListQuery(
     string? Symbol,

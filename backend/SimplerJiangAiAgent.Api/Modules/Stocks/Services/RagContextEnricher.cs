@@ -31,7 +31,8 @@ public class RagContextEnricher
         string query,
         string? symbol = null,
         int topK = 3,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? sourceType = null)
     {
         try
         {
@@ -48,7 +49,7 @@ public class RagContextEnricher
             if (queries.Length <= 1)
             {
                 // 单查询：走原有逻辑
-                return await EnrichSingleAsync(query, symbol, topK, ct);
+                return await EnrichSingleAsync(query, symbol, topK, ct, sourceType);
             }
             else
             {
@@ -57,7 +58,7 @@ public class RagContextEnricher
                 var seenChunkIds = new HashSet<string>();
                 foreach (var subQuery in queries)
                 {
-                    var subResults = await EnrichSingleAsync(subQuery, symbol, Math.Max(topK / queries.Length, 2), ct);
+                    var subResults = await EnrichSingleAsync(subQuery, symbol, Math.Max(topK / queries.Length, 2), ct, sourceType);
                     foreach (var r in subResults)
                     {
                         if (seenChunkIds.Add(r.ChunkId))
@@ -78,7 +79,8 @@ public class RagContextEnricher
         string query,
         string? symbol,
         int topK,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? sourceType = null)
     {
         var workerBaseUrl = _configuration["FinancialWorker:BaseUrl"] ?? "http://localhost:5120";
         var client = _httpClientFactory.CreateClient();
@@ -89,7 +91,8 @@ public class RagContextEnricher
             query,
             symbol,
             topK,
-            mode = "hybrid"
+            mode = "hybrid",
+            sourceType
         };
 
         var response = await client.PostAsJsonAsync($"{workerBaseUrl}/api/rag/search", request, ct);
@@ -114,20 +117,21 @@ public class RagContextEnricher
             PageStart = r.PageStart,
             PageEnd = r.PageEnd,
             Text = r.Text,
-            Score = r.Score
-        }).ToList();
+            Score = r.Score,
+            Source = sourceType == "announcement" ? "announcement-rag" : "financial-report-rag"
+        }).Where(c => !IsFutureReportDate(c.ReportDate)).ToList();
     }
 
     /// <summary>
     /// Format citations as context text for LLM prompt injection.
     /// </summary>
-    public static string FormatAsContext(List<RagCitationDto> citations)
+    public static string FormatAsContext(List<RagCitationDto> citations, string label = "财报")
     {
         if (citations.Count == 0)
             return "";
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("\n--- 以下是相关财报原文摘录（仅供参考，请基于事实分析）---");
+        sb.AppendLine($"\n--- 以下是相关{label}原文摘录（仅供参考，请基于事实分析）---");
         foreach (var c in citations)
         {
             var source = $"[{c.ReportDate} {c.ReportType ?? ""} {c.Section ?? ""}]";
@@ -136,7 +140,7 @@ public class RagContextEnricher
             if (c.PageStart.HasValue)
                 sb.AppendLine($"(第{c.PageStart}页{(c.PageEnd.HasValue && c.PageEnd != c.PageStart ? $"-{c.PageEnd}页" : "")})");
         }
-        sb.AppendLine("--- 财报摘录结束 ---\n");
+        sb.AppendLine($"--- {label}摘录结束 ---\n");
         return sb.ToString();
     }
 
@@ -175,5 +179,24 @@ public class RagContextEnricher
         public string Text { get; set; } = "";
         [JsonPropertyName("score")]
         public double Score { get; set; }
+    }
+
+    /// <summary>
+    /// Returns true if the reportDate is in the future relative to today (China time).
+    /// </summary>
+    internal static bool IsFutureReportDate(string? reportDate)
+    {
+        if (string.IsNullOrWhiteSpace(reportDate))
+        {
+            return false;
+        }
+
+        if (DateOnly.TryParse(reportDate, out var date))
+        {
+            var chinaToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
+            return date > chinaToday;
+        }
+
+        return false;
     }
 }

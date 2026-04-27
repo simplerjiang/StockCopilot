@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
@@ -141,11 +142,16 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var overviewFacts = snapshotResolution.Snapshot?.Facts ?? ConvertFacts(localFacts.FundamentalFacts);
         var mainBusiness = TryResolveFactValue(overviewFacts, "主营业务");
         var businessScope = TryResolveFactValue(overviewFacts, "经营范围");
-        var shareholderCount = quote.ShareholderCount
+        var shareholderCount = quote?.ShareholderCount
             ?? TryResolveShareholderCount(snapshotResolution.Snapshot?.Facts)
             ?? TryResolveShareholderCount(localFacts.FundamentalFacts);
-        var warnings = BuildWarnings(snapshotResolution.Warning);
-        var degradedFlags = BuildDegradedFlags(snapshotResolution.DegradedFlag);
+        var warnings = BuildWarnings(snapshotResolution.Warning).ToList();
+        var degradedFlags = BuildDegradedFlags(snapshotResolution.DegradedFlag).ToList();
+        if (quote is null)
+        {
+            warnings.Add("行情数据不可用，company overview 已仅返回本地公司事实与基本面快照，不填充占位价格。");
+            degradedFlags.Add("quote_unavailable");
+        }
         var evidence = ApplyWindow(
             BuildCompanyOverviewEvidence(normalizedSymbol, quote, localFacts, snapshotResolution.UpdatedAt, shareholderCount, mainBusiness, businessScope),
             windowOptions.EvidenceSkip,
@@ -179,15 +185,15 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             latencyMs: stopwatch.ElapsedMilliseconds,
             data: new StockCopilotCompanyOverviewDataDto(
                 normalizedSymbol,
-                FirstNonEmpty(localFacts.Name, quote.Name, normalizedSymbol),
-                FirstNonEmpty(localFacts.SectorName, quote.SectorName),
-                quote.Price,
-                quote.ChangePercent,
-                quote.FloatMarketCap > 0m ? quote.FloatMarketCap : null,
-                quote.PeRatio > 0m ? quote.PeRatio : null,
-                quote.VolumeRatio > 0m ? quote.VolumeRatio : null,
+                FirstNonEmpty(localFacts.Name, quote?.Name, normalizedSymbol),
+                FirstNonEmpty(localFacts.SectorName, quote?.SectorName),
+                quote?.Price,
+                quote?.ChangePercent,
+                quote is not null && quote.FloatMarketCap > 0m ? quote.FloatMarketCap : null,
+                quote is not null && quote.PeRatio > 0m ? quote.PeRatio : null,
+                quote is not null && quote.VolumeRatio > 0m ? quote.VolumeRatio : null,
                 shareholderCount,
-                quote.Timestamp,
+                quote?.Timestamp,
                 snapshotResolution.UpdatedAt,
                 overviewFacts.Count,
                 mainBusiness,
@@ -197,7 +203,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             symbol: normalizedSymbol,
             interval: null,
             query: null,
-            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, cancellationToken),
+            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, FirstNonEmpty(localFacts.SectorName, quote?.SectorName), cancellationToken),
             degradedFlags: degradedFlags,
             warnings: warnings);
     }
@@ -308,7 +314,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var snapshotResolution = await ResolveFundamentalSnapshotAsync(normalizedSymbol, localFacts, cancellationToken);
         var allFacts = snapshotResolution.Snapshot?.Facts ?? ConvertFacts(localFacts.FundamentalFacts);
         var shareholderFacts = FilterShareholderFacts(allFacts).ToList();
-        var shareholderCount = quote.ShareholderCount
+        var shareholderCount = quote?.ShareholderCount
             ?? TryResolveShareholderCount(allFacts)
             ?? TryResolveShareholderCount(localFacts.FundamentalFacts);
 
@@ -393,25 +399,30 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             degradedFlags.Add("trend_summary_failed");
         }
 
+        var data = new StockCopilotMarketContextDataDto(
+            normalizedSymbol,
+            rawMarketContext is not null,
+            marketContext?.StageConfidence,
+            marketContext?.StockSectorName,
+            marketContext?.MainlineSectorName,
+            marketContext?.SectorCode,
+            marketContext?.MainlineScore,
+            indices,
+            mainCapitalFlow,
+            northboundFlow,
+            breadth,
+            trendSummary)
+        {
+            MainlineSectorCode = marketContext?.MainlineSectorCode
+        };
+
         stopwatch.Stop();
         return BuildEnvelope(
             toolName: StockMcpToolNames.MarketContext,
             policyClass: "local_required",
             taskId: taskId,
             latencyMs: stopwatch.ElapsedMilliseconds,
-            data: new StockCopilotMarketContextDataDto(
-                normalizedSymbol,
-                rawMarketContext is not null,
-                marketContext?.StageConfidence,
-                marketContext?.StockSectorName,
-                marketContext?.MainlineSectorName,
-                marketContext?.SectorCode,
-                marketContext?.MainlineScore,
-                indices,
-                mainCapitalFlow,
-                northboundFlow,
-                breadth,
-                trendSummary),
+            data: data,
             evidence: ApplyWindow(evidence, windowOptions.EvidenceSkip, windowOptions.EvidenceTake),
             features: features,
             symbol: normalizedSymbol,
@@ -574,7 +585,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var newsPolicy = StockAgentNewsContextPolicy.Apply(bundle.Messages, DateTime.Now).Policy;
         var prepared = _featureEngineeringService.Prepare(normalizedSymbol, bundle.Quote, bundle.KLines, bundle.MinuteLines, bundle.Messages, newsPolicy, StockAgentLocalFactProjection.Create(bundle.LocalFacts), DateTime.Now);
 
-        var latestClose = bundle.KLines.LastOrDefault()?.Close ?? bundle.Quote.Price;
+        var latestClose = bundle.KLines.LastOrDefault()?.Close ?? bundle.Quote?.Price ?? 0m;
         var support = bundle.KLines.TakeLast(20).DefaultIfEmpty().Min(item => item?.Low ?? latestClose);
         var resistance = bundle.KLines.TakeLast(20).DefaultIfEmpty().Max(item => item?.High ?? latestClose);
         var trend = prepared.Features.Trend;
@@ -610,9 +621,9 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             symbol: normalizedSymbol,
             interval: safeInterval,
             query: null,
-            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, bundle.Quote.SectorName, cancellationToken),
+            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, bundle.Quote?.SectorName, cancellationToken),
             degradedFlags: prepared.Features.DegradedFlags,
-            warnings: Array.Empty<string>());
+            warnings: BuildQuoteWarnings(bundle.Quote));
     }
 
     public async Task<StockCopilotMcpEnvelopeDto<StockCopilotMinuteDataDto>> GetMinuteAsync(string symbol, string? source, string? taskId, StockCopilotMcpWindowOptions? window = null, CancellationToken cancellationToken = default)
@@ -673,9 +684,9 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             symbol: normalizedSymbol,
             interval: "minute",
             query: null,
-            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, bundle.Quote.SectorName, cancellationToken),
+            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, bundle.Quote?.SectorName, cancellationToken),
             degradedFlags: prepared.Features.DegradedFlags,
-            warnings: Array.Empty<string>());
+            warnings: BuildQuoteWarnings(bundle.Quote));
     }
 
     public async Task<StockCopilotMcpEnvelopeDto<StockCopilotStrategyDataDto>> GetStrategyAsync(string symbol, string interval, int count, string? source, IReadOnlyList<string>? strategies, string? taskId, StockCopilotMcpWindowOptions? window = null, CancellationToken cancellationToken = default)
@@ -714,9 +725,9 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             symbol: normalizedSymbol,
             interval: safeInterval,
             query: null,
-            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, bundle.Quote.SectorName, cancellationToken),
+            marketContext: await ResolveMcpMarketContextAsync(normalizedSymbol, bundle.Quote?.SectorName, cancellationToken),
             degradedFlags: prepared.Features.DegradedFlags,
-            warnings: Array.Empty<string>());
+            warnings: BuildQuoteWarnings(bundle.Quote));
     }
 
     public async Task<StockCopilotMcpEnvelopeDto<StockCopilotNewsDataDto>> GetNewsAsync(string symbol, string level, string? taskId, StockCopilotMcpWindowOptions? window = null, CancellationToken cancellationToken = default)
@@ -1208,7 +1219,10 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             NormalizeNullableText(marketContext.StockSectorName),
             NormalizeNullableText(marketContext.MainlineSectorName),
             NormalizeNullableText(marketContext.SectorCode),
-            marketContext.MainlineScore);
+            marketContext.MainlineScore)
+        {
+            MainlineSectorCode = NormalizeNullableText(marketContext.MainlineSectorCode)
+        };
     }
 
     private static string? NormalizeNullableText(string? value)
@@ -1247,9 +1261,9 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
         if (marketContext is not null)
         {
-            if (!string.IsNullOrWhiteSpace(marketContext.StockSectorName) || !string.IsNullOrWhiteSpace(marketContext.SectorCode))
+            if (!string.IsNullOrWhiteSpace(marketContext.StockSectorName) || !string.IsNullOrWhiteSpace(marketContext.StockSectorCode))
             {
-                var summary = $"该字段来自本地市场上下文，不是东方财富公司概况字段。个股行业={marketContext.StockSectorName ?? "未知"}，行业代码={marketContext.SectorCode ?? "未知"}。";
+                var summary = $"该字段来自本地市场上下文，不是东方财富公司概况字段。个股行业={marketContext.StockSectorName ?? "未知"}，个股行业代码={marketContext.StockSectorCode ?? "未知"}。";
                 evidence.Add(new StockCopilotMcpEvidenceDto(
                     $"个股行业={marketContext.StockSectorName ?? "未知"}",
                     "本地个股行业上下文",
@@ -1272,7 +1286,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
             if (!string.IsNullOrWhiteSpace(marketContext.MainlineSectorName) || marketContext.MainlineScore.HasValue || marketContext.StageConfidence.HasValue)
             {
-                var summary = $"该字段来自本地市场上下文/板块轮动快照，不是东方财富字段。当前主线={marketContext.MainlineSectorName ?? "无"}，主线强度={FormatOptionalNumber(marketContext.MainlineScore)}，阶段置信度={FormatOptionalNumber(marketContext.StageConfidence)}。";
+                var summary = $"该字段来自本地市场上下文/板块轮动快照，不是东方财富字段。当前主线={marketContext.MainlineSectorName ?? "无"}，主线代码={marketContext.MainlineSectorCode ?? "未知"}，主线强度={FormatOptionalNumber(marketContext.MainlineScore)}，阶段置信度={FormatOptionalNumber(marketContext.StageConfidence)}。";
                 evidence.Add(new StockCopilotMcpEvidenceDto(
                     $"本地主线板块={marketContext.MainlineSectorName ?? "无"}",
                     "本地主线板块轮动",
@@ -1407,7 +1421,9 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             features.Add(new StockCopilotMcpFeatureDto("mainlineScore", "Mainline Score", "number", marketContext.MainlineScore, null, null, "Strength score retained from local market-context / sector-rotation data."));
             features.Add(new StockCopilotMcpFeatureDto("stockSectorName", "Stock Sector Name", "text", null, marketContext.StockSectorName, null, "Stock sector carried from local market context."));
             features.Add(new StockCopilotMcpFeatureDto("mainlineSectorName", "Mainline Sector Name", "text", null, marketContext.MainlineSectorName, null, "Mainline sector carried from local market context / sector rotation."));
-            features.Add(new StockCopilotMcpFeatureDto("sectorCode", "Sector Code", "text", null, marketContext.SectorCode, null, "Sector code carried from local market context."));
+            features.Add(new StockCopilotMcpFeatureDto("stockSectorCode", "Stock Sector Code", "text", null, marketContext.StockSectorCode, null, "Stock-sector code carried from local market context."));
+            features.Add(new StockCopilotMcpFeatureDto("mainlineSectorCode", "Mainline Sector Code", "text", null, marketContext.MainlineSectorCode, null, "Mainline-sector code carried from sector-rotation data."));
+            features.Add(new StockCopilotMcpFeatureDto("sectorCode", "Legacy Stock Sector Code", "text", null, marketContext.SectorCode, null, "Legacy alias for stockSectorCode; do not pair it with mainlineSectorName."));
         }
 
         if (overview is not null)
@@ -1836,9 +1852,10 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or JsonException)
         {
+            var sanitized = ErrorSanitizer.SanitizeErrorMessage(ex.Message);
             return localSnapshot is null
-                ? (null, null, "fundamental_snapshot_unavailable", $"基本面快照抓取失败: {ex.Message}")
-                : (localSnapshot, localSnapshot.UpdatedAt, "fundamental_snapshot_unavailable", $"基本面快照抓取失败，已回退本地事实: {ex.Message}");
+                ? (null, null, "fundamental_snapshot_unavailable", $"基本面快照抓取失败: {sanitized}")
+                : (localSnapshot, localSnapshot.UpdatedAt, "fundamental_snapshot_unavailable", $"基本面快照抓取失败，已回退本地事实: {sanitized}");
         }
     }
 
@@ -1967,6 +1984,13 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         return string.IsNullOrWhiteSpace(warning) ? Array.Empty<string>() : new[] { warning };
     }
 
+    private static IReadOnlyList<string> BuildQuoteWarnings(StockQuoteDto? quote)
+    {
+        return quote is null
+            ? new[] { "行情数据不可用，已跳过 quote 字段并仅基于 K 线、分时与本地证据返回降级结果。" }
+            : Array.Empty<string>();
+    }
+
     private static IReadOnlyList<string> BuildDegradedFlags(string? degradedFlag)
     {
         return string.IsNullOrWhiteSpace(degradedFlag) ? Array.Empty<string>() : new[] { degradedFlag };
@@ -1979,7 +2003,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
     private static IReadOnlyList<StockCopilotMcpEvidenceDto> BuildCompanyOverviewEvidence(
         string symbol,
-        StockQuoteDto quote,
+        StockQuoteDto? quote,
         LocalFactPackageDto localFacts,
         DateTime? fundamentalUpdatedAt,
         int? shareholderCount,
@@ -1988,10 +2012,14 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     {
         var summaryParts = new List<string>
         {
-            $"所属板块={FirstNonEmpty(localFacts.SectorName, quote.SectorName, "未知")}",
-            $"股东户数={(shareholderCount?.ToString() ?? "未知")}",
-            $"现价={quote.Price:0.00}"
+            $"所属板块={FirstNonEmpty(localFacts.SectorName, quote?.SectorName, "未知")}",
+            $"股东户数={(shareholderCount?.ToString() ?? "未知")}"
         };
+
+        if (quote is not null)
+        {
+            summaryParts.Add($"现价={quote.Price:0.00}");
+        }
 
         if (!string.IsNullOrWhiteSpace(mainBusiness))
         {
@@ -2007,17 +2035,17 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var evidence = new List<StockCopilotMcpEvidenceDto>
         {
             new(
-                $"{FirstNonEmpty(localFacts.Name, quote.Name, symbol)} 公司概览",
-                FirstNonEmpty(localFacts.Name, quote.Name, symbol),
+                $"{FirstNonEmpty(localFacts.Name, quote?.Name, symbol)} 公司概览",
+                FirstNonEmpty(localFacts.Name, quote?.Name, symbol),
                 "公司画像缓存",
-                quote.Timestamp,
+                quote?.Timestamp,
                 fundamentalUpdatedAt,
                 null,
                 summary,
                 summary,
                 "local_fact",
                 "full",
-                fundamentalUpdatedAt ?? quote.Timestamp,
+                fundamentalUpdatedAt ?? quote?.Timestamp,
                 null,
                 $"company_profile:{symbol}",
                 "overview",
@@ -2131,13 +2159,13 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         return evidence;
     }
 
-    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildCompanyOverviewFeatures(StockQuoteDto quote, LocalFactPackageDto localFacts, int? shareholderCount, int factCount, DateTime? updatedAt, string? mainBusiness, string? businessScope)
+    private static IReadOnlyList<StockCopilotMcpFeatureDto> BuildCompanyOverviewFeatures(StockQuoteDto? quote, LocalFactPackageDto localFacts, int? shareholderCount, int factCount, DateTime? updatedAt, string? mainBusiness, string? businessScope)
     {
         return new[]
         {
-            new StockCopilotMcpFeatureDto("sectorName", "Sector Name", "text", null, FirstNonEmpty(localFacts.SectorName, quote.SectorName), null, "Sector inferred from local company profile or latest quote."),
-            new StockCopilotMcpFeatureDto("price", "Latest Price", "number", quote.Price, null, null, "Latest cached or live quote price."),
-            new StockCopilotMcpFeatureDto("changePercent", "Change Percent", "number", quote.ChangePercent, null, "%", "Current price change percent."),
+            new StockCopilotMcpFeatureDto("sectorName", "Sector Name", "text", null, FirstNonEmpty(localFacts.SectorName, quote?.SectorName), null, "Sector inferred from local company profile or latest quote."),
+            new StockCopilotMcpFeatureDto("price", "Latest Price", "number", quote?.Price, null, null, "Latest cached or live quote price."),
+            new StockCopilotMcpFeatureDto("changePercent", "Change Percent", "number", quote?.ChangePercent, null, "%", "Current price change percent."),
             new StockCopilotMcpFeatureDto("shareholderCount", "Shareholder Count", "number", shareholderCount, null, null, "Latest shareholder count available to the system."),
             new StockCopilotMcpFeatureDto("fundamentalFactCount", "Fundamental Fact Count", "number", factCount, null, null, "Number of structured company facts retained for this symbol."),
             new StockCopilotMcpFeatureDto("mainBusiness", "Main Business", "text", null, mainBusiness, null, "Main business description extracted from company profile facts."),
@@ -2511,7 +2539,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     /// Extensible: add new data fields here when new data types are introduced.
     /// </summary>
     private sealed record SymbolDataBundle(
-        StockQuoteDto Quote,
+        StockQuoteDto? Quote,
         IReadOnlyList<KLinePointDto> KLines,
         IReadOnlyList<MinuteLinePointDto> MinuteLines,
         IReadOnlyList<IntradayMessageDto> Messages,
@@ -2725,7 +2753,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         try
         {
             var quote = await _dataService.GetQuoteAsync(symbol, null, cancellationToken);
-            sectorNameHint = quote.SectorName;
+            sectorNameHint = quote?.SectorName;
         }
         catch
         {
@@ -2758,7 +2786,10 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             marketContext.StockSectorName,
             marketContext.MainlineSectorName,
             marketContext.SectorCode,
-            marketContext.MainlineScore);
+            marketContext.MainlineScore)
+        {
+            MainlineSectorCode = marketContext.MainlineSectorCode
+        };
     }
 
     private static StockCopilotMcpMarketContextDto? ToCopilotMarketContext(StockMarketContextDto? marketContext)

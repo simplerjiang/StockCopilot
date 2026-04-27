@@ -8,6 +8,7 @@ public class RagSearchRequest
     public string? ReportType { get; set; }
     public int? TopK { get; set; }
     public string? Mode { get; set; }  // "bm25" | "vector" | "hybrid" (default: hybrid)
+    public string? SourceType { get; set; }  // "financial_report" | "announcement" (default: null = all)
 }
 
 public class RagSearchResponse

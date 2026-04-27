@@ -67,8 +67,12 @@ public sealed class SectorRotationQueryServiceTests
 
         Assert.NotNull(result);
         Assert.Equal(new DateTime(2026, 4, 7, 6, 36, 0, DateTimeKind.Utc), result!.SnapshotTime);
+        Assert.Equal(result.TotalTurnover, result.TotalTurnoverCny);
+        Assert.Equal(MarketAmountUnitContracts.Cny, result.TotalTurnoverUnit);
+        Assert.Equal(MarketAmountUnitContracts.CnyUnitLabel, result.TotalTurnoverUnitLabel);
         Assert.Equal("同步不完整", result.StageLabelV2);
-        Assert.True(result.IsDegraded);
+        // Bug #6: query-side override — LimitDownCount=1 means hasCoreData=true → isDegraded=false
+        Assert.False(result.IsDegraded);
         Assert.Equal("market_breadth_unavailable", result.DegradeReason);
     }
 
@@ -259,6 +263,164 @@ public sealed class SectorRotationQueryServiceTests
         Assert.Equal(2, result.Total);
         Assert.Equal("BK002", result.Items[0].SectorCode);
         Assert.DoesNotContain(result.Items, item => item.SectorCode == "BKOLD");
+    }
+
+    [Fact]
+    public async Task GetSectorPageAsync_MapsLegacyMemberPlaceholderAsUnavailableAndDegraded()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.SectorRotationSnapshots.Add(new SectorRotationSnapshot
+        {
+            TradingDate = new DateTime(2026, 4, 24),
+            SnapshotTime = new DateTime(2026, 4, 24, 7, 0, 0, DateTimeKind.Utc),
+            BoardType = SectorBoardTypes.Concept,
+            SectorCode = "BK001",
+            SectorName = "机器人",
+            ChangePercent = 4.2m,
+            MainNetInflow = 120m,
+            BreadthScore = 50m,
+            ContinuityScore = 70m,
+            StrengthScore = 68m,
+            DiffusionRate = 50m,
+            AdvancerCount = 0,
+            DeclinerCount = 0,
+            FlatMemberCount = 0,
+            LimitUpMemberCount = 0,
+            NewsSentiment = "中性",
+            RankNo = 1,
+            SourceTag = "eastmoney",
+            CreatedAt = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new SectorRotationQueryService(dbContext, Options.Create(new SectorRotationOptions()));
+
+        var result = await service.GetSectorPageAsync(SectorBoardTypes.Concept, 1, 20, "strength");
+
+        Assert.True(result.IsDegraded);
+        Assert.Equal("sector_members_unavailable", result.DegradeReason);
+        var item = Assert.Single(result.Items);
+        Assert.Null(item.BreadthScore);
+        Assert.Null(item.DiffusionRate);
+        Assert.Null(item.AdvancerCount);
+        Assert.Null(item.DeclinerCount);
+        Assert.Null(item.FlatMemberCount);
+        Assert.Null(item.LimitUpMemberCount);
+        Assert.Null(item.LeaderSymbol);
+        Assert.Null(item.LeaderName);
+    }
+
+    [Fact]
+    public async Task GetSectorPageAsync_PreservesRealMemberDataAndLeader()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.SectorRotationSnapshots.AddRange(
+            new SectorRotationSnapshot
+            {
+                TradingDate = new DateTime(2026, 4, 24),
+                SnapshotTime = new DateTime(2026, 4, 24, 7, 0, 0, DateTimeKind.Utc),
+                BoardType = SectorBoardTypes.Concept,
+                SectorCode = "BK001",
+                SectorName = "机器人",
+                ChangePercent = 4.2m,
+                MainNetInflow = 120m,
+                BreadthScore = 50m,
+                ContinuityScore = 70m,
+                StrengthScore = 68m,
+                DiffusionRate = 50m,
+                AdvancerCount = 0,
+                DeclinerCount = 0,
+                FlatMemberCount = 0,
+                LimitUpMemberCount = 0,
+                LeaderSymbol = "300001",
+                LeaderName = "龙头科技",
+                LeaderChangePercent = 10m,
+                NewsSentiment = "中性",
+                RankNo = 1,
+                SourceTag = "eastmoney",
+                CreatedAt = DateTime.UtcNow
+            },
+            new SectorRotationSnapshot
+            {
+                TradingDate = new DateTime(2026, 4, 24),
+                SnapshotTime = new DateTime(2026, 4, 24, 7, 0, 0, DateTimeKind.Utc),
+                BoardType = SectorBoardTypes.Concept,
+                SectorCode = "BK002",
+                SectorName = "算力",
+                ChangePercent = 3.8m,
+                MainNetInflow = 80m,
+                BreadthScore = 44m,
+                ContinuityScore = 63m,
+                StrengthScore = 61m,
+                DiffusionRate = 44m,
+                AdvancerCount = 11,
+                DeclinerCount = 14,
+                FlatMemberCount = 0,
+                LimitUpMemberCount = 1,
+                NewsSentiment = "中性",
+                RankNo = 2,
+                SourceTag = "eastmoney",
+                CreatedAt = DateTime.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new SectorRotationQueryService(dbContext, Options.Create(new SectorRotationOptions()));
+
+        var result = await service.GetSectorPageAsync(SectorBoardTypes.Concept, 1, 20, "strength");
+
+        Assert.False(result.IsDegraded);
+        var leaderItem = Assert.Single(result.Items, item => item.SectorCode == "BK001");
+        Assert.Equal(50m, leaderItem.BreadthScore);
+        Assert.Equal(50m, leaderItem.DiffusionRate);
+        Assert.Equal(0, leaderItem.AdvancerCount);
+        Assert.Equal("300001", leaderItem.LeaderSymbol);
+        var memberItem = Assert.Single(result.Items, item => item.SectorCode == "BK002");
+        Assert.Equal(44m, memberItem.BreadthScore);
+        Assert.Equal(11, memberItem.AdvancerCount);
+    }
+
+    [Fact]
+    public async Task GetSectorDetailAsync_MapsLegacyMemberPlaceholderAsUnavailable()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.SectorRotationSnapshots.Add(new SectorRotationSnapshot
+        {
+            TradingDate = new DateTime(2026, 4, 24),
+            SnapshotTime = new DateTime(2026, 4, 24, 7, 0, 0, DateTimeKind.Utc),
+            BoardType = SectorBoardTypes.Concept,
+            SectorCode = "BK001",
+            SectorName = "机器人",
+            ChangePercent = 4.2m,
+            MainNetInflow = 120m,
+            BreadthScore = 50m,
+            ContinuityScore = 70m,
+            StrengthScore = 68m,
+            DiffusionRate = 50m,
+            AdvancerCount = 0,
+            DeclinerCount = 0,
+            FlatMemberCount = 0,
+            LimitUpMemberCount = 0,
+            NewsSentiment = "中性",
+            RankNo = 1,
+            SourceTag = "eastmoney",
+            CreatedAt = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new SectorRotationQueryService(dbContext, Options.Create(new SectorRotationOptions()));
+
+        var result = await service.GetSectorDetailAsync("BK001", SectorBoardTypes.Concept, "10d");
+
+        Assert.NotNull(result);
+        Assert.True(result!.IsDegraded);
+        Assert.Equal("sector_members_unavailable", result.DegradeReason);
+        Assert.Null(result.Snapshot.BreadthScore);
+        Assert.Null(result.Snapshot.DiffusionRate);
+        Assert.Null(result.Snapshot.AdvancerCount);
+        var historyPoint = Assert.Single(result.History);
+        Assert.Null(historyPoint.BreadthScore);
+        Assert.Null(historyPoint.DiffusionRate);
+        Assert.Null(historyPoint.AdvancerCount);
     }
 
     [Fact]

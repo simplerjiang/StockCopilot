@@ -1,25 +1,28 @@
 <template>
   <div v-if="citations && citations.length" class="rag-citation-list">
     <div class="citation-header">
-      <span class="citation-title">📋 财报引用</span>
+      <span class="citation-title">📋 引用来源</span>
       <span class="citation-count">{{ citations.length }} 条</span>
     </div>
     <div class="citation-chips">
       <RagCitationChip
-        v-for="c in citations"
-        :key="c.chunkId"
+        v-for="(c, idx) in citations"
+        :key="c.chunkId || c.sourceRecordId || idx"
         :citation="c"
         @open-pdf="$emit('open-pdf', $event)"
       />
     </div>
     <details v-if="showDetails" class="citation-details">
       <summary>查看引用原文</summary>
-      <div v-for="c in citations" :key="c.chunkId" class="citation-detail-item">
+      <div v-for="(c, idx) in citations" :key="'d-' + (c.chunkId || c.sourceRecordId || idx)" class="citation-detail-item">
         <div class="detail-meta">
           <span v-if="c.section" class="detail-section">{{ c.section }}</span>
+          <span v-if="c.title" class="detail-section">{{ c.title }}</span>
+          <span v-if="c.source" class="detail-source">{{ c.source }}</span>
           <span v-if="c.pageStart" class="detail-page">P.{{ c.pageStart }}{{ c.pageEnd && c.pageEnd !== c.pageStart ? `-${c.pageEnd}` : '' }}</span>
+          <span v-if="c.publishedAt" class="detail-date">{{ c.publishedAt }}</span>
         </div>
-        <p class="detail-text">{{ c.text }}</p>
+        <p class="detail-text">{{ c.text || c.point || c.excerpt || '' }}</p>
       </div>
     </details>
   </div>
@@ -108,6 +111,16 @@ defineEmits(['open-pdf'])
 .detail-page {
   font-size: 11px;
   color: var(--color-primary, #2563eb);
+}
+
+.detail-source {
+  font-size: 11px;
+  color: var(--color-text-muted, #94a3b8);
+}
+
+.detail-date {
+  font-size: 11px;
+  color: var(--color-text-muted, #94a3b8);
 }
 
 .detail-text {

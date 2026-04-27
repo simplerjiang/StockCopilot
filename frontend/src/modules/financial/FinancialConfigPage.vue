@@ -1,4 +1,5 @@
 <script setup>
+defineOptions({ name: 'FinancialConfigPage' })
 import { onMounted, ref, computed } from 'vue'
 import { fetchFinancialConfig, updateFinancialConfig, collectPdfFiles } from './financialApi.js'
 

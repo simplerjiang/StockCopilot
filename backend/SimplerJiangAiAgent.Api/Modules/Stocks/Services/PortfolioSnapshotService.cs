@@ -36,7 +36,20 @@ public sealed class PortfolioSnapshotService : IPortfolioSnapshotService
         var totalCost = positions.Sum(p => p.TotalCost);
         var totalMarketValue = positions.Sum(GetMarketValueOrCost);
         var totalUnrealizedPnL = positions.Sum(p => p.UnrealizedPnL ?? 0);
-        var availableCash = totalCapital - totalCost;
+        // V048-S1 #89: availableCash = totalCapital - Σ(持仓成本) + Σ(已实现盈亏) - Σ(佣金)
+        // SQLite 不支持 decimal 聚合 (SumAsync)，需要先 materialize 再在内存里 Sum
+        var realizedPnLs = await _db.TradeExecutions
+            .AsNoTracking()
+            .Where(t => t.Direction == TradeDirection.Sell && t.RealizedPnL != null)
+            .Select(t => t.RealizedPnL)
+            .ToListAsync();
+        var realizedPnL = realizedPnLs.Sum(v => v ?? 0m);
+        var commissions = await _db.TradeExecutions
+            .AsNoTracking()
+            .Select(t => t.Commission)
+            .ToListAsync();
+        var totalCommission = commissions.Sum(c => c ?? 0m);
+        var availableCash = totalCapital - totalCost + realizedPnL - totalCommission;
         var totalPositionRatio = totalCapital > 0 ? totalCost / totalCapital : 0;
 
         var items = positions.Select(p => MapPositionToDto(p, totalCapital)).ToList();
@@ -77,6 +90,19 @@ public sealed class PortfolioSnapshotService : IPortfolioSnapshotService
             .FirstOrDefaultAsync(p => p.Symbol == symbol);
 
         if (position is null) return null;
+
+        // V048-S1 #89: 必须有对应交易流水，否则视为 orphan 持仓
+        var hasTrade = await _db.TradeExecutions
+            .AsNoTracking()
+            .AnyAsync(t => t.Symbol == symbol);
+        if (!hasTrade) return null;
+
+        // V048-S1 #88: 自愈 TotalCost
+        if (position.TotalCost <= 0 && position.AverageCostPrice > 0 && position.QuantityLots > 0)
+        {
+            position.TotalCost = decimal.Round(position.AverageCostPrice * position.QuantityLots, 2, MidpointRounding.AwayFromZero);
+        }
+
         await EnrichMissingNamesAsync(new List<StockPosition> { position });
         await RefreshRealtimeMetricsAsync(new List<StockPosition> { position });
         return MapPositionToDto(position, settings.TotalCapital);
@@ -88,6 +114,31 @@ public sealed class PortfolioSnapshotService : IPortfolioSnapshotService
             .AsNoTracking()
             .Where(p => p.QuantityLots > 0)
             .ToListAsync();
+
+        if (positions.Count == 0)
+        {
+            return positions;
+        }
+
+        // V048-S1 #89: 持仓必须从 TradeRecord 推导；过滤 orphan 持仓（无任何交易流水支撑的持仓行）
+        var symbols = positions.Select(p => p.Symbol).ToList();
+        var symbolsWithTrades = await _db.TradeExecutions
+            .AsNoTracking()
+            .Where(t => symbols.Contains(t.Symbol))
+            .Select(t => t.Symbol)
+            .Distinct()
+            .ToListAsync();
+        var tradeSymbolSet = new HashSet<string>(symbolsWithTrades, StringComparer.OrdinalIgnoreCase);
+        positions = positions.Where(p => tradeSymbolSet.Contains(p.Symbol)).ToList();
+
+        // V048-S1 #88: 自愈 TotalCost——如果历史 orphan 数据写入时未设置，用 avgCost × qty 补齐
+        foreach (var p in positions)
+        {
+            if (p.TotalCost <= 0 && p.AverageCostPrice > 0 && p.QuantityLots > 0)
+            {
+                p.TotalCost = decimal.Round(p.AverageCostPrice * p.QuantityLots, 2, MidpointRounding.AwayFromZero);
+            }
+        }
 
         await EnrichMissingNamesAsync(positions);
         await RefreshRealtimeMetricsAsync(positions);

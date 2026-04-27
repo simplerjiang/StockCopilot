@@ -32,7 +32,7 @@ public sealed class StockHistoryService : IStockHistoryService
             cancellationToken);
     }
 
-    public async Task<StockQueryHistory> RecordAsync(StockHistoryRecordRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<StockQueryHistory?> RecordAsync(StockHistoryRecordRequestDto request, CancellationToken cancellationToken = default)
     {
         return await UpsertCoreAsync(
             request.Symbol,
@@ -47,7 +47,7 @@ public sealed class StockHistoryService : IStockHistoryService
             cancellationToken);
     }
 
-    private async Task<StockQueryHistory> UpsertCoreAsync(
+    private async Task<StockQueryHistory?> UpsertCoreAsync(
         string symbolValue,
         string name,
         decimal price,
@@ -59,9 +59,17 @@ public sealed class StockHistoryService : IStockHistoryService
         decimal speed,
         CancellationToken cancellationToken)
     {
+        if (!StockSymbolNormalizer.IsValid(symbolValue))
+            return null;
+
         var symbol = StockSymbolNormalizer.Normalize(symbolValue);
         var existing = await _dbContext.StockQueryHistories
             .FirstOrDefaultAsync(x => x.Symbol == symbol, cancellationToken);
+
+        if (!HasUsableQuoteSnapshot(high, low))
+        {
+            return existing is not null && HasUsableQuoteSnapshot(existing) ? existing : null;
+        }
 
         if (existing is null)
         {
@@ -69,7 +77,7 @@ public sealed class StockHistoryService : IStockHistoryService
             _dbContext.StockQueryHistories.Add(existing);
         }
 
-        existing.Name = name;
+        existing.Name = StockNameNormalizer.NormalizeDisplayName(name);
         existing.Price = price;
         existing.ChangePercent = changePercent;
         existing.TurnoverRate = turnoverRate;
@@ -85,7 +93,10 @@ public sealed class StockHistoryService : IStockHistoryService
 
     public async Task<IReadOnlyList<StockQueryHistory>> GetAllAsync(CancellationToken cancellationToken = default)
     {
+        await RemoveInvalidQuoteSnapshotsAsync(cancellationToken);
+
         return await _dbContext.StockQueryHistories
+            .Where(HasUsableQuoteSnapshotExpression)
             .OrderBy(x => x.Id)
             .ToListAsync(cancellationToken);
     }
@@ -99,7 +110,17 @@ public sealed class StockHistoryService : IStockHistoryService
         foreach (var item in list)
         {
             var quote = await _dataService.GetQuoteAsync(item.Symbol, source, cancellationToken);
-            item.Name = quote.Name;
+            if (quote is null)
+            {
+                continue;
+            }
+
+            if (!HasUsableQuoteSnapshot(quote.High, quote.Low))
+            {
+                continue;
+            }
+
+            item.Name = StockNameNormalizer.NormalizeDisplayName(quote.Name);
             item.Price = quote.Price;
             item.ChangePercent = quote.ChangePercent;
             item.TurnoverRate = quote.TurnoverRate;
@@ -110,8 +131,14 @@ public sealed class StockHistoryService : IStockHistoryService
             item.UpdatedAt = DateTime.UtcNow;
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        return list;
+        var invalidItems = list.Where(item => !HasUsableQuoteSnapshot(item)).ToArray();
+        if (invalidItems.Length > 0)
+        {
+            _dbContext.StockQueryHistories.RemoveRange(invalidItems);
+        }
+
+        await DbRetryHelper.SaveChangesWithRetryAsync(_dbContext, ct: cancellationToken);
+        return list.Where(HasUsableQuoteSnapshot).ToList();
     }
 
     public async Task<bool> DeleteAsync(long id, CancellationToken cancellationToken = default)
@@ -127,5 +154,33 @@ public sealed class StockHistoryService : IStockHistoryService
         _dbContext.StockQueryHistories.Remove(entity);
         await _dbContext.SaveChangesAsync(cancellationToken);
         return true;
+    }
+
+    private static readonly System.Linq.Expressions.Expression<Func<StockQueryHistory, bool>> HasUsableQuoteSnapshotExpression =
+        item => item.High != 0m || item.Low != 0m;
+
+    private static bool HasUsableQuoteSnapshot(StockQueryHistory item)
+    {
+        return HasUsableQuoteSnapshot(item.High, item.Low);
+    }
+
+    private static bool HasUsableQuoteSnapshot(decimal high, decimal low)
+    {
+        return high != 0m || low != 0m;
+    }
+
+    private async Task RemoveInvalidQuoteSnapshotsAsync(CancellationToken cancellationToken)
+    {
+        var invalidItems = await _dbContext.StockQueryHistories
+            .Where(item => item.High == 0m && item.Low == 0m)
+            .ToListAsync(cancellationToken);
+
+        if (invalidItems.Count == 0)
+        {
+            return;
+        }
+
+        _dbContext.StockQueryHistories.RemoveRange(invalidItems);
+        await DbRetryHelper.SaveChangesWithRetryAsync(_dbContext, ct: cancellationToken);
     }
 }

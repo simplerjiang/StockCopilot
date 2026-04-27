@@ -23,6 +23,7 @@ public interface IMcpToolGateway
     Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialReportDataDto>> GetFinancialReportAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
     Task<StockCopilotMcpEnvelopeDto<StockCopilotFinancialTrendDataDto>> GetFinancialTrendAsync(string symbol, int periods, string? taskId, CancellationToken cancellationToken = default);
     Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default);
+    Task<List<RagCitationDto>> SearchAnnouncementRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default);
 }
 
 public sealed class McpToolGateway : IMcpToolGateway
@@ -185,7 +186,14 @@ public sealed class McpToolGateway : IMcpToolGateway
     {
         EnsureSystemToolAccess(StockMcpToolNames.FinancialReportRag);
         return await ExecuteWithLoggingAsync(StockMcpToolNames.FinancialReportRag, symbol,
-            () => _ragContextEnricher.EnrichAsync(query, symbol, topK, cancellationToken));
+            () => _ragContextEnricher.EnrichAsync(query, symbol, topK, cancellationToken, sourceType: "financial_report"));
+    }
+
+    public async Task<List<RagCitationDto>> SearchAnnouncementRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
+    {
+        EnsureSystemToolAccess(StockMcpToolNames.AnnouncementRag);
+        return await ExecuteWithLoggingAsync(StockMcpToolNames.AnnouncementRag, symbol,
+            () => _ragContextEnricher.EnrichAsync(query, symbol, topK, cancellationToken, sourceType: "announcement"));
     }
 
     private void EnsureSystemToolAccess(string toolName)

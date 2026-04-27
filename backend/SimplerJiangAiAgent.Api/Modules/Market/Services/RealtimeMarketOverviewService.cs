@@ -10,6 +10,9 @@ namespace SimplerJiangAiAgent.Api.Modules.Market.Services;
 public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewService
 {
     private static readonly string[] DefaultIndexSymbols = ["sh000001", "sz399001", "sz399006"];
+    private static readonly TimeZoneInfo ChinaTimeZone = ResolveChinaTimeZone();
+    private static readonly TimeOnly ChinaTradingOpen = new(9, 30);
+    private static readonly TimeOnly ChinaTradingClose = new(15, 5);
     private const string TencentSourceName = "腾讯";
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> CacheGates = new(StringComparer.Ordinal);
     private static readonly TimeSpan BatchFreshTtl = TimeSpan.FromSeconds(5);
@@ -44,7 +47,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         }
 
         var cacheKey = $"market:realtime:batch:{string.Join(',', normalizedSymbols)}";
-        return await GetCachedAsync(
+        var (result, _) = await GetCachedAsync(
             cacheKey,
             BatchFreshTtl,
             BatchStaleTtl,
@@ -52,6 +55,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
             ct => _client.GetBatchQuotesAsync(normalizedSymbols, ct),
             Array.Empty<BatchStockQuoteDto>(),
             cancellationToken);
+        return result;
     }
 
     public async Task<MarketRealtimeOverviewDto> GetOverviewAsync(IReadOnlyList<string>? indexSymbols = null, CancellationToken cancellationToken = default)
@@ -86,12 +90,101 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         await Task.WhenAll(quotesTask, mainFlowTask, northboundTask, breadthTask);
 
         var quotes = await FillMissingQuotesAsync(quotesTask.Result, safeSymbols, cancellationToken);
-        var mainFlow = mainFlowTask.Result;
-        var northbound = northboundTask.Result;
-        var breadth = breadthTask.Result;
-        var snapshotTime = ResolveSnapshotTime(quotes, mainFlow, northbound);
+        var (mainFlow, mainFlowStale) = mainFlowTask.Result;
+        var (northbound, northboundStale) = northboundTask.Result;
+        var (breadth, breadthStale) = breadthTask.Result;
+        var normalizedNorthbound = NormalizeNorthboundState(northbound, northboundStale);
+        var isStale = mainFlowStale || breadthStale || normalizedNorthbound?.IsStale == true;
+        var snapshotTime = ResolveSnapshotTime(quotes, mainFlow, normalizedNorthbound);
 
-        return new MarketRealtimeOverviewDto(snapshotTime, quotes, mainFlow, northbound, breadth);
+        return new MarketRealtimeOverviewDto(snapshotTime, quotes, mainFlow, normalizedNorthbound, breadth, isStale);
+    }
+
+    private NorthboundFlowSnapshotDto? NormalizeNorthboundState(NorthboundFlowSnapshotDto? northbound, bool cacheStale)
+    {
+        if (northbound is null)
+        {
+            return null;
+        }
+
+        var status = ResolveNorthboundStatus(northbound, cacheStale);
+        return northbound with { IsStale = status != "ok", Status = status };
+    }
+
+    private string ResolveNorthboundStatus(NorthboundFlowSnapshotDto northbound, bool cacheStale)
+    {
+        if (cacheStale)
+        {
+            return "stale";
+        }
+
+        if (HasSuspiciousConstantZeroSeries(northbound))
+        {
+            return "unavailable";
+        }
+
+        if (!IsChinaTradingHours(_timeProvider.GetUtcNow().UtcDateTime))
+        {
+            return "closed";
+        }
+
+        return "ok";
+    }
+
+    private static bool HasSuspiciousConstantZeroSeries(NorthboundFlowSnapshotDto northbound)
+    {
+        var points = northbound.Points;
+        if (points.Count < 3)
+        {
+            return false;
+        }
+
+        var allNetFlowZero = points.All(point => point.TotalNetInflow == 0m
+            && point.ShanghaiNetInflow == 0m
+            && point.ShenzhenNetInflow == 0m);
+        if (!allNetFlowZero)
+        {
+            return false;
+        }
+
+        var first = points[0];
+        var balancesConstant = points.All(point => point.ShanghaiBalance == first.ShanghaiBalance
+            && point.ShenzhenBalance == first.ShenzhenBalance);
+        if (!balancesConstant)
+        {
+            return false;
+        }
+
+        var span = points.Max(point => point.Timestamp) - points.Min(point => point.Timestamp);
+        return span >= TimeSpan.FromHours(2);
+    }
+
+    private static bool IsChinaTradingHours(DateTime utcNow)
+    {
+        var chinaNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utcNow, DateTimeKind.Utc), ChinaTimeZone);
+        if (chinaNow.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+        {
+            return false;
+        }
+
+        var current = TimeOnly.FromDateTime(chinaNow);
+        return current >= ChinaTradingOpen && current <= ChinaTradingClose;
+    }
+
+    private static TimeZoneInfo ResolveChinaTimeZone()
+    {
+        foreach (var id in new[] { "China Standard Time", "Asia/Shanghai" })
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(id);
+            }
+            catch
+            {
+            }
+        }
+
+        return TimeZoneInfo.Utc;
     }
 
     private async Task<IReadOnlyList<BatchStockQuoteDto>> TryGetBatchQuotesAsync(IReadOnlyList<string> symbols, CancellationToken cancellationToken)
@@ -160,7 +253,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         try
         {
             var quote = await _stockDataService.GetQuoteAsync(symbol, TencentSourceName, cancellationToken);
-            return IsUsableFallbackQuote(quote) ? ToBatchQuote(quote) : null;
+            return quote is not null && IsUsableFallbackQuote(quote) ? ToBatchQuote(quote) : null;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -186,7 +279,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
     {
         return new BatchStockQuoteDto(
             StockSymbolNormalizer.Normalize(quote.Symbol),
-            quote.Name,
+            StockNameNormalizer.NormalizeDisplayName(quote.Name),
             quote.Price,
             quote.Change,
             quote.ChangePercent,
@@ -199,7 +292,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
             quote.Timestamp);
     }
 
-    private async Task<T> GetCachedAsync<T>(
+    private async Task<(T Value, bool IsStale)> GetCachedAsync<T>(
         string cacheKey,
         TimeSpan freshTtl,
         TimeSpan staleTtl,
@@ -211,7 +304,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
         var cached = _cache.Get<CachedRealtimeValue<T>>(cacheKey);
         if (IsFresh(cached, freshTtl))
         {
-            return cached!.Value;
+            return (cached!.Value, false);
         }
 
         var gate = CacheGates.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
@@ -221,7 +314,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
             cached = _cache.Get<CachedRealtimeValue<T>>(cacheKey);
             if (IsFresh(cached, freshTtl))
             {
-                return cached!.Value;
+                return (cached!.Value, false);
             }
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -230,7 +323,7 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
 
             if (value is null)
             {
-                return cached is not null ? cached.Value : fallback;
+                return cached is not null ? (cached.Value, true) : (fallback, false);
             }
 
             _cache.Set(
@@ -238,15 +331,15 @@ public sealed class RealtimeMarketOverviewService : IRealtimeMarketOverviewServi
                 new CachedRealtimeValue<T>(value, _timeProvider.GetUtcNow().UtcDateTime),
                 staleTtl);
 
-            return value;
+            return (value, false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return cached is not null ? cached.Value : fallback;
+            return cached is not null ? (cached.Value, true) : (fallback, false);
         }
         catch
         {
-            return cached is not null ? cached.Value : fallback;
+            return cached is not null ? (cached.Value, true) : (fallback, false);
         }
         finally
         {

@@ -40,6 +40,38 @@ public class StockSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncOnceAsync_ShouldFilterZeroHighLowKLinesAndKeepZeroVolumeValidRows()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var dbContext = new AppDbContext(options);
+        var crawler = new FakeCrawler
+        {
+            MinuteLines = Array.Empty<MinuteLinePointDto>(),
+            KLines = new[]
+            {
+                new KLinePointDto(DateTime.Today.AddDays(-1), 10m, 10m, 0m, 0m, 100m),
+                new KLinePointDto(DateTime.Today, 11m, 11m, 12m, 8m, 0m)
+            }
+        };
+        var syncOptions = Options.Create(new StockSyncOptions
+        {
+            Symbols = new List<string> { "600000" }
+        });
+
+        var service = new StockSyncService(dbContext, crawler, syncOptions);
+        await service.SyncOnceAsync();
+
+        var stored = Assert.Single(dbContext.KLinePoints);
+        Assert.Equal("sh600000", stored.Symbol);
+        Assert.Equal(12m, stored.High);
+        Assert.Equal(8m, stored.Low);
+        Assert.Equal(0m, stored.Volume);
+    }
+
+    [Fact]
     public async Task SaveDetailAsync_ShouldPersistBasicDetailOnly()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -98,6 +130,16 @@ public class StockSyncServiceTests
     {
         public string SourceName => "Fake";
 
+        public IReadOnlyList<KLinePointDto> KLines { get; set; } = new[]
+        {
+            new KLinePointDto(DateTime.Today, 1m, 1m, 1m, 1m, 100m)
+        };
+
+        public IReadOnlyList<MinuteLinePointDto> MinuteLines { get; set; } = new[]
+        {
+            new MinuteLinePointDto(DateOnly.FromDateTime(DateTime.Today), new TimeSpan(9, 30, 0), 1m, 1m, 10m)
+        };
+
         public Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new StockQuoteDto(
@@ -128,20 +170,12 @@ public class StockSyncServiceTests
 
         public Task<IReadOnlyList<KLinePointDto>> GetKLineAsync(string symbol, string interval, int count, CancellationToken cancellationToken = default)
         {
-            IReadOnlyList<KLinePointDto> list = new[]
-            {
-                new KLinePointDto(DateTime.UtcNow.Date, 1m, 1m, 1m, 1m, 100m)
-            };
-            return Task.FromResult(list);
+            return Task.FromResult(KLines);
         }
 
         public Task<IReadOnlyList<MinuteLinePointDto>> GetMinuteLineAsync(string symbol, CancellationToken cancellationToken = default)
         {
-            IReadOnlyList<MinuteLinePointDto> list = new[]
-            {
-                new MinuteLinePointDto(DateOnly.FromDateTime(DateTime.Today), new TimeSpan(9, 30, 0), 1m, 1m, 10m)
-            };
-            return Task.FromResult(list);
+            return Task.FromResult(MinuteLines);
         }
 
         public Task<IReadOnlyList<IntradayMessageDto>> GetIntradayMessagesAsync(string symbol, CancellationToken cancellationToken = default)

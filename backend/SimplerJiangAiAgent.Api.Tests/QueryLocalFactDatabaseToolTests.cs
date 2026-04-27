@@ -440,6 +440,333 @@ public sealed class QueryLocalFactDatabaseToolTests
     }
 
     [Fact]
+    public async Task QueryArchiveAsync_ShouldReturnReadabilitySummaryForFilteredArchive()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.AddRange(
+            new LocalStockNews
+            {
+                Symbol = "sh600000",
+                Name = "浦发银行",
+                SectorName = "银行",
+                Title = "浦发银行公告",
+                Source = "测试源",
+                SourceTag = "stock-test",
+                AiSentiment = "中性",
+                PublishTime = new DateTime(2026, 4, 26, 10, 0, 0, DateTimeKind.Utc),
+                CrawledAt = new DateTime(2026, 4, 26, 10, 1, 0, DateTimeKind.Utc),
+                Url = "https://example.com/stock",
+                ReadMode = "url_fetched"
+            },
+            new LocalStockNews
+            {
+                Symbol = "sz000001",
+                Name = "平安银行",
+                SectorName = "银行",
+                Title = "平安银行快讯",
+                Source = "测试源",
+                SourceTag = "stock-test",
+                AiSentiment = "中性",
+                PublishTime = new DateTime(2026, 4, 26, 9, 0, 0, DateTimeKind.Utc),
+                CrawledAt = new DateTime(2026, 4, 26, 9, 1, 0, DateTimeKind.Utc),
+                ReadMode = "url_unavailable"
+            },
+            new LocalStockNews
+            {
+                Symbol = "sh601398",
+                Name = "工商银行",
+                SectorName = "银行",
+                Title = "工商银行资讯",
+                Source = "测试源",
+                SourceTag = "stock-test",
+                AiSentiment = "利好",
+                PublishTime = new DateTime(2026, 4, 26, 8, 0, 0, DateTimeKind.Utc),
+                CrawledAt = new DateTime(2026, 4, 26, 8, 1, 0, DateTimeKind.Utc),
+                ReadMode = "local_fact"
+            });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, "stock", null, 1, 1);
+
+        Assert.Equal(3, result.Total);
+        Assert.Single(result.Items);
+        Assert.Equal(2, result.ReadableTotal);
+        Assert.Equal(0.6667m, result.ReadableRate);
+        Assert.Equal(1, result.UrlUnavailableTotal);
+        Assert.Equal(0.3333m, result.UrlUnavailableRate);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldRepairLegacyNavigationChromeInArchiveSnippetsAndPersistIt()
+    {
+        await using var dbContext = CreateDbContext();
+        const string navChrome = "财经 焦点 股票 新股 期指 期权 行情 数据 ";
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600000",
+            Name = "浦发银行",
+            SectorName = "银行",
+            Title = "浦发银行公告",
+            Category = "company_news",
+            Source = "测试源",
+            SourceTag = "legacy-stock-test",
+            ArticleExcerpt = navChrome + "这是一条真正的公告正文，说明公司订单进展稳定。",
+            ArticleSummary = navChrome + "这是一条真正的公告摘要，说明本次事项未见新增重大风险。",
+            PublishTime = new DateTime(2026, 4, 26, 10, 0, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 26, 10, 1, 0, DateTimeKind.Utc)
+        });
+        dbContext.LocalSectorReports.Add(new LocalSectorReport
+        {
+            Symbol = null,
+            SectorName = "大盘环境",
+            Level = "market",
+            Title = "市场摘要",
+            Source = "测试源",
+            SourceTag = "legacy-market-test",
+            ArticleExcerpt = navChrome + "板块资金回流，风险偏好回暖，成交额同步放大。",
+            ArticleSummary = navChrome + "板块资金回流，风险偏好回暖。",
+            PublishTime = new DateTime(2026, 4, 26, 9, 0, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 26, 9, 1, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, null, null, 1, 20);
+
+        Assert.Equal(2, result.Total);
+        var stockItem = Assert.Single(result.Items, item => item.SourceRecordId == "stock_news:1");
+        Assert.Equal("这是一条真正的公告正文，说明公司订单进展稳定。", stockItem.Excerpt);
+        Assert.Equal("这是一条真正的公告摘要，说明本次事项未见新增重大风险。", stockItem.Summary);
+        var marketItem = Assert.Single(result.Items, item => item.SourceRecordId == "sector_report:1");
+        Assert.Equal("板块资金回流，风险偏好回暖，成交额同步放大。", marketItem.Excerpt);
+        Assert.Equal("板块资金回流，风险偏好回暖。", marketItem.Summary);
+
+        dbContext.ChangeTracker.Clear();
+        var persistedStock = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal(stockItem.Excerpt, persistedStock.ArticleExcerpt);
+        Assert.Equal(stockItem.Summary, persistedStock.ArticleSummary);
+        var persistedReport = await dbContext.LocalSectorReports.SingleAsync();
+        Assert.Equal(marketItem.Excerpt, persistedReport.ArticleExcerpt);
+        Assert.Equal(marketItem.Summary, persistedReport.ArticleSummary);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldKeepNaturalFinanceAndStockTextInArchiveSnippets()
+    {
+        await using var dbContext = CreateDbContext();
+        const string naturalExcerpt = "财经政策影响股票市场，公司管理层表示订单交付保持稳定，后续将继续关注成本。";
+        const string naturalSummary = "财经政策影响股票市场，公司管理层表示订单交付保持稳定。";
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600000",
+            Name = "浦发银行",
+            SectorName = "银行",
+            Title = "自然正文样本",
+            Category = "company_news",
+            Source = "测试源",
+            SourceTag = "natural-stock-test",
+            ArticleExcerpt = naturalExcerpt,
+            ArticleSummary = naturalSummary,
+            PublishTime = new DateTime(2026, 4, 26, 10, 0, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 26, 10, 1, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, "stock", null, 1, 20);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(naturalExcerpt, item.Excerpt);
+        Assert.Equal(naturalSummary, item.Summary);
+
+        dbContext.ChangeTracker.Clear();
+        var persisted = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal(naturalExcerpt, persisted.ArticleExcerpt);
+        Assert.Equal(naturalSummary, persisted.ArticleSummary);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldRepairLegacyMismatchedAiTargetAndPersistIt()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh09969",
+            Name = "诺诚健华",
+            SectorName = "创新药",
+            Title = "诺诚健华发布新药临床进展公告",
+            Category = "company_news",
+            Source = "测试源",
+            SourceTag = "legacy-ai-target-test",
+            AiSentiment = "中性",
+            AiTarget = "中国电力设备",
+            IsAiProcessed = true,
+            PublishTime = new DateTime(2026, 4, 24, 10, 0, 0, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 10, 1, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, "stock", null, 1, 20);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal("诺诚健华", item.AiTarget);
+        Assert.NotEqual("中国电力设备", item.AiTarget);
+
+        dbContext.ChangeTracker.Clear();
+        var persisted = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal("诺诚健华", persisted.AiTarget);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldRepairMoutaiArchiveLabelsFromSingleStockFactSource()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.StockCompanyProfiles.Add(new StockCompanyProfile
+        {
+            Symbol = "sh600519",
+            Name = "贵州茅台",
+            SectorName = "酿酒行业",
+            UpdatedAt = new DateTime(2026, 4, 26, 8, 0, 0, DateTimeKind.Utc)
+        });
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600519",
+            Name = "中国石化",
+            SectorName = "酿酒行业",
+            Title = "贵州茅台：2026年第一季度主要经营数据公告",
+            Category = "announcement",
+            Source = "东方财富公告",
+            SourceTag = "eastmoney-announcement",
+            AiSentiment = "中性",
+            AiTarget = "中国石化",
+            AiTags = "[\"中国石化\",\"行业预期\"]",
+            IsAiProcessed = true,
+            PublishTime = new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc),
+            CrawledAt = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync("600519", "stock", null, 1, 20);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal("sh600519", item.Symbol);
+        Assert.Equal("贵州茅台", item.Name);
+        Assert.Equal("酿酒行业", item.SectorName);
+        Assert.Equal("贵州茅台", item.AiTarget);
+        Assert.DoesNotContain("中国石化", item.AiTags);
+        Assert.Contains("行业预期", item.AiTags);
+
+        dbContext.ChangeTracker.Clear();
+        var persisted = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal("贵州茅台", persisted.Name);
+        Assert.Equal("贵州茅台", persisted.AiTarget);
+        var persistedTags = System.Text.Json.JsonSerializer.Deserialize<string[]>(persisted.AiTags ?? "[]") ?? [];
+        Assert.DoesNotContain("中国石化", persistedTags);
+        Assert.Contains("行业预期", persistedTags);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldRepairLegacyEastmoneyAnnouncementLocalTimeAndPersistIt()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600519",
+            Name = "贵州茅台",
+            SectorName = "白酒",
+            Title = "贵州茅台公告",
+            Category = "announcement",
+            Source = "东方财富公告",
+            SourceTag = "eastmoney-announcement",
+            ExternalId = "AN202604241821562475",
+            PublishTime = new DateTime(2026, 4, 24, 19, 49, 32, DateTimeKind.Unspecified),
+            CrawledAt = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc),
+            Url = "https://example.com/announcement"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, "stock", null, 1, 20);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc), item.PublishTime);
+
+        dbContext.ChangeTracker.Clear();
+        var persisted = await dbContext.LocalStockNews.SingleAsync();
+        Assert.Equal(new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc), persisted.PublishTime);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldSortAfterLegacyEastmoneyRepair()
+    {
+        await using var dbContext = CreateDbContext();
+        dbContext.LocalStockNews.AddRange(
+            new LocalStockNews
+            {
+                Symbol = "sh600519",
+                Name = "贵州茅台",
+                SectorName = "白酒",
+                Title = "旧东财公告脏时间",
+                Category = "announcement",
+                Source = "东方财富公告",
+                SourceTag = "eastmoney-announcement",
+                PublishTime = new DateTime(2026, 4, 24, 19, 49, 32, DateTimeKind.Unspecified),
+                CrawledAt = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc)
+            },
+            new LocalStockNews
+            {
+                Symbol = "sh600000",
+                Name = "浦发银行",
+                SectorName = "银行",
+                Title = "真正更晚的正常新闻",
+                Category = "company_news",
+                Source = "新浪",
+                SourceTag = "sina-company-news",
+                PublishTime = new DateTime(2026, 4, 24, 12, 30, 0, DateTimeKind.Utc),
+                CrawledAt = new DateTime(2026, 4, 24, 12, 35, 0, DateTimeKind.Utc)
+            });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, "stock", null, 1, 20);
+
+        Assert.Equal(2, result.Total);
+        Assert.Equal("真正更晚的正常新闻", result.Items[0].Title);
+        Assert.Equal("旧东财公告脏时间", result.Items[1].Title);
+        Assert.Equal(new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc), result.Items[1].PublishTime);
+    }
+
+    [Fact]
+    public async Task QueryArchiveAsync_ShouldNotChangeNormalHistoricalEastmoneyAnnouncement()
+    {
+        await using var dbContext = CreateDbContext();
+        var originalPublishTime = new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc);
+        dbContext.LocalStockNews.Add(new LocalStockNews
+        {
+            Symbol = "sh600519",
+            Name = "贵州茅台",
+            SectorName = "白酒",
+            Title = "正常东财公告",
+            Category = "announcement",
+            Source = "东方财富公告",
+            SourceTag = "eastmoney-announcement",
+            PublishTime = originalPublishTime,
+            CrawledAt = new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc)
+        });
+        await dbContext.SaveChangesAsync();
+
+        var tool = CreateTool(dbContext);
+        var result = await tool.QueryArchiveAsync(null, "stock", null, 1, 20);
+
+        Assert.Equal(originalPublishTime, Assert.Single(result.Items).PublishTime);
+        dbContext.ChangeTracker.Clear();
+        Assert.Equal(originalPublishTime, (await dbContext.LocalStockNews.SingleAsync()).PublishTime);
+    }
+
+    [Fact]
     public async Task QueryAsync_ShouldFilterOutWeakStockMatchesAndHideDistortedChineseTranslation()
     {
         await using var dbContext = CreateDbContext();

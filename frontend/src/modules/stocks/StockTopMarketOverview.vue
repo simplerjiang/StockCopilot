@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { formatNorthboundUnavailableText, isNorthboundStatusAvailable } from '../../utils/northboundStatus.js'
 
 const props = defineProps({
   enabled: { type: Boolean, required: true },
@@ -47,6 +48,31 @@ const isBreadthAllZero = computed(() => {
   if (!b) return true
   return !Number(b.advancers) && !Number(b.decliners) && !Number(b.limitUpCount) && !Number(b.limitDownCount) && !Number(b.flatCount)
 })
+
+const isNorthboundUnavailable = computed(() => {
+  const flow = props.overview?.northboundFlow
+  if (!flow) return true
+  if (!isNorthboundStatusAvailable(flow)) return true
+  return !flow.totalNetInflow && !isLikelyTradingHours.value
+})
+
+const northboundUnavailableText = computed(() => {
+  const flow = props.overview?.northboundFlow
+  const unavailableText = formatNorthboundUnavailableText(flow, '不可用')
+  if (unavailableText) return unavailableText
+  if (!flow?.totalNetInflow && !isLikelyTradingHours.value) return '休市'
+  return '不可用'
+})
+
+const formatNorthboundAmount = value => isNorthboundUnavailable.value
+  ? northboundUnavailableText.value
+  : props.formatSignedRealtimeAmount(value)
+
+const formatSignedPercentagePoint = value => {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  return `${number >= 0 ? '+' : ''}${number.toFixed(2)} pp`
+}
 
 const AUTO_REFRESH_SECONDS = 30
 const AUTO_REFRESH_SECONDS_OFF = 300
@@ -157,8 +183,8 @@ onUnmounted(() => { stopCountdown() })
           </div>
           <div class="pulse-chip">
             <span class="pulse-chip-label">🌏 北向</span>
-            <strong class="pulse-chip-value" :class="overview.northboundFlow?.totalNetInflow ? getChangeClass(overview.northboundFlow.totalNetInflow) : ''">
-              {{ !overview.northboundFlow?.totalNetInflow && !isLikelyTradingHours ? '休市' : formatSignedRealtimeAmount(overview.northboundFlow?.totalNetInflow) }}
+            <strong class="pulse-chip-value" :class="!isNorthboundUnavailable && overview.northboundFlow?.totalNetInflow ? getChangeClass(overview.northboundFlow.totalNetInflow) : ''">
+              {{ formatNorthboundAmount(overview.northboundFlow?.totalNetInflow) }}
             </strong>
           </div>
           <div class="pulse-chip">
@@ -221,15 +247,15 @@ onUnmounted(() => { stopCountdown() })
           <div class="detail-chip-title">🌏 北向资金</div>
           <div class="detail-chip-row">
             <span>总计</span>
-            <strong :class="getChangeClass(overview.northboundFlow?.totalNetInflow)">{{ formatSignedRealtimeAmount(overview.northboundFlow?.totalNetInflow) }}</strong>
+            <strong :class="!isNorthboundUnavailable ? getChangeClass(overview.northboundFlow?.totalNetInflow) : ''">{{ formatNorthboundAmount(overview.northboundFlow?.totalNetInflow) }}</strong>
           </div>
           <div class="detail-chip-row">
             <span>沪通</span>
-            <strong :class="getChangeClass(overview.northboundFlow?.shanghaiNetInflow)">{{ formatSignedRealtimeAmount(overview.northboundFlow?.shanghaiNetInflow) }}</strong>
+            <strong :class="!isNorthboundUnavailable ? getChangeClass(overview.northboundFlow?.shanghaiNetInflow) : ''">{{ formatNorthboundAmount(overview.northboundFlow?.shanghaiNetInflow) }}</strong>
           </div>
           <div class="detail-chip-row">
             <span>深通</span>
-            <strong :class="getChangeClass(overview.northboundFlow?.shenzhenNetInflow)">{{ formatSignedRealtimeAmount(overview.northboundFlow?.shenzhenNetInflow) }}</strong>
+            <strong :class="!isNorthboundUnavailable ? getChangeClass(overview.northboundFlow?.shenzhenNetInflow) : ''">{{ formatNorthboundAmount(overview.northboundFlow?.shenzhenNetInflow) }}</strong>
           </div>
         </article>
 
@@ -272,7 +298,7 @@ onUnmounted(() => { stopCountdown() })
           </div>
           <div v-if="stockRealtimeRelativeStrength" class="detail-chip-row">
             <span>{{ stockRealtimeRelativeStrength.label }}</span>
-            <strong :class="getChangeClass(stockRealtimeRelativeStrength.spread)">{{ formatSignedPercent(stockRealtimeRelativeStrength.spread) }}</strong>
+            <strong :class="getChangeClass(stockRealtimeRelativeStrength.spread)">{{ formatSignedPercentagePoint(stockRealtimeRelativeStrength.spread) }}</strong>
           </div>
           <div class="detail-chip-row">
             <span>成交额</span>

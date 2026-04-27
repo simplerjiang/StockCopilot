@@ -28,7 +28,7 @@ public sealed class RetailHeatIndexService : IRetailHeatIndexService
     {
         var normalizedSymbol = NormalizeSymbol(symbol);
 
-        var endDate = to ?? DateOnly.FromDateTime(DateTime.Today);
+        var endDate = to ?? DateOnly.FromDateTime(DateTime.UtcNow.AddHours(8));
         var startDate = from ?? endDate.AddDays(-90);
 
         // 扩展查询范围：需要额外前置数据来计算 delta 和 MA20

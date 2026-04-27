@@ -5,15 +5,17 @@ import MetricCell from './MetricCell.vue'
 const props = defineProps({
   mainCapitalFlow: { type: Object, default: null },
   northboundFlow: { type: Object, default: null },
-  diffusionScore: { type: Number, default: 0 },
-  continuationScore: { type: Number, default: 0 },
-  top3SectorTurnoverShare: { type: Number, default: 0 },
-  top10SectorTurnoverShare: { type: Number, default: 0 },
-  top3SectorTurnoverShare5dAvg: { type: Number, default: 0 },
-  top10SectorTurnoverShare5dAvg: { type: Number, default: 0 },
+  diffusionScore: { type: Number, default: null },
+  continuationScore: { type: Number, default: null },
+  top3SectorTurnoverShare: { type: Number, default: null },
+  top10SectorTurnoverShare: { type: Number, default: null },
+  top3SectorTurnoverShare5dAvg: { type: Number, default: null },
+  top10SectorTurnoverShare5dAvg: { type: Number, default: null },
   totalTurnover: { type: Number, default: 0 },
-  advancers: { type: Number, default: 0 },
-  decliners: { type: Number, default: 0 },
+  totalTurnoverUnit: { type: String, default: '' },
+  totalTurnoverUnitLabel: { type: String, default: '' },
+  advancers: { type: Number, default: null },
+  decliners: { type: Number, default: null },
   mainFlowUnavailable: { type: Boolean, default: false },
   northboundUnavailable: { type: Boolean, default: false },
   diffusionUnavailable: { type: Boolean, default: false },
@@ -21,20 +23,26 @@ const props = defineProps({
   turnoverShareUnavailable: { type: Boolean, default: false }
 })
 
-const fmtYi = v => {
+const fmtYi = (v, unit = '亿元') => {
   if (v == null || !Number.isFinite(Number(v))) return '--'
-  const n = Number(v) / 100_000_000
+  const n = String(unit).includes('亿') ? Number(v) : Number(v) / 100_000_000
   return `${n >= 0 ? '+' : ''}${n.toFixed(1)}亿`
 }
 const fmtTurnover = v => {
-  const n = Number(v ?? 0)
-  if (n <= 0) return '--'
-  return `${(n / 100_000_000).toFixed(0)}亿`
+  const numericValue = Number(v ?? 0)
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return '--'
+  const unit = String(props.totalTurnoverUnit || '').trim().toLowerCase()
+  const unitLabel = String(props.totalTurnoverUnitLabel || '').trim()
+  if (unitLabel.includes('亿')) return `${numericValue.toFixed(0)}亿`
+  if (unit === 'cny' || unitLabel === '元' || unitLabel.includes('人民币')) return `${(numericValue / 100_000_000).toFixed(0)}亿`
+  if (unitLabel) return `${numericValue.toFixed(0)}${unitLabel}`
+  if (props.totalTurnoverUnit) return `${numericValue.toFixed(0)}${props.totalTurnoverUnit}`
+  return `${(numericValue / 100_000_000).toFixed(0)}亿`
 }
 
 const mainFlowVal = computed(() => {
   if (!props.mainCapitalFlow || props.mainFlowUnavailable) return null
-  return fmtYi(props.mainCapitalFlow.mainNetInflow)
+  return fmtYi(props.mainCapitalFlow.mainNetInflow, props.mainCapitalFlow.amountUnit)
 })
 const mainFlowTrend = computed(() => {
   if (!props.mainCapitalFlow || props.mainFlowUnavailable) return null
@@ -43,15 +51,17 @@ const mainFlowTrend = computed(() => {
 })
 const northVal = computed(() => {
   if (!props.northboundFlow || props.northboundUnavailable) return null
-  return fmtYi(props.northboundFlow.totalNetInflow)
+  return fmtYi(props.northboundFlow.totalNetInflow, props.northboundFlow.amountUnit)
 })
 const northTrend = computed(() => {
   if (!props.northboundFlow || props.northboundUnavailable) return null
   const v = props.northboundFlow.totalNetInflow
   return v > 0 ? 'up' : v < 0 ? 'down' : 'flat'
 })
-const adRatio = computed(() => `${props.advancers}:${props.decliners}`)
+const fmtCount = value => Number.isFinite(Number(value)) ? Number(value) : '—'
+const adRatio = computed(() => `${fmtCount(props.advancers)}:${fmtCount(props.decliners)}`)
 const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
+const fmtScore = v => Number.isFinite(Number(v)) ? Number(v).toFixed(1) : '—'
 </script>
 
 <template>
@@ -63,14 +73,14 @@ const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
         :value="mainFlowVal ?? '数据不可用'"
         :status="mainFlowVal ? 'ok' : 'unavailable'"
         :trend="mainFlowTrend"
-        :timestamp="mainCapitalFlow?.snapshotTime"
+        :timestamp="mainFlowVal ? mainCapitalFlow?.snapshotTime : ''"
       />
       <MetricCell
         label="北向资金"
         :value="northVal ?? '数据不可用'"
         :status="northVal ? 'ok' : 'unavailable'"
         :trend="northTrend"
-        :timestamp="northboundFlow?.snapshotTime"
+        :timestamp="northVal ? northboundFlow?.snapshotTime : ''"
       />
       <!-- Row 2 -->
       <MetricCell label="涨跌比" :value="adRatio" />
@@ -78,13 +88,13 @@ const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
       <!-- Row 3 -->
       <MetricCell
         label="扩散指数"
-        :value="diffusionUnavailable ? '数据不可用' : diffusionScore.toFixed(1)"
+        :value="diffusionUnavailable ? '数据不可用' : fmtScore(diffusionScore)"
         :status="diffusionUnavailable ? 'unavailable' : 'ok'"
         :style="diffusionUnavailable ? null : { color: scoreColor(diffusionScore) }"
       />
       <MetricCell
         label="持续指数"
-        :value="continuationUnavailable ? '数据不可用' : continuationScore.toFixed(1)"
+        :value="continuationUnavailable ? '数据不可用' : fmtScore(continuationScore)"
         :status="continuationUnavailable ? 'unavailable' : 'ok'"
         :style="continuationUnavailable ? null : { color: scoreColor(continuationScore) }"
       />
@@ -95,8 +105,8 @@ const scoreColor = v => v > 60 ? '#ff5c5c' : v >= 40 ? '#c2cad8' : '#1ee88f'
         <span class="cp-avg">(5日均 数据不可用)</span>
       </template>
       <template v-else>
-        热门板块TOP3占比 {{ top3SectorTurnoverShare.toFixed(1) }}%
-        <span class="cp-avg">(5日均 {{ top3SectorTurnoverShare5dAvg.toFixed(1) }}%)</span>
+        热门板块TOP3占比 {{ fmtScore(top3SectorTurnoverShare) }}%
+        <span class="cp-avg">(5日均 {{ fmtScore(top3SectorTurnoverShare5dAvg) }}%)</span>
       </template>
     </div>
   </div>

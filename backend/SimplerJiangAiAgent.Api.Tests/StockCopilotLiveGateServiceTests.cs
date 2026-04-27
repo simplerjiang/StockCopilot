@@ -586,5 +586,8 @@ public sealed class StockCopilotLiveGateServiceTests
 
         public Task<List<RagCitationDto>> SearchFinancialReportRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
             => Task.FromResult(new List<RagCitationDto>());
+
+        public Task<List<RagCitationDto>> SearchAnnouncementRagAsync(string symbol, string query, int topK = 5, CancellationToken cancellationToken = default)
+            => Task.FromResult(new List<RagCitationDto>());
     }
 }

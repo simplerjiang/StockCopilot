@@ -33,6 +33,36 @@ public sealed class StockDetailCacheQueriesTests
     }
 
     [Fact]
+    public async Task GetRecentKLinesAsync_FiltersZeroHighLowRowsAndKeepsZeroVolumeValidRows()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using var dbContext = new AppDbContext(options);
+        dbContext.KLinePoints.AddRange(
+            new KLinePointEntity { Symbol = "sh600001", Interval = "day", Date = new DateTime(2026, 4, 24), Open = 10, Close = 10, High = 10, Low = 10, Volume = 100 },
+            new KLinePointEntity { Symbol = "sh600001", Interval = "day", Date = new DateTime(2026, 4, 25), Open = 10, Close = 10, High = 0, Low = 0, Volume = 100 },
+            new KLinePointEntity { Symbol = "sh600001", Interval = "day", Date = new DateTime(2026, 4, 26), Open = 11, Close = 11, High = 12, Low = 8, Volume = 0 });
+        await dbContext.SaveChangesAsync();
+
+        var result = await StockDetailCacheQueries.GetRecentKLinesAsync(dbContext, "sh600001", "day", 2);
+
+        Assert.Equal(2, result.Count);
+        Assert.DoesNotContain(result, item => item.High == 0m && item.Low == 0m);
+        Assert.Collection(
+            result,
+            item => Assert.Equal(new DateTime(2026, 4, 24), item.Date),
+            item =>
+            {
+                Assert.Equal(new DateTime(2026, 4, 26), item.Date);
+                Assert.Equal(12m, item.High);
+                Assert.Equal(8m, item.Low);
+                Assert.Equal(0m, item.Volume);
+            });
+    }
+
+    [Fact]
     public async Task GetLatestMinuteLinesAsync_ReturnsOnlyLatestTradingDate()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()

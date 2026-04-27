@@ -6,25 +6,9 @@ public sealed class BaiduStockCrawler : IStockCrawlerSource
 {
     public string SourceName => "百度";
 
-    public Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
-        // TODO: 接入公开接口并解析数据
-        var quote = new StockQuoteDto(
-            symbol,
-            string.Empty,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            0m,
-            DateTime.UtcNow,
-            Array.Empty<StockNewsDto>(),
-            Array.Empty<StockIndicatorDto>()
-        );
-        return Task.FromResult(quote);
+        return Task.FromResult<StockQuoteDto?>(null);
     }
 
     public Task<MarketIndexDto> GetMarketIndexAsync(string symbol, CancellationToken cancellationToken = default)
@@ -33,6 +17,11 @@ public sealed class BaiduStockCrawler : IStockCrawlerSource
             .ContinueWith(task =>
             {
                 var quote = task.Result;
+                if (quote is null)
+                {
+                    return new MarketIndexDto(symbol, symbol, 0m, 0m, 0m, DateTime.UtcNow);
+                }
+
                 return new MarketIndexDto(
                     quote.Symbol,
                     quote.Name,

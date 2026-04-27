@@ -88,6 +88,64 @@ public sealed class RealtimeMarketOverviewServiceTests
         Assert.Equal(["sh000001", "hsi"], fakeStockDataService.RequestedSymbols);
     }
 
+    [Fact]
+    public async Task GetOverviewAsync_ShouldMarkConstantZeroNorthboundSeriesUnavailable()
+    {
+        var timeProvider = new TestTimeProvider(new DateTimeOffset(2026, 3, 19, 2, 0, 0, TimeSpan.Zero));
+        var service = new RealtimeMarketOverviewService(new MemoryCache(new MemoryCacheOptions()), new FakeRealtimeClient
+        {
+            Northbound = CreateNorthbound([
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 1, 30, 0, DateTimeKind.Utc), 0m, 520m, 0m, 420m, 0m),
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 3, 0, 0, DateTimeKind.Utc), 0m, 520m, 0m, 420m, 0m),
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 5, 0, 0, DateTimeKind.Utc), 0m, 520m, 0m, 420m, 0m),
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 7, 0, 0, DateTimeKind.Utc), 0m, 520m, 0m, 420m, 0m)
+            ])
+        }, timeProvider: timeProvider);
+
+        var result = await service.GetOverviewAsync();
+
+        Assert.True(result.IsStale);
+        Assert.NotNull(result.NorthboundFlow);
+        Assert.True(result.NorthboundFlow!.IsStale);
+        Assert.Equal("unavailable", result.NorthboundFlow.Status);
+    }
+
+    [Fact]
+    public async Task GetOverviewAsync_ShouldKeepChangingNorthboundSeriesFreshDuringTradingHours()
+    {
+        var timeProvider = new TestTimeProvider(new DateTimeOffset(2026, 3, 19, 2, 0, 0, TimeSpan.Zero));
+        var service = new RealtimeMarketOverviewService(new MemoryCache(new MemoryCacheOptions()), new FakeRealtimeClient
+        {
+            Northbound = CreateNorthbound([
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 1, 30, 0, DateTimeKind.Utc), 0m, 520m, 0m, 420m, 0m),
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 3, 0, 0, DateTimeKind.Utc), 2m, 518m, -1m, 421m, 1m),
+                new NorthboundFlowPointDto(new DateTime(2026, 3, 19, 5, 0, 0, DateTimeKind.Utc), 3m, 517m, 1m, 419m, 4m)
+            ])
+        }, timeProvider: timeProvider);
+
+        var result = await service.GetOverviewAsync();
+
+        Assert.False(result.IsStale);
+        Assert.NotNull(result.NorthboundFlow);
+        Assert.False(result.NorthboundFlow!.IsStale);
+        Assert.Equal("ok", result.NorthboundFlow.Status);
+    }
+
+    private static NorthboundFlowSnapshotDto CreateNorthbound(IReadOnlyList<NorthboundFlowPointDto> points)
+    {
+        var latest = points[^1];
+        return new NorthboundFlowSnapshotDto(
+            latest.Timestamp,
+            "03-19",
+            "亿元",
+            latest.ShanghaiNetInflow,
+            latest.ShanghaiBalance,
+            latest.ShenzhenNetInflow,
+            latest.ShenzhenBalance,
+            latest.TotalNetInflow,
+            points);
+    }
+
     private sealed class FakeRealtimeClient : IEastmoneyRealtimeMarketClient
     {
         public IReadOnlyList<string> RequestedSymbols { get; private set; } = Array.Empty<string>();

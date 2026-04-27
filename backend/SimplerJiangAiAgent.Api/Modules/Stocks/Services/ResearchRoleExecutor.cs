@@ -3,6 +3,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Diagnostics;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
@@ -23,7 +24,8 @@ public sealed record RoleExecutionResult(
     IReadOnlyList<string> DegradedFlags,
     string? ErrorCode,
     string? ErrorMessage,
-    string? OutputRefsJson = null);
+    string? OutputRefsJson = null,
+    IReadOnlyList<Models.RagCitationDto>? RagCitations = null);
 
 internal sealed record ResearchToolOutputRef(
     string ToolName,
@@ -350,6 +352,7 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         var degradedFlags = new List<string>();
         var toolResults = new List<string>();
         var toolOutputRefs = new List<ResearchToolOutputRef>();
+        var collectedRagCitations = new List<Models.RagCitationDto>();
 
         _eventBus.Publish(new ResearchEvent(
             ResearchEventType.RoleStarted,
@@ -418,6 +421,8 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
                     if (outcome.Success)
                     {
                         toolResults.Add($"[{toolName}]\n{outcome.ResultJson}");
+                        if (outcome.RagCitations is { Count: > 0 })
+                            collectedRagCitations.AddRange(outcome.RagCitations);
                         toolOutputRefs.Add(new ResearchToolOutputRef(
                             toolName,
                             "Completed",
@@ -539,7 +544,8 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
                 return new RoleExecutionResult(context.RoleId, status,
                     JsonSerializer.Serialize(new { content = llmResult.Content }, RelaxedJsonOptions),
                     llmResult.TraceId, degradedFlags, null, null,
-                    JsonSerializer.Serialize(toolOutputRefs, RelaxedJsonOptions));
+                    JsonSerializer.Serialize(toolOutputRefs, RelaxedJsonOptions),
+                    collectedRagCitations.Count > 0 ? collectedRagCitations : null);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (attempt < MaxLlmRetries)
@@ -561,19 +567,21 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         _sessionLogger?.LogRoleLlmError(context.SessionId, context.TurnId, context.RoleId,
             lastLlmException?.GetType().Name ?? "Unknown", lastLlmException?.Message ?? "Unknown error");
 
+        var sanitizedMsg = ErrorSanitizer.SanitizeErrorMessage(lastLlmException?.Message);
+
         _eventBus.Publish(new ResearchEvent(
             ResearchEventType.RoleFailed,
             context.SessionId, context.TurnId, context.StageId,
             context.RoleId, null,
-            $"Role {context.RoleId} LLM failed after {MaxLlmRetries + 1} attempts: {lastLlmException?.Message}",
+            $"Role {context.RoleId} LLM failed after {MaxLlmRetries + 1} attempts: {sanitizedMsg}",
             null, DateTime.UtcNow));
 
         return new RoleExecutionResult(context.RoleId, ResearchRoleStatus.Failed,
-            null, null, degradedFlags, "LLM_FAILED", lastLlmException?.Message,
+            null, null, degradedFlags, "LLM_FAILED", sanitizedMsg,
             JsonSerializer.Serialize(toolOutputRefs, RelaxedJsonOptions));
     }
 
-    private sealed record ToolOutcome(bool Success, string? ResultJson);
+    private sealed record ToolOutcome(bool Success, string? ResultJson, List<Models.RagCitationDto>? RagCitations = null);
 
     private async Task<ToolOutcome> ExecuteToolWithRetryAsync(RoleExecutionContext context, string toolName, CancellationToken cancellationToken)
     {
@@ -599,8 +607,8 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
                 {
                     using var toolCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     toolCts.CancelAfter(toolTimeout);
-                    var toolResult = await DispatchToolAsync(context, toolName, toolCts.Token);
-                    return new ToolOutcome(true, toolResult);
+                    var (toolResult, ragCits) = await DispatchToolAsync(context, toolName, toolCts.Token);
+                    return new ToolOutcome(true, toolResult, ragCits);
                 }
                 finally
                 {
@@ -634,12 +642,24 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             : DefaultToolTimeout;
     }
 
-    private async Task<string> DispatchToolAsync(RoleExecutionContext context, string toolName, CancellationToken ct)
+    private async Task<(string Result, List<Models.RagCitationDto>? Citations)> DispatchToolAsync(RoleExecutionContext context, string toolName, CancellationToken ct)
     {
         var symbol = context.Symbol;
         var taskId = BuildScopedToolTaskId(context, toolName);
 
-        return toolName switch
+        // For RAG tools, capture raw citations before formatting
+        if (toolName == StockMcpToolNames.FinancialReportRag)
+        {
+            var citations = await _mcpGateway.SearchFinancialReportRagAsync(symbol, context.UserPrompt ?? "", 5, ct);
+            return (FormatRagToolResult(citations), citations);
+        }
+        if (toolName == StockMcpToolNames.AnnouncementRag)
+        {
+            var citations = await _mcpGateway.SearchAnnouncementRagAsync(symbol, context.UserPrompt ?? "", 5, ct);
+            return (FormatRagToolResult(citations, "公告"), citations);
+        }
+
+        var result = toolName switch
         {
             StockMcpToolNames.CompanyOverview => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetCompanyOverviewAsync(symbol, taskId, null, ct), CompactJsonOptions)),
             StockMcpToolNames.Product => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetProductAsync(symbol, taskId, null, ct), CompactJsonOptions)),
@@ -654,9 +674,9 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
             StockMcpToolNames.Strategy => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetStrategyAsync(symbol, "day", 60, null, null, taskId, null, ct), CompactJsonOptions)),
             StockMcpToolNames.News => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.GetNewsAsync(symbol, "stock", taskId, null, ct), CompactJsonOptions)),
             StockMcpToolNames.Search => SlimToolResultJson(JsonSerializer.Serialize(await _mcpGateway.SearchAsync(symbol, true, taskId, ct), CompactJsonOptions)),
-            StockMcpToolNames.FinancialReportRag => FormatRagToolResult(await _mcpGateway.SearchFinancialReportRagAsync(symbol, context.UserPrompt ?? "", 5, ct)),
             _ => throw new ArgumentException($"Unknown tool: {toolName}")
         };
+        return (result, null);
     }
 
     private static string BuildScopedToolTaskId(RoleExecutionContext context, string toolName)
@@ -665,11 +685,11 @@ public sealed class ResearchRoleExecutor : IResearchRoleExecutor
         return $"research:{context.SessionId}:{context.TurnId}:{normalizedSymbol}{ResearchToolTaskScopeSeparator}{toolName}";
     }
 
-    private static string FormatRagToolResult(List<Models.RagCitationDto> citations)
+    private static string FormatRagToolResult(List<Models.RagCitationDto> citations, string label = "财报")
     {
         if (citations.Count == 0)
             return "[]";
-        return RagContextEnricher.FormatAsContext(citations);
+        return RagContextEnricher.FormatAsContext(citations, label);
     }
 
     private async Task<PromptGovernancePlan?> ResolvePromptGovernanceAsync(CancellationToken cancellationToken)

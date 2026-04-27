@@ -115,6 +115,34 @@ public sealed class CompositeStockCrawlerTests
         Assert.Equal(3.97m, quote.VolumeRatio);
     }
 
+    [Fact]
+    public async Task GetQuoteAsync_ShouldIgnorePlaceholderQuotes_WhenOnlyNameIsSymbol()
+    {
+        var crawler = new CompositeStockCrawler(new IStockCrawlerSource[]
+        {
+            new FakeCrawlerSource(
+                "新浪",
+                new StockQuoteDto(
+                    "sh600519",
+                    "sh600519",
+                    0m,
+                    0m,
+                    0m,
+                    0m,
+                    0m,
+                    0m,
+                    0m,
+                    0m,
+                    DateTime.UtcNow,
+                    Array.Empty<StockNewsDto>(),
+                    Array.Empty<StockIndicatorDto>()))
+        });
+
+        var quote = await crawler.GetQuoteAsync("sh600519");
+
+        Assert.Null(quote);
+    }
+
     private sealed class FakeCrawlerSource : IStockCrawlerSource
     {
         private readonly StockQuoteDto _quote;
@@ -128,10 +156,10 @@ public sealed class CompositeStockCrawlerTests
         public string SourceName { get; }
         public int QuoteCallCount { get; private set; }
 
-        public Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+        public Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
         {
             QuoteCallCount++;
-            return Task.FromResult(_quote);
+            return Task.FromResult<StockQuoteDto?>(_quote);
         }
 
         public Task<MarketIndexDto> GetMarketIndexAsync(string symbol, CancellationToken cancellationToken = default)

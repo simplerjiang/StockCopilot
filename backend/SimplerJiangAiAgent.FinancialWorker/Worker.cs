@@ -1,6 +1,8 @@
 using SimplerJiangAiAgent.FinancialWorker.Data;
 using SimplerJiangAiAgent.FinancialWorker.Models;
 using SimplerJiangAiAgent.FinancialWorker.Services;
+using SimplerJiangAiAgent.FinancialWorker.Services.Announcement;
+using SimplerJiangAiAgent.FinancialWorker.Services.Rag;
 
 namespace SimplerJiangAiAgent.FinancialWorker;
 
@@ -9,6 +11,10 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly FinancialDbContext _db;
     private readonly FinancialDataOrchestrator _orchestrator;
+    private readonly AnnouncementPdfCollector _announcementPdfCollector;
+    private readonly AnnouncementPdfProcessor _announcementPdfProcessor;
+    private readonly IEmbedder _embedder;
+    private readonly RagDbContext _ragDb;
 
     private static readonly TimeZoneInfo ChinaTimeZone =
         TimeZoneInfo.FindSystemTimeZoneById("China Standard Time");
@@ -19,11 +25,22 @@ public class Worker : BackgroundService
 
     private DateTime? _lastCollectionDateUtc;
 
-    public Worker(ILogger<Worker> logger, FinancialDbContext db, FinancialDataOrchestrator orchestrator)
+    public Worker(
+        ILogger<Worker> logger,
+        FinancialDbContext db,
+        FinancialDataOrchestrator orchestrator,
+        AnnouncementPdfCollector announcementPdfCollector,
+        AnnouncementPdfProcessor announcementPdfProcessor,
+        IEmbedder embedder,
+        RagDbContext ragDb)
     {
         _logger = logger;
         _db = db;
         _orchestrator = orchestrator;
+        _announcementPdfCollector = announcementPdfCollector;
+        _announcementPdfProcessor = announcementPdfProcessor;
+        _embedder = embedder;
+        _ragDb = ragDb;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -97,6 +114,70 @@ public class Worker : BackgroundService
         var ok = results.Count(r => r.Success);
         var fail = results.Count - ok;
         _logger.LogInformation("Scheduled collection done: {Ok} succeeded, {Fail} failed", ok, fail);
+
+        // 公告 PDF 采集（在财报数据采集之后）
+        try
+        {
+            _logger.LogInformation("开始公告 PDF 采集，共 {Count} 个标的", symbols.Count);
+            foreach (var symbol in symbols)
+            {
+                try
+                {
+                    var downloaded = await _announcementPdfCollector.CollectAsync(symbol, 5, ct);
+                    if (downloaded.Count > 0)
+                    {
+                        var chunks = await _announcementPdfProcessor.ProcessAsync(downloaded, ct);
+                        _logger.LogInformation("公告 PDF 采集完成: {Symbol}, 下载 {Downloaded} 个, 入库 {Chunks} 个 chunk",
+                            symbol, downloaded.Count, chunks);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "公告 PDF 采集失败: {Symbol}", symbol);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "公告 PDF 批量采集异常");
+        }
+
+        // Embedding 补全：如果 embedder 可用，补全缺失 embedding 的 chunk
+        try
+        {
+            if (_embedder.IsAvailable)
+            {
+                var missing = _ragDb.GetChunkIdsWithoutEmbedding(200);
+                if (missing.Count > 0)
+                {
+                    _logger.LogInformation("开始补全 embedding，共 {Count} 个缺失 chunk", missing.Count);
+                    var filled = 0;
+                    foreach (var (chunkId, text) in missing)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        try
+                        {
+                            var embedding = await _embedder.EmbedAsync(text, ct);
+                            if (embedding != null)
+                            {
+                                _ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
+                                filled++;
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            _logger.LogDebug(ex, "Embedding 补全失败: {ChunkId}", chunkId);
+                            break; // embedder 可能已不可用，停止本轮补全
+                        }
+                    }
+                    _logger.LogInformation("Embedding 补全完成: {Filled}/{Total}", filled, missing.Count);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Embedding 补全异常");
+        }
 
         // 记录本次采集时间
         _lastCollectionDateUtc = DateTime.UtcNow;

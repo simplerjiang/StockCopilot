@@ -1,3 +1,4 @@
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
@@ -142,7 +143,8 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             GroundingMode: "tool_results_required",
             ConfidenceScore: null,
             NeedsToolExecution: true,
-            Constraints: constraints);
+            Constraints: constraints,
+            RagCitations: Array.Empty<StockCopilotMcpEvidenceDto>());
     }
 
     private static IReadOnlyList<StockCopilotPlanStepDto> BuildPlanSteps(
@@ -523,7 +525,7 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
         }
         catch (Exception ex)
         {
-            return BuildFailedOutcome(proposal, ex.Message);
+            return BuildFailedOutcome(proposal, ErrorSanitizer.SanitizeErrorMessage(ex.Message) ?? string.Empty);
         }
     }
 
@@ -751,7 +753,8 @@ public sealed class StockCopilotSessionService : IStockCopilotSessionService
             GroundingMode: status == "done" ? "grounded" : "grounded_with_gaps",
             ConfidenceScore: confidence,
             NeedsToolExecution: false,
-            Constraints: constraints);
+            Constraints: constraints,
+            RagCitations: Array.Empty<StockCopilotMcpEvidenceDto>());
     }
 
     private static Dictionary<string, string> ParseInputSummary(string inputSummary)

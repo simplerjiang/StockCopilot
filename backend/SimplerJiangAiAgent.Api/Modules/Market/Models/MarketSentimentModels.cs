@@ -1,5 +1,11 @@
 namespace SimplerJiangAiAgent.Api.Modules.Market.Models;
 
+public static class MarketAmountUnitContracts
+{
+    public const string Cny = "CNY";
+    public const string CnyUnitLabel = "元";
+}
+
 public sealed record MarketSentimentSummaryDto(
     DateTime SnapshotTime,
     string SessionPhase,
@@ -25,7 +31,14 @@ public sealed record MarketSentimentSummaryDto(
     decimal LimitUpCount5dAvg,
     decimal BrokenBoardRate5dAvg,
     bool IsDegraded = false,
-    string? DegradeReason = null);
+    string? DegradeReason = null)
+{
+    public decimal TotalTurnoverCny => TotalTurnover;
+
+    public string TotalTurnoverUnit => MarketAmountUnitContracts.Cny;
+
+    public string TotalTurnoverUnitLabel => MarketAmountUnitContracts.CnyUnitLabel;
+}
 
 public sealed record MarketSentimentHistoryPointDto(
     DateTime TradingDate,
@@ -42,7 +55,7 @@ public sealed record SectorRotationListItemDto(
     string SectorName,
     decimal ChangePercent,
     decimal MainNetInflow,
-    decimal BreadthScore,
+    decimal? BreadthScore,
     decimal ContinuityScore,
     decimal StrengthScore,
     string NewsSentiment,
@@ -58,11 +71,11 @@ public sealed record SectorRotationListItemDto(
     decimal StrengthAvg5d,
     decimal StrengthAvg10d,
     decimal StrengthAvg20d,
-    decimal DiffusionRate,
-    int AdvancerCount,
-    int DeclinerCount,
-    int FlatMemberCount,
-    int LimitUpMemberCount,
+    decimal? DiffusionRate,
+    int? AdvancerCount,
+    int? DeclinerCount,
+    int? FlatMemberCount,
+    int? LimitUpMemberCount,
     decimal LeaderStabilityScore,
     decimal MainlineScore,
     bool IsMainline);
@@ -121,15 +134,15 @@ public sealed record SectorRotationHistoryPointDto(
     DateTime TradingDate,
     DateTime SnapshotTime,
     decimal ChangePercent,
-    decimal BreadthScore,
+    decimal? BreadthScore,
     decimal ContinuityScore,
     decimal StrengthScore,
     int RankNo,
-    decimal DiffusionRate,
-    int AdvancerCount,
-    int DeclinerCount,
-    int FlatMemberCount,
-    int LimitUpMemberCount,
+    decimal? DiffusionRate,
+    int? AdvancerCount,
+    int? DeclinerCount,
+    int? FlatMemberCount,
+    int? LimitUpMemberCount,
     int RankChange5d,
     int RankChange10d,
     int RankChange20d,
@@ -150,7 +163,9 @@ public sealed record SectorRotationDetailDto(
     SectorRotationListItemDto Snapshot,
     IReadOnlyList<SectorRotationHistoryPointDto> History,
     IReadOnlyList<SectorRotationLeaderDto> Leaders,
-    IReadOnlyList<SectorRotationNewsDto> News);
+    IReadOnlyList<SectorRotationNewsDto> News,
+    bool IsDegraded = false,
+    string? DegradeReason = null);
 
 public sealed record StockMarketContextDto(
     string? StageLabel,
@@ -162,4 +177,8 @@ public sealed record StockMarketContextDto(
     decimal SuggestedPositionScale,
     string? ExecutionFrequencyLabel,
     bool CounterTrendWarning,
-    bool IsMainlineAligned);
+    bool IsMainlineAligned)
+{
+    public string? StockSectorCode => SectorCode;
+    public string? MainlineSectorCode { get; init; }
+}

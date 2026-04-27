@@ -88,7 +88,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         "券商", "净利润", "北交所", "沪深", "原油", "业绩", "期货", "盘面", "大盘",
         "标普", "恒指", "日元", "美元", "英镑", "欧元", "纳指", "道指"
     };
-    private const string EastmoneyMarketNewsUrlTemplate = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns?client=web&biz=web_news_col&column={0}&order=1&needInteractData=0&page_index=1&page_size=20&req_trace=";
+    private const string EastmoneyMarketNewsUrlTemplate = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns?client=web&biz=web_news_col&column={0}&order=1&needInteractData=0&page_index={1}&page_size=20&req_trace=";
     private static readonly (int Column, string SourceTag)[] EastmoneyMarketColumns =
     {
         (1350, "eastmoney-market-news"),   // 全球市场
@@ -274,8 +274,7 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         CancellationToken cancellationToken)
     {
         var profile = await FetchCompanyProfileAsync(symbol, cancellationToken);
-        var announcementJson = await _httpClient.GetStringAsync(BuildAnnouncementUrl(symbol), cancellationToken);
-        var announcementItems = EastmoneyAnnouncementParser.Parse(symbol, profile.Name, profile.SectorName, announcementJson, crawledAt);
+        var announcementItems = await FetchAnnouncementsWithPagingAsync(symbol, profile.Name, profile.SectorName, crawledAt, cancellationToken);
 
         var companyHtml = await _httpClient.GetStringAsync($"https://finance.sina.com.cn/realstock/company/{symbol}/nc.shtml", cancellationToken);
         var companyNews = SinaCompanyNewsParser.ParseCompanyNews(companyHtml)
@@ -515,26 +514,56 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         int column,
         string sourceTag,
         DateTime crawledAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxPages = 5)
     {
+        var allResults = new List<LocalSectorReportSeed>();
+        var cutoff = EnsureUtc(crawledAt).AddDays(-MarketNewsMaxAcceptedAgeDays);
+        int pageIndex = 1;
+
         try
         {
-            var traceId = Guid.NewGuid().ToString("N");
-            var url = string.Format(EastmoneyMarketNewsUrlTemplate, column) + traceId;
-            var json = await _httpClient.GetStringAsync(url, cancellationToken);
-            return EastmoneyMarketNewsParser.Parse(json, sourceTag, crawledAt)
-                .Where(item => IsFinanceRelevant(item.Title))
-                .ToArray();
+            while (pageIndex <= maxPages)
+            {
+                var traceId = Guid.NewGuid().ToString("N");
+                var url = string.Format(EastmoneyMarketNewsUrlTemplate, column, pageIndex) + traceId;
+                var json = await _httpClient.GetStringAsync(url, cancellationToken);
+                var pageItems = EastmoneyMarketNewsParser.Parse(json, sourceTag, crawledAt)
+                    .Where(item => IsFinanceRelevant(item.Title))
+                    .ToArray();
+
+                if (pageItems.Length == 0)
+                    break;
+
+                allResults.AddRange(pageItems);
+
+                // 如果本页所有新闻的发布时间都早于截止时间，不再翻页
+                if (pageItems.All(item => EnsureUtc(item.PublishTime) < cutoff))
+                {
+                    _logger.LogDebug("东方财富大盘资讯 column={Column} page={Page}: 全部早于截止时间，停止翻页",
+                        column, pageIndex);
+                    break;
+                }
+
+                _logger.LogDebug("东方财富大盘资讯 column={Column} page={Page}: 本页 {Count} 条, 累计 {Total} 条",
+                    column, pageIndex, pageItems.Length, allResults.Count);
+
+                pageIndex++;
+                if (pageIndex <= maxPages)
+                    await Task.Delay(300, cancellationToken);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return Array.Empty<LocalSectorReportSeed>();
+            return allResults.Count > 0 ? allResults : Array.Empty<LocalSectorReportSeed>();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "抓取东方财富大盘资讯失败: column={Column}", column);
-            return Array.Empty<LocalSectorReportSeed>();
+            _logger.LogWarning(ex, "抓取东方财富大盘资讯失败: column={Column} page={Page}", column, pageIndex);
+            return allResults.Count > 0 ? allResults : Array.Empty<LocalSectorReportSeed>();
         }
+
+        return allResults;
     }
 
     private async Task<T> RunMarketSourceWithSoftTimeoutAsync<T>(
@@ -591,10 +620,51 @@ public sealed class LocalFactIngestionService : ILocalFactIngestionService
         }
     }
 
-    private static string BuildAnnouncementUrl(string symbol)
+    private static string BuildAnnouncementUrl(string symbol, int pageIndex = 1)
     {
         var code = symbol[2..];
-        return $"https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=30&page_index=1&ann_type=A&client_source=web&stock_list={code}";
+        return $"https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=30&page_index={pageIndex}&ann_type=A&client_source=web&stock_list={code}";
+    }
+
+    private async Task<IReadOnlyList<LocalStockNewsSeed>> FetchAnnouncementsWithPagingAsync(
+        string symbol, string name, string? sectorName, DateTime crawledAt,
+        CancellationToken cancellationToken, int maxTotal = 200)
+    {
+        var allResults = new List<LocalStockNewsSeed>();
+        int pageIndex = 1;
+        const int pageSize = 30;
+
+        while (true)
+        {
+            var url = BuildAnnouncementUrl(symbol, pageIndex);
+            string json;
+            try
+            {
+                json = await _httpClient.GetStringAsync(url, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "东方财富公告翻页失败: {Symbol} page={Page}", symbol, pageIndex);
+                break;
+            }
+
+            var pageItems = EastmoneyAnnouncementParser.Parse(symbol, name, sectorName, json, crawledAt);
+
+            if (pageItems.Count == 0)
+                break;
+
+            allResults.AddRange(pageItems);
+
+            if (allResults.Count >= maxTotal)
+                break;
+            if (pageItems.Count < pageSize)
+                break;
+
+            pageIndex++;
+            await Task.Delay(300, cancellationToken);
+        }
+
+        return allResults;
     }
 
     private static string BuildSectorSearchUrl(string sectorName)

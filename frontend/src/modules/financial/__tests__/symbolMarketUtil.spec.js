@@ -50,6 +50,15 @@ describe('pickStockMatch', () => {
     expect(pick?.name).toBe('平安银行')
   })
 
+  it('兼容 PascalCase 搜索结果字段', () => {
+    const results = [
+      { Symbol: 'sh000001', Code: '000001', Name: '上证指数', Market: 'sh' },
+      { Symbol: 'sz000001', Code: '000001', Name: '平安银行', Market: 'sz' },
+    ]
+    const pick = pickStockMatch(results, '000001')
+    expect(pick?.Name).toBe('平安银行')
+  })
+
   it('sym=600519：返回 sh600519 贵州茅台', () => {
     const results = [
       { symbol: 'sh600519', code: '600519', name: '贵州茅台', market: 'sh' },

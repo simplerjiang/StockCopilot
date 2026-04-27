@@ -15,11 +15,13 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
 
     public string SourceName => "东方财富";
 
-    public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var normalized = StockSymbolNormalizer.Normalize(symbol);
         var secId = ToEastmoneySecId(normalized);
-        var marketPrefix = normalized.StartsWith("sh", StringComparison.OrdinalIgnoreCase) ? "SH" : "SZ";
+        var marketPrefix = normalized.StartsWith("sh", StringComparison.OrdinalIgnoreCase) ? "SH"
+            : normalized.StartsWith("bj", StringComparison.OrdinalIgnoreCase) ? "BJ"
+            : "SZ";
         var code = normalized[2..];
         var quoteUrl = $"https://push2.eastmoney.com/api/qt/stock/get?secid={secId}&fields=f58,f43,f60,f170,f10,f117,f162";
         var surveyUrl = $"https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code={marketPrefix}{code}";
@@ -32,6 +34,11 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
         await Task.WhenAll(new Task[] { quoteTask, surveyTask, shareholderTask });
 
         var quote = EastmoneyStockParser.ParseQuote(normalized, await quoteTask);
+        if (quote is null)
+        {
+            return null;
+        }
+
         var surveyJson = await surveyTask;
         var shareholderJson = await shareholderTask;
         var profile = surveyJson is null
@@ -54,6 +61,11 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
             .ContinueWith(task =>
             {
                 var quote = task.Result;
+                if (quote is null)
+                {
+                    throw new InvalidOperationException($"东方财富行情不可用: {symbol}");
+                }
+
                 return new MarketIndexDto(quote.Symbol, quote.Name, quote.Price, quote.Change, quote.ChangePercent, quote.Timestamp);
             }, cancellationToken);
     }
@@ -100,7 +112,7 @@ public sealed class EastmoneyStockCrawler : IStockCrawlerSource
         if (GlobalIndexSecIds.TryGetValue(normalized, out var globalSecId))
             return globalSecId;
 
-        var code = normalized.Replace("sh", string.Empty).Replace("sz", string.Empty);
+        var code = normalized.Replace("sh", string.Empty).Replace("sz", string.Empty).Replace("bj", string.Empty);
         var market = normalized.StartsWith("sh") ? "1" : "0";
         return $"{market}.{code}";
     }

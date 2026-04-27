@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using SimplerJiangAiAgent.Api.Infrastructure.Serialization;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -159,6 +161,34 @@ public sealed class EastmoneyRealtimeMarketClientTests
         Assert.Equal(12.34m, result.ShanghaiNetInflow);
         Assert.Equal(420m, result.ShenzhenBalance);
         Assert.Equal(69.12m, result.TotalNetInflow);
+    }
+
+    [Fact]
+    public async Task GetNorthboundFlowAsync_ShouldSerializeTradingTimesWithoutChinaOffsetShift()
+    {
+        var handler = new FakeHttpMessageHandler(_ => JsonResponse("""
+        {
+          "data": {
+            "s2nDate": "03-19",
+            "s2n": [
+              "09:30,10000.00,5200000.00,20000.00,4200000.00,30000.00",
+              "15:00,123400.00,5190000.00,567800.00,4190000.00,691200.00"
+            ]
+          }
+        }
+        """));
+        var client = new EastmoneyRealtimeMarketClient(new HttpClient(handler));
+
+        var result = await client.GetNorthboundFlowAsync();
+
+        Assert.NotNull(result);
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new ChinaDateTimeJsonConverter());
+        var json = JsonSerializer.Serialize(result, options);
+        Assert.Contains("2026-03-19T09:30:00", json);
+        Assert.Contains("2026-03-19T15:00:00", json);
+        Assert.DoesNotContain("2026-03-19T17:30:00", json);
+        Assert.DoesNotContain("2026-03-19T23:00:00", json);
     }
 
     [Fact]

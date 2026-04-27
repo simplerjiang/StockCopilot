@@ -1,7 +1,8 @@
 <script setup>
+import { computed } from 'vue'
 import StockSourceLoadProgress from './StockSourceLoadProgress.vue'
 
-defineProps({
+const props = defineProps({
   detail: {
     type: Object,
     default: null
@@ -29,6 +30,58 @@ defineProps({
 })
 
 defineEmits(['open-external'])
+
+const visibleMessages = computed(() => {
+  const messages = props.detail?.messages
+  if (Array.isArray(messages)) return messages
+  if (Array.isArray(messages?.messages)) return messages.messages
+  return []
+})
+
+const messagesDegraded = computed(() => Boolean(
+  props.detail?.messagesDegraded ?? props.detail?.messages?.degraded ?? false
+))
+
+const messagesWarning = computed(() => String(
+  props.detail?.warning ?? props.detail?.messages?.warning ?? ''
+).trim())
+
+const messageEmptyText = computed(() => (
+  messagesDegraded.value
+    ? '盘中消息暂不可用，已降级为空态展示。'
+    : '暂无盘中消息。'
+))
+
+const formatFactSource = fact => String(fact?.source ?? '').trim()
+
+const shanghaiTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+})
+
+const getShanghaiTimeParts = value => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = Object.fromEntries(shanghaiTimeFormatter.formatToParts(date).map(part => [part.type, part.value]))
+  const hour = Number(parts.hour)
+  const minute = Number(parts.minute)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+  return { weekday: parts.weekday, minutes: hour * 60 + minute }
+}
+
+const getMessageTradingSessionLabel = item => {
+  const parts = getShanghaiTimeParts(item?.publishedAt ?? item?.PublishedAt)
+  if (!parts) return ''
+
+  if (parts.weekday === 'Sat' || parts.weekday === 'Sun') return '非交易时段'
+  if (parts.minutes < 9 * 60 + 30) return '盘前'
+  if (parts.minutes > 15 * 60) return '盘后'
+  if (parts.minutes > 11 * 60 + 30 && parts.minutes < 13 * 60) return '非交易时段'
+  return ''
+}
 </script>
 
 <template>
@@ -57,8 +110,9 @@ defineEmits(['open-external'])
       <p>所属板块：{{ detail.quote.sectorName || '-' }}</p>
       <p v-if="detail.fundamentalSnapshot?.updatedAt" class="muted">快照刷新：{{ formatDate(detail.fundamentalSnapshot.updatedAt) }}</p>
       <ul v-if="detail.fundamentalSnapshot?.facts?.length" class="fundamental-facts">
-        <li v-for="fact in detail.fundamentalSnapshot.facts.slice(0, 8)" :key="`fundamental-${fact.label}-${fact.value}`">
-          <strong>{{ fact.label }}：</strong>{{ fact.value }}
+        <li v-for="fact in detail.fundamentalSnapshot.facts.slice(0, 8)" :key="`fundamental-${fact.label}-${fact.value}-${fact.source ?? ''}`">
+          <span><strong>{{ fact.label }}：</strong>{{ fact.value }}</span>
+          <small v-if="formatFactSource(fact)" class="fundamental-fact-source">口径：{{ formatFactSource(fact) }}</small>
         </li>
       </ul>
     </div>
@@ -66,20 +120,27 @@ defineEmits(['open-external'])
     <div class="quote-card tape-card">
       <div class="quote-card-header">
         <h4>盘中消息带</h4>
-        <span class="muted">{{ detail.messages.length }} 条</span>
+        <div class="message-tape-status">
+          <span v-if="messagesDegraded" class="message-degraded-badge">消息降级</span>
+          <span class="muted">{{ visibleMessages.length }} 条</span>
+        </div>
       </div>
-      <ul v-if="detail.messages.length" class="messages">
+      <p v-if="messagesDegraded && messagesWarning" class="message-degraded-warning">{{ messagesWarning }}</p>
+      <ul v-if="visibleMessages.length" class="messages">
         <li
-          v-for="item in detail.messages"
+          v-for="item in visibleMessages"
           :key="`${item.title}-${item.publishedAt ?? item.PublishedAt ?? ''}`"
           :class="{ clickable: !!(item.url ?? item.Url) }"
           @click="$emit('open-external', item.url ?? item.Url)"
         >
           <span>{{ item.title }}</span>
-          <small>{{ item.source }} · {{ formatDate(item.publishedAt ?? item.PublishedAt) }}</small>
+          <small>
+            {{ item.source }} · 发布时间 {{ formatDate(item.publishedAt ?? item.PublishedAt) }}
+            <template v-if="getMessageTradingSessionLabel(item)"> · {{ getMessageTradingSessionLabel(item) }}</template>
+          </small>
         </li>
       </ul>
-      <p v-else class="muted">暂无盘中消息。</p>
+      <p v-else class="muted" :class="{ 'message-degraded-empty': messagesDegraded }">{{ messageEmptyText }}</p>
     </div>
   </div>
 
@@ -112,8 +173,47 @@ defineEmits(['open-external'])
 }
 
 .quote-card-header {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 0.75rem;
+}
+
+.quote-card-header h4 {
+  margin: 0;
+}
+
+.message-tape-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.message-degraded-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.45rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  color: #92400e;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.message-degraded-warning {
+  margin: 0.65rem 0 0;
+  color: #92400e;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.message-degraded-empty {
+  color: #92400e;
 }
 
 .quote-card p,
@@ -130,6 +230,14 @@ defineEmits(['open-external'])
 
 .fundamental-facts li {
   color: #d9d4c7;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.fundamental-fact-source {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .tape-card {

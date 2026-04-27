@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 using Microsoft.Extensions.Logging;
@@ -41,6 +42,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
     private readonly IRecommendToolDispatcher _toolDispatcher;
     private readonly ILogger<RecommendationRoleExecutor> _logger;
     private readonly ISessionFileLogger? _sessionLogger;
+    private readonly IRecommendSectorCodeNameResolver? _sectorCodeNameResolver;
 
     public RecommendationRoleExecutor(
         ILlmService llmService,
@@ -48,7 +50,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         IRecommendRoleContractRegistry contractRegistry,
         IRecommendToolDispatcher toolDispatcher,
         ILogger<RecommendationRoleExecutor> logger)
-        : this(llmService, eventBus, contractRegistry, toolDispatcher, logger, null)
+        : this(llmService, eventBus, contractRegistry, toolDispatcher, logger, null, null)
     {
     }
 
@@ -58,7 +60,8 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         IRecommendRoleContractRegistry contractRegistry,
         IRecommendToolDispatcher toolDispatcher,
         ILogger<RecommendationRoleExecutor> logger,
-        ISessionFileLogger? sessionLogger)
+        ISessionFileLogger? sessionLogger,
+        IRecommendSectorCodeNameResolver? sectorCodeNameResolver = null)
     {
         _llmService = llmService;
         _eventBus = eventBus;
@@ -66,18 +69,27 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
         _toolDispatcher = toolDispatcher;
         _logger = logger;
         _sessionLogger = sessionLogger;
+        _sectorCodeNameResolver = sectorCodeNameResolver;
     }
 
     public async Task<RecommendRoleExecutionResult> ExecuteAsync(RecommendRoleExecutionContext context, CancellationToken ct = default)
     {
+        // V048-S2 #85: 在 RoleStarted 事件 DetailJson 中暴露工具上限和角色起点，供前端显示 ETA 与 N/M 工具进度
+        var startedContract = _contractRegistry.GetContract(context.RoleId);
         _eventBus.Publish(new RecommendEvent(
             RecommendEventType.RoleStarted, context.SessionId, context.TurnId,
             context.StageId, context.StageType, context.RoleId, null,
-            $"角色 {context.RoleId} 开始执行", null, DateTime.UtcNow));
+            $"角色 {context.RoleId} 开始执行",
+            JsonSerializer.Serialize(new
+            {
+                maxToolCalls = startedContract.MaxToolCalls,
+                startedAt = DateTime.UtcNow
+            }),
+            DateTime.UtcNow));
 
         try
         {
-            var contract = _contractRegistry.GetContract(context.RoleId);
+            var contract = startedContract;
             var prompt = BuildPrompt(contract, context);
 
             _sessionLogger?.LogRoleLlmRequest(context.SessionId, context.TurnId, context.RoleId,
@@ -142,10 +154,12 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
 
                 if (TryExtractFinalJsonObject(content, out var cleanedContent))
                 {
+                    var normalizedContent = await NormalizeSectorCodeNamesAsync(cleanedContent, ct);
+
                     _eventBus.Publish(new RecommendEvent(
                         RecommendEventType.RoleSummaryReady, context.SessionId, context.TurnId,
                         context.StageId, context.StageType, context.RoleId, lastTraceId,
-                        cleanedContent, null, DateTime.UtcNow));
+                        normalizedContent, null, DateTime.UtcNow));
 
                     _eventBus.Publish(new RecommendEvent(
                         RecommendEventType.RoleCompleted, context.SessionId, context.TurnId,
@@ -153,7 +167,7 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
                         $"角色 {context.RoleId} 执行完成 (工具调用 {toolCallCount} 次)", null, DateTime.UtcNow));
 
                     return new RecommendRoleExecutionResult(
-                        context.RoleId, Success: true, OutputJson: cleanedContent,
+                        context.RoleId, Success: true, OutputJson: normalizedContent,
                         ErrorCode: null, ErrorMessage: null, LlmTraceId: lastTraceId,
                         ToolCallCount: toolCallCount);
                 }
@@ -194,14 +208,16 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
             _sessionLogger?.LogRoleLlmError(context.SessionId, context.TurnId, context.RoleId,
                 ex.GetType().Name, ex.Message);
 
+            var sanitized = ErrorSanitizer.SanitizeErrorMessage(ex.Message);
+
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.RoleFailed, context.SessionId, context.TurnId,
                 context.StageId, context.StageType, context.RoleId, null,
-                $"角色 {context.RoleId} 执行失败: {ex.Message}", null, DateTime.UtcNow));
+                $"角色 {context.RoleId} 执行失败: {sanitized}", null, DateTime.UtcNow));
 
             return new RecommendRoleExecutionResult(
                 context.RoleId, Success: false, OutputJson: null,
-                ErrorCode: "LLM_ERROR", ErrorMessage: ex.Message,
+                ErrorCode: "LLM_ERROR", ErrorMessage: sanitized,
                 LlmTraceId: null, ToolCallCount: 0);
         }
     }
@@ -263,6 +279,25 @@ public sealed class RecommendationRoleExecutor : IRecommendationRoleExecutor
             // Not JSON → not a tool error structure
         }
         return false;
+    }
+
+    private async Task<string> NormalizeSectorCodeNamesAsync(string json, CancellationToken ct)
+    {
+        if (_sectorCodeNameResolver is null)
+        {
+            return json;
+        }
+
+        try
+        {
+            var codeNameMap = await _sectorCodeNameResolver.GetLatestCodeNameMapAsync(ct);
+            return RecommendSectorCodeNameNormalizer.NormalizeJson(json, codeNameMap);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Recommend sector code/name normalization failed; returning original role output.");
+            return json;
+        }
     }
 
     private static string BuildPrompt(RecommendRoleContract contract, RecommendRoleExecutionContext context)

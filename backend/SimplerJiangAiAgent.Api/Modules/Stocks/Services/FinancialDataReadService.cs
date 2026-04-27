@@ -156,8 +156,11 @@ public class FinancialDataReadService : IFinancialDataReadService
 
             // Tonghuashun-style Chinese field names fallback
             TryAddChinese(period.KeyMetrics, "TotalAssets", bs, "总资产");
+            TryAddChinese(period.KeyMetrics, "TotalAssets", bs, "资产合计");
             TryAddChinese(period.KeyMetrics, "TotalLiabilities", bs, "总负债");
+            TryAddChinese(period.KeyMetrics, "TotalLiabilities", bs, "负债合计");
             TryAddChinese(period.KeyMetrics, "TotalEquity", bs, "股东权益合计");
+            TryAddChinese(period.KeyMetrics, "TotalEquity", bs, "所有者权益（或股东权益）合计");
             TryAddChinese(period.KeyMetrics, "CurrentAssets", bs, "流动资产合计");
             TryAddChinese(period.KeyMetrics, "CurrentLiabilities", bs, "流动负债合计");
             TryAddChinese(period.KeyMetrics, "TotalRevenue", inc, "营业总收入");
@@ -186,7 +189,7 @@ public class FinancialDataReadService : IFinancialDataReadService
             }
 
             // THS data is stored in 万元; normalize monetary values to 元
-            if (period.SourceChannel == "ths")
+            if (IsThsChannel(period.SourceChannel))
             {
                 NormalizeThsMonetaryValues(period.KeyMetrics);
             }
@@ -218,13 +221,15 @@ public class FinancialDataReadService : IFinancialDataReadService
             var inc = SafeDoc(doc, "IncomeStatement");
             var bs = SafeDoc(doc, "BalanceSheet");
 
-            var revenue = SafeDouble(inc, "TOTAL_OPERATE_INCOME") ?? SafeDouble(inc, "营业总收入");
-            var netProfit = SafeDouble(inc, "NETPROFIT") ?? SafeDouble(inc, "净利润");
-            var totalAssets = SafeDouble(bs, "TOTAL_ASSETS") ?? SafeDouble(bs, "总资产");
+            var revenue = SafeDouble(inc, "TOTAL_OPERATE_INCOME") ?? SafeDoubleByPartial(inc, "营业总收入");
+            var netProfit = SafeDouble(inc, "NETPROFIT") ?? SafeDoubleByPartial(inc, "净利润");
+            var totalAssets = SafeDouble(bs, "TOTAL_ASSETS")
+                ?? SafeDoubleByPartial(bs, "总资产")
+                ?? SafeDoubleByPartial(bs, "资产合计");
 
             // THS data is stored in 万元; normalize to 元
             var sourceChannel = SafeString(doc, "SourceChannel");
-            if (sourceChannel == "ths")
+            if (IsThsChannel(sourceChannel))
             {
                 if (revenue.HasValue) revenue = revenue.Value * 10000;
                 if (netProfit.HasValue) netProfit = netProfit.Value * 10000;
@@ -289,7 +294,10 @@ public class FinancialDataReadService : IFinancialDataReadService
         var pars = new BsonDocument();
         var idx = 0;
 
-        var symbols = ParseCsv(query.Symbol);
+        var symbols = ParseCsv(query.Symbol)
+            .SelectMany(s => BuildSymbolAliases(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (symbols.Count > 0)
         {
             pars[$"p{idx}"] = new BsonArray(symbols.Select(s => (BsonValue)s));
@@ -366,19 +374,92 @@ public class FinancialDataReadService : IFinancialDataReadService
         var doc = col.FindById(objId);
         if (doc is null) return null;
 
+        var sourceChannel = SafeNullableString(doc, "SourceChannel");
+        var balanceSheet = BsonDocToDict(SafeDoc(doc, "BalanceSheet"));
+        var incomeStatement = BsonDocToDict(SafeDoc(doc, "IncomeStatement"));
+        var cashFlow = BsonDocToDict(SafeDoc(doc, "CashFlow"));
+
+        // Bug #35 fix: THS 通道在 LiteDB 中以"万元"为基准存储三大表的金额字段，
+        // 但前端（及其他消费者）按"元"渲染。历史上 GetKeyMetricsSummary / GetTrendSummary
+        // 已做过 ×10000 归一化，但 GetReportById 漏掉了，导致财报详情抽屉把
+        // 茅台 2025 年报总资产 3038.35 亿元 显示成 "3038.35万"（差 10000 倍）。
+        // 统一在返回前把 THS 原始字典里的金额字段乘以 10000。
+        if (IsThsChannel(sourceChannel))
+        {
+            NormalizeThsRawDictToYuan(balanceSheet);
+            NormalizeThsRawDictToYuan(incomeStatement);
+            NormalizeThsRawDictToYuan(cashFlow);
+        }
+
         return new FinancialReportDetail(
             objId.ToString(),
             SafeString(doc, "Symbol"),
             SafeString(doc, "ReportDate"),
             SafeString(doc, "ReportType"),
             SafeInt32(doc, "CompanyType"),
-            SafeNullableString(doc, "SourceChannel"),
+            sourceChannel,
             TryGetDateTime(doc, "CollectedAt"),
             TryGetDateTime(doc, "UpdatedAt"),
-            BsonDocToDict(SafeDoc(doc, "BalanceSheet")),
-            BsonDocToDict(SafeDoc(doc, "IncomeStatement")),
-            BsonDocToDict(SafeDoc(doc, "CashFlow")));
+            balanceSheet,
+            incomeStatement,
+            cashFlow);
     }
+
+    /// <summary>
+    /// 把 THS 原始字典中的"金额"字段从 万元 归一化成 元（×10000）。
+    /// 排除规则（按保守 allow-by-default + 例外跳过原则，避免错误地缩放比率/百分比/每股类字段）：
+    ///   - key 以 "_同比" 结尾（YoY 百分比）
+    ///   - key 包含 "每股"（每股收益等，单位已是 元/股）
+    ///   - key 包含 "率"（毛利率、ROE 等百分比）
+    ///   - key 以 "%" 结尾
+    /// 其他数值字段一律视为金额，从万元乘以 10000 转换成元。
+    /// </summary>
+    internal static void NormalizeThsRawDictToYuan(Dictionary<string, object?> dict)
+    {
+        if (dict is null || dict.Count == 0) return;
+
+        // 先拷贝 key 列表，避免遍历中修改字典
+        var keys = new List<string>(dict.Keys);
+        foreach (var key in keys)
+        {
+            if (string.IsNullOrEmpty(key)) continue;
+            if (IsThsNonMonetaryKey(key)) continue;
+
+            var val = dict[key];
+            if (val is double d && double.IsFinite(d))
+            {
+                dict[key] = d * 10000.0;
+            }
+            else if (val is float f && float.IsFinite(f))
+            {
+                dict[key] = (double)f * 10000.0;
+            }
+            else if (val is long l)
+            {
+                dict[key] = (double)l * 10000.0;
+            }
+            else if (val is int i)
+            {
+                dict[key] = (double)i * 10000.0;
+            }
+            else if (val is decimal m)
+            {
+                dict[key] = m * 10000m;
+            }
+        }
+    }
+
+    private static bool IsThsNonMonetaryKey(string key)
+    {
+        if (key.EndsWith("_同比", StringComparison.Ordinal)) return true;
+        if (key.EndsWith("%", StringComparison.Ordinal)) return true;
+        if (key.Contains("每股", StringComparison.Ordinal)) return true;
+        if (key.Contains("率", StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private static bool IsThsChannel(string? sourceChannel)
+        => string.Equals(sourceChannel, "ths", StringComparison.OrdinalIgnoreCase);
 
     private static FinancialReportListItem MapListItem(BsonDocument doc)
     {
@@ -592,6 +673,21 @@ public class FinancialDataReadService : IFinancialDataReadService
         return null;
     }
 
+    private static double? SafeDoubleByPartial(BsonDocument doc, string partialKey)
+    {
+        var exact = SafeDouble(doc, partialKey);
+        if (exact.HasValue) return exact;
+
+        foreach (var key in doc.Keys)
+        {
+            if (!key.Contains(partialKey, StringComparison.Ordinal) || IsThsNonMonetaryKey(key)) continue;
+            var val = SafeDouble(doc, key);
+            if (val.HasValue) return val.Value;
+        }
+
+        return null;
+    }
+
     private static decimal? SafeDecimal(BsonDocument doc, string key)
     {
         if (!doc.ContainsKey(key)) return null;
@@ -673,7 +769,7 @@ public class FinancialDataReadService : IFinancialDataReadService
         // Search for keys containing the Chinese text (handles suffixes like "(万元)")
         foreach (var key in source.Keys)
         {
-            if (key.Contains(partialKey))
+            if (key.Contains(partialKey, StringComparison.Ordinal) && !IsThsNonMonetaryKey(key))
             {
                 var val = SafeDouble(source, key);
                 if (val.HasValue)
@@ -736,6 +832,7 @@ public sealed class FinancialCollectionLogEntry
 public class FinancialReportSummary
 {
     public string Symbol { get; set; } = "";
+    public string MonetaryUnit { get; init; } = FinancialAmountUnits.CnyYuan;
     public List<PeriodReport> Periods { get; set; } = new();
 }
 
@@ -750,6 +847,7 @@ public class PeriodReport
 public class FinancialTrendSummary
 {
     public string Symbol { get; set; } = "";
+    public string MonetaryUnit { get; init; } = FinancialAmountUnits.CnyYuan;
     public List<TrendPoint> Revenue { get; set; } = new();
     public List<TrendPoint> NetProfit { get; set; } = new();
     public List<TrendPoint> TotalAssets { get; set; } = new();

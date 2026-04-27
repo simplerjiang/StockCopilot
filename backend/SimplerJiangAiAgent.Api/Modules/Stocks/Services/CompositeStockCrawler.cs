@@ -15,20 +15,16 @@ public sealed class CompositeStockCrawler : IStockCrawler
 
     public string SourceName => "聚合";
 
-    public async Task<StockQuoteDto> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
+    public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken cancellationToken = default)
     {
         var quotes = new List<(string SourceName, StockQuoteDto Quote)>();
         var preferredQuote = await TryGetQuoteAsync(symbol, EastmoneySourceName, cancellationToken);
         if (preferredQuote is { } fastQuote && HasCompletePreferredQuote(fastQuote.Quote))
         {
-            var cleanName = !string.IsNullOrWhiteSpace(fastQuote.Quote.Name)
-                ? fastQuote.Quote.Name.Replace(" ", "").Trim()
-                : fastQuote.Quote.Name;
+            var cleanName = StockNameNormalizer.NormalizeDisplayName(fastQuote.Quote.Name);
             return fastQuote.Quote with
             {
                 Name = cleanName,
-                News = BuildPlaceholderNews(fastQuote.Quote.Symbol),
-                Indicators = BuildPlaceholderIndicators()
             };
         }
 
@@ -47,7 +43,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
             try
             {
                 var quote = await crawler.GetQuoteAsync(symbol, cancellationToken);
-                if (IsUsableQuote(quote))
+                if (quote is not null && IsUsableQuote(quote))
                 {
                     quotes.Add((crawler.SourceName, quote));
                 }
@@ -62,29 +58,19 @@ public sealed class CompositeStockCrawler : IStockCrawler
             .OrderByDescending(item => GetRealtimeScore(item.Quote))
             .Select(item => item.Quote)
             .FirstOrDefault(item => item.Price > 0m)
-            ?? quotes.Select(item => item.Quote).FirstOrDefault()
-            ?? new StockQuoteDto(
-                symbol,
-                string.Empty,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                0m,
-                DateTime.UtcNow,
-                Array.Empty<StockNewsDto>(),
-                Array.Empty<StockIndicatorDto>()
-            );
+            ?? quotes.Select(item => item.Quote).FirstOrDefault();
+
+        if (baseQuote is null)
+        {
+            return null;
+        }
 
         var mergedQuote = quotes.Select(item => item.Quote).Aggregate(baseQuote, MergeQuote);
 
-        // B34: 清理合并后名称中的多余空格
+        // B34: Normalize special ST-prefix spacing without touching ordinary company spaces.
         if (!string.IsNullOrWhiteSpace(mergedQuote.Name))
         {
-            mergedQuote = mergedQuote with { Name = mergedQuote.Name.Replace(" ", "").Trim() };
+            mergedQuote = mergedQuote with { Name = StockNameNormalizer.NormalizeDisplayName(mergedQuote.Name) };
         }
 
         var preferredFundamentals = quotes
@@ -99,11 +85,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
             mergedQuote = MergeFundamentals(mergedQuote, preferredFundamentals);
         }
 
-        return mergedQuote with
-        {
-            News = BuildPlaceholderNews(mergedQuote.Symbol),
-            Indicators = BuildPlaceholderIndicators()
-        };
+        return mergedQuote;
     }
 
     public async Task<MarketIndexDto> GetMarketIndexAsync(string symbol, CancellationToken cancellationToken = default)
@@ -181,6 +163,11 @@ public sealed class CompositeStockCrawler : IStockCrawler
         try
         {
             var quote = await crawler.GetQuoteAsync(symbol, cancellationToken);
+            if (quote is null)
+            {
+                return null;
+            }
+
             return (crawler.SourceName, quote);
         }
         catch
@@ -197,29 +184,6 @@ public sealed class CompositeStockCrawler : IStockCrawler
             .ToArray();
     }
 
-    private static IReadOnlyList<StockNewsDto> BuildPlaceholderNews(string symbol)
-    {
-        return new List<StockNewsDto>
-        {
-            new(
-                $"{symbol} 新闻示例标题",
-                "https://example.com",
-                "示例来源",
-                DateTime.UtcNow.AddHours(-2)
-            )
-        };
-    }
-
-    private static IReadOnlyList<StockIndicatorDto> BuildPlaceholderIndicators()
-    {
-        return new List<StockIndicatorDto>
-        {
-            new("MA5", 0m, null),
-            new("MA10", 0m, null),
-            new("RSI", 0m, null)
-        };
-    }
-
     private static bool IsUsableQuote(StockQuoteDto quote)
     {
         return quote.Price > 0m
@@ -234,7 +198,14 @@ public sealed class CompositeStockCrawler : IStockCrawler
             || quote.VolumeRatio != 0m
             || quote.ShareholderCount.HasValue
             || !string.IsNullOrWhiteSpace(quote.SectorName)
-            || (!string.IsNullOrWhiteSpace(quote.Name) && !quote.Name.Contains("示例", StringComparison.OrdinalIgnoreCase));
+            || HasUsableName(quote);
+    }
+
+    private static bool HasUsableName(StockQuoteDto quote)
+    {
+        return !string.IsNullOrWhiteSpace(quote.Name)
+            && !quote.Name.Contains("示例", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(quote.Name.Trim(), quote.Symbol.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasFundamentalData(StockQuoteDto quote)

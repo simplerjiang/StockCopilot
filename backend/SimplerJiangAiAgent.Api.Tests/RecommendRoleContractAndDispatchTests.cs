@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
+using System.Text.Json;
 using Xunit;
 
 namespace SimplerJiangAiAgent.Api.Tests;
@@ -175,6 +176,59 @@ public class RecommendRoleContractAndDispatchTests
         var summaryReady = Assert.Single(events.Where(e => e.EventType == RecommendEventType.RoleSummaryReady));
         Assert.Equal("SectorDebate", summaryReady.StageType);
         Assert.Equal(finalJson, summaryReady.Summary);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NormalizesSectorCodeNamePairs_BeforeReturningRoleOutput()
+    {
+        var finalJson = """
+        {
+            "selectedSectors": [
+                { "name": "新能源汽车", "code": "880398" },
+                { "name": "天然气", "code": "880398" }
+            ],
+            "sectorCards": [
+                { "sectorName": "证券", "sectorCode": "880398" }
+            ]
+        }
+        """;
+        var llmService = new SequentialLlmService([finalJson]);
+        var dispatcher = new FakeToolDispatcher();
+        var registry = new RecommendRoleContractRegistry();
+        var eventBus = new RecommendEventBus();
+        var resolver = new FakeSectorCodeNameResolver(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["880398"] = "天然气",
+            ["880472"] = "证券",
+            ["880987"] = "新能源汽车"
+        });
+
+        var executor = new RecommendationRoleExecutor(
+            llmService, eventBus, registry, dispatcher,
+            NullLogger<RecommendationRoleExecutor>.Instance,
+            sessionLogger: null,
+            sectorCodeNameResolver: resolver);
+
+        var ctx = new RecommendRoleExecutionContext(
+            RecommendAgentRoleIds.SectorJudge, "", "裁定板块",
+            null, 1, 1, 1, "SectorDebate");
+
+        var result = await executor.ExecuteAsync(ctx);
+
+        Assert.True(result.Success);
+        using var doc = JsonDocument.Parse(result.OutputJson!);
+        var selected = doc.RootElement.GetProperty("selectedSectors");
+        Assert.Equal("新能源汽车", selected[0].GetProperty("name").GetString());
+        Assert.Equal("880987", selected[0].GetProperty("code").GetString());
+        Assert.Equal("天然气", selected[1].GetProperty("name").GetString());
+        Assert.Equal("880398", selected[1].GetProperty("code").GetString());
+
+        var sectorCard = doc.RootElement.GetProperty("sectorCards")[0];
+        Assert.Equal("证券", sectorCard.GetProperty("sectorName").GetString());
+        Assert.Equal("880472", sectorCard.GetProperty("sectorCode").GetString());
+
+        var summaryReady = Assert.Single(eventBus.Peek(1).Where(e => e.EventType == RecommendEventType.RoleSummaryReady));
+        Assert.Equal(result.OutputJson, summaryReady.Summary);
     }
 
     [Fact]
@@ -391,6 +445,21 @@ public class RecommendRoleContractAndDispatchTests
             _callIndex++;
             Requests.Add(request);
             return Task.FromResult(new LlmChatResult(_responses[idx], $"trace-{_callIndex}"));
+        }
+    }
+
+    private sealed class FakeSectorCodeNameResolver : IRecommendSectorCodeNameResolver
+    {
+        private readonly IReadOnlyDictionary<string, string> _map;
+
+        public FakeSectorCodeNameResolver(IReadOnlyDictionary<string, string> map)
+        {
+            _map = map;
+        }
+
+        public Task<IReadOnlyDictionary<string, string>> GetLatestCodeNameMapAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_map);
         }
     }
 

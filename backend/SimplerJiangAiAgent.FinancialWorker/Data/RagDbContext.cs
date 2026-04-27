@@ -249,7 +249,7 @@ public class RagDbContext : IDisposable
     /// Returns chunks sorted by descending similarity.
     /// </summary>
     public List<(string ChunkId, double Similarity)> SearchByVector(float[] queryEmbedding, int topK = 5,
-        string? symbol = null, string? reportDate = null, string? reportType = null)
+        string? symbol = null, string? reportDate = null, string? reportType = null, string? sourceType = null)
     {
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
@@ -266,6 +266,8 @@ public class RagDbContext : IDisposable
             sql.Append(" AND c.report_date = $reportDate");
         if (!string.IsNullOrEmpty(reportType))
             sql.Append(" AND c.report_type = $reportType");
+        if (!string.IsNullOrEmpty(sourceType))
+            sql.Append(" AND c.source_type = $sourceType");
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql.ToString();
@@ -275,6 +277,8 @@ public class RagDbContext : IDisposable
             cmd.Parameters.AddWithValue("$reportDate", reportDate);
         if (!string.IsNullOrEmpty(reportType))
             cmd.Parameters.AddWithValue("$reportType", reportType);
+        if (!string.IsNullOrEmpty(sourceType))
+            cmd.Parameters.AddWithValue("$sourceType", sourceType);
 
         var candidates = new List<(string ChunkId, float[] Embedding)>();
         using var reader = cmd.ExecuteReader();
@@ -321,6 +325,29 @@ public class RagDbContext : IDisposable
             cmd.CommandText = "SELECT COUNT(*) FROM chunk_embeddings";
         }
         return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    /// <summary>Get chunk IDs and text for chunks that have no embedding yet.</summary>
+    public List<(string ChunkId, string Text)> GetChunkIdsWithoutEmbedding(int limit = 200)
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT c.chunk_id, c.text FROM chunks c
+            LEFT JOIN chunk_embeddings e ON c.chunk_id = e.chunk_id
+            WHERE e.chunk_id IS NULL
+            ORDER BY c.created_at DESC
+            LIMIT $limit";
+        cmd.Parameters.AddWithValue("$limit", limit);
+
+        var results = new List<(string, string)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        return results;
     }
 
     private static byte[] FloatsToBlob(float[] floats)

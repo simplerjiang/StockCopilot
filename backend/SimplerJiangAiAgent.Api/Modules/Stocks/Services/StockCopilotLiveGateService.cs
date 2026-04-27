@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
@@ -400,7 +401,8 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
                 "本次仅记录真实 LLM-AUDIT 轨迹，不伪造任何工具计划。",
                 $"LLM traceId={llmTraceId}",
                 "若要继续，需要修正 prompt 或模型输出格式后重新执行。"
-            ]);
+            ],
+            RagCitations: Array.Empty<StockCopilotMcpEvidenceDto>());
 
         var turn = new StockCopilotTurnDto(
             TurnId: $"turn-live-{Guid.NewGuid():N}",
@@ -776,12 +778,13 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
                     await _mcpToolGateway.GetFinancialTrendAsync(symbol, ParseInt(input, "periods", 8), toolTaskId, cancellationToken),
                     envelope => $"财务趋势: {envelope.Data?.PeriodCount ?? 0}期"),
                 StockMcpToolNames.FinancialReportRag => await ExecuteRagToolAsync(approvedCall, symbol, input.GetValueOrDefault("query", question), toolTaskId, cancellationToken),
+                StockMcpToolNames.AnnouncementRag => await ExecuteAnnouncementRagToolAsync(approvedCall, symbol, input.GetValueOrDefault("query", question), toolTaskId, cancellationToken),
                 _ => BuildFailedOutcome(approvedCall, $"暂不支持工具 {approvedCall.Registration.ToolName} 的 live gate 执行。")
             };
         }
         catch (Exception ex)
         {
-            return BuildFailedOutcome(approvedCall, ex.Message);
+            return BuildFailedOutcome(approvedCall, ErrorSanitizer.SanitizeErrorMessage(ex.Message) ?? string.Empty);
         }
     }
 
@@ -924,6 +927,85 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             Tags: Array.Empty<string>())).ToList();
 
         var summary = $"财报RAG: 找到{citations.Count}条相关证据";
+        var toolResult = new StockCopilotToolResultDto(
+            approvedCall.CallId,
+            approvedCall.Registration.ToolName,
+            "completed",
+            taskId,
+            evidence.Count,
+            0,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            evidence,
+            summary);
+
+        var executionMetric = new StockCopilotToolExecutionMetricDto(
+            approvedCall.CallId,
+            approvedCall.Registration.ToolName,
+            approvedCall.Registration.PolicyClass,
+            sw.ElapsedMilliseconds,
+            evidence.Count,
+            0,
+            Array.Empty<string>(),
+            Array.Empty<string>());
+
+        return new ToolExecutionOutcome(toolResult, executionMetric);
+    }
+
+    private async Task<ToolExecutionOutcome> ExecuteAnnouncementRagToolAsync(
+        ApprovedToolCall approvedCall, string symbol, string question,
+        string taskId, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var citations = await _mcpToolGateway.SearchAnnouncementRagAsync(symbol, question, 5, ct);
+        sw.Stop();
+
+        if (citations.Count == 0)
+        {
+            var degradedWarnings = new[] { "公告RAG暂无数据" };
+            var degradedResult = new StockCopilotToolResultDto(
+                approvedCall.CallId,
+                approvedCall.Registration.ToolName,
+                "completed",
+                null,
+                0,
+                0,
+                degradedWarnings,
+                Array.Empty<string>(),
+                Array.Empty<StockCopilotMcpEvidenceDto>(),
+                "公告RAG: 暂无数据");
+            var degradedMetric = new StockCopilotToolExecutionMetricDto(
+                approvedCall.CallId,
+                approvedCall.Registration.ToolName,
+                approvedCall.Registration.PolicyClass,
+                sw.ElapsedMilliseconds,
+                0,
+                0,
+                degradedWarnings,
+                Array.Empty<string>());
+            return new ToolExecutionOutcome(degradedResult, degradedMetric);
+        }
+
+        var evidence = citations.Select(c => new StockCopilotMcpEvidenceDto(
+            Point: c.Text.Length > 200 ? c.Text[..200] + "…" : c.Text,
+            Title: $"{c.ReportDate} {c.Section ?? c.BlockKind}",
+            Source: c.Source,
+            PublishedAt: null,
+            CrawledAt: null,
+            Url: null,
+            Excerpt: c.Text.Length > 300 ? c.Text[..300] : c.Text,
+            Summary: null,
+            ReadMode: "rag",
+            ReadStatus: "ok",
+            IngestedAt: null,
+            LocalFactId: null,
+            SourceRecordId: c.ChunkId,
+            Level: null,
+            Sentiment: null,
+            Target: symbol,
+            Tags: Array.Empty<string>())).ToList();
+
+        var summary = $"公告RAG: 找到{citations.Count}条相关证据";
         var toolResult = new StockCopilotToolResultDto(
             approvedCall.CallId,
             approvedCall.Registration.ToolName,
@@ -1194,13 +1276,22 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             constraints.Add($"本轮提前收口原因：{stopReason}。" );
         }
 
+        var ragCitations = toolResults
+            .Where(tr => tr.Evidence != null && tr.Evidence.Count > 0)
+            .Where(tr => tr.ToolName.Contains("Rag", StringComparison.OrdinalIgnoreCase)
+                      || tr.ToolName.Contains("FinancialReport", StringComparison.OrdinalIgnoreCase)
+                      || tr.ToolName.Contains("Announcement", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(tr => tr.Evidence)
+            .ToList();
+
         return new StockCopilotFinalAnswerDto(
             Status: status,
             Summary: summary,
             GroundingMode: "llm_plan_with_tool_receipts",
             ConfidenceScore: confidence,
             NeedsToolExecution: false,
-            Constraints: constraints);
+            Constraints: constraints,
+            RagCitations: ragCitations);
     }
 
     private static IReadOnlyList<StockCopilotFollowUpActionDto> BuildFollowUpActions(

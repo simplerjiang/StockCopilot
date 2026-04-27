@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 
@@ -94,6 +95,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         var pipeline = RecommendStageDefinitions.GetPipeline();
         var upstreamArtifacts = new List<StageArtifact>();
         var turnDegraded = false;
+        var nextStageRunIndex = await GetNextStageRunIndexAsync(turn.Id, effectiveCt);
 
         try
         {
@@ -104,7 +106,9 @@ public sealed class RecommendationRunner : IRecommendationRunner
                     : null;
 
                 var (stageSuccess, stageDegraded) = await ExecutePipelineStageAsync(
-                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, effectiveCt);
+                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, nextStageRunIndex, effectiveCt);
+
+                nextStageRunIndex += pipelineStage.Steps.Count;
 
                 if (stageDegraded) turnDegraded = true;
 
@@ -167,7 +171,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
 
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.TurnFailed, session.Id, turnId, null, null, null, null,
-                $"Turn 异常终止: {ex.Message}", null, DateTime.UtcNow));
+                $"Turn 异常终止: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}", null, DateTime.UtcNow));
         }
         finally
         {
@@ -213,6 +217,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         var pipeline = RecommendStageDefinitions.GetPipeline();
         var upstreamArtifacts = new List<StageArtifact>();
         var turnDegraded = false;
+        var nextStageRunIndex = await GetNextStageRunIndexAsync(turn.Id, ct);
 
         // Load artifacts from the previous completed turn for stages before fromStageIndex
         var previousTurn = await _db.RecommendationTurns
@@ -255,7 +260,9 @@ public sealed class RecommendationRunner : IRecommendationRunner
                     : null;
 
                 var (stageSuccess, stageDegraded) = await ExecutePipelineStageAsync(
-                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, ct);
+                    session, turn, pipelineStage, upstreamJson, upstreamArtifacts, nextStageRunIndex, ct);
+
+                nextStageRunIndex += pipelineStage.Steps.Count;
 
                 if (stageDegraded) turnDegraded = true;
 
@@ -304,7 +311,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
 
             _eventBus.Publish(new RecommendEvent(
                 RecommendEventType.TurnFailed, session.Id, turnId, null, null, null, null,
-                $"部分重跑异常终止: {ex.Message}", null, DateTime.UtcNow));
+                $"部分重跑异常终止: {ErrorSanitizer.SanitizeErrorMessage(ex.Message)}", null, DateTime.UtcNow));
         }
         finally
         {
@@ -374,24 +381,55 @@ public sealed class RecommendationRunner : IRecommendationRunner
     {
         try
         {
+            var now = DateTime.UtcNow;
+
             var runningSnapshots = await _db.RecommendationStageSnapshots
                 .Where(ss => ss.TurnId == turnId && ss.Status == RecommendStageStatus.Running)
                 .ToListAsync(CancellationToken.None);
 
-            if (runningSnapshots.Count == 0) return;
-
             foreach (var snapshot in runningSnapshots)
             {
                 snapshot.Status = RecommendStageStatus.Failed;
-                snapshot.CompletedAt ??= DateTime.UtcNow;
+                snapshot.CompletedAt ??= now;
             }
+
+            // Cascade: fail all running/pending RoleStates belonging to this turn
+            var stageIds = await _db.RecommendationStageSnapshots
+                .Where(ss => ss.TurnId == turnId)
+                .Select(ss => ss.Id)
+                .ToListAsync(CancellationToken.None);
+
+            if (stageIds.Count > 0)
+            {
+                var orphanRoles = await _db.RecommendationRoleStates
+                    .Where(rs => stageIds.Contains(rs.StageId)
+                        && (rs.Status == RecommendRoleStatus.Running || rs.Status == RecommendRoleStatus.Pending))
+                    .ToListAsync(CancellationToken.None);
+
+                foreach (var role in orphanRoles)
+                {
+                    role.Status = RecommendRoleStatus.Failed;
+                    role.CompletedAt ??= now;
+                }
+
+                if (orphanRoles.Count > 0)
+                {
+                    _logger.LogInformation("Marked {Count} running/pending role states as Failed for turn {TurnId}",
+                        orphanRoles.Count, turnId);
+                }
+            }
+
+            if (runningSnapshots.Count > 0)
+            {
+                _logger.LogInformation("Marked {Count} running stage snapshots as Failed for turn {TurnId}",
+                    runningSnapshots.Count, turnId);
+            }
+
             await _db.SaveChangesAsync(CancellationToken.None);
-            _logger.LogInformation("Marked {Count} running stage snapshots as Failed for turn {TurnId}",
-                runningSnapshots.Count, turnId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to mark running snapshots as Failed for turn {TurnId}", turnId);
+            _logger.LogWarning(ex, "Failed to mark running snapshots/role states as Failed for turn {TurnId}", turnId);
         }
     }
 
@@ -402,12 +440,13 @@ public sealed class RecommendationRunner : IRecommendationRunner
     private async Task<(bool Success, bool Degraded)> ExecutePipelineStageAsync(
         RecommendationSession session, RecommendationTurn turn,
         RecommendPipelineStage pipelineStage, string? upstreamJson,
-        List<StageArtifact> upstreamArtifacts, CancellationToken ct)
+        List<StageArtifact> upstreamArtifacts, int firstStageRunIndex, CancellationToken ct)
     {
         // A pipeline stage may contain multiple steps (e.g. Parallel then Sequential)
         // All steps share the same StageType; we create one snapshot per step.
         string? stepCarryOver = upstreamJson;
         var anyDegraded = false;
+        var stageRunIndex = firstStageRunIndex;
 
         foreach (var step in pipelineStage.Steps)
         {
@@ -415,7 +454,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
             {
                 TurnId = turn.Id,
                 StageType = step.StageType,
-                StageRunIndex = pipelineStage.StageIndex,
+                StageRunIndex = stageRunIndex++,
                 ExecutionMode = step.ExecutionMode,
                 Status = RecommendStageStatus.Running,
                 ActiveRoleIdsJson = JsonSerializer.Serialize(step.RoleIds, JsonOpts),
@@ -504,6 +543,16 @@ public sealed class RecommendationRunner : IRecommendationRunner
         }
 
         return (true, anyDegraded);
+    }
+
+    private async Task<int> GetNextStageRunIndexAsync(long turnId, CancellationToken ct)
+    {
+        var maxRunIndex = await _db.RecommendationStageSnapshots
+            .Where(snapshot => snapshot.TurnId == turnId)
+            .Select(snapshot => (int?)snapshot.StageRunIndex)
+            .MaxAsync(ct);
+
+        return (maxRunIndex ?? -1) + 1;
     }
 
     private async Task<List<RecommendRoleExecutionResult>> ExecuteParallelAsync(
@@ -613,11 +662,15 @@ public sealed class RecommendationRunner : IRecommendationRunner
                     judgeResult = await scopedExecutor.ExecuteAsync(judgeContext, ct);
                 }
 
+                // Strip CONSENSUS_REACHED: prefix from judge output before persisting
+                bool isConsensus = judgeResult.Success && judgeResult.OutputJson?.Contains("CONSENSUS_REACHED", StringComparison.OrdinalIgnoreCase) == true;
+                if (isConsensus)
+                    judgeResult = judgeResult with { OutputJson = judgeResult.OutputJson!.Replace("CONSENSUS_REACHED:", "").Trim() };
+
                 await UpdateRoleStateAsync(judgeState, judgeResult, ct);
                 results.Add(judgeResult);
 
-                // Early termination if judge signals consensus
-                if (judgeResult.Success && judgeResult.OutputJson?.Contains("CONSENSUS_REACHED", StringComparison.OrdinalIgnoreCase) == true)
+                if (isConsensus)
                     break;
             }
         }

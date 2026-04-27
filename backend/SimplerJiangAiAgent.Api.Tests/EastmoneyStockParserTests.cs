@@ -10,11 +10,35 @@ public class EastmoneyStockParserTests
         var json = "{\"data\":{\"f58\":\"示例\",\"f43\":1103,\"f60\":1112,\"f170\":-81,\"f117\":341717900958.0,\"f162\":683,\"f10\":125}}";
         var quote = EastmoneyStockParser.ParseQuote("sh600000", json);
 
+        Assert.NotNull(quote);
         Assert.Equal(11.03m, quote.Price);
         Assert.Equal(-0.81m, quote.ChangePercent);
         Assert.Equal(341717900958.0m, quote.FloatMarketCap);
         Assert.Equal(6.83m, quote.PeRatio);
         Assert.Equal(1.25m, quote.VolumeRatio);
+    }
+
+    [Theory]
+    [InlineData("*ST 四环", "*ST四环")]
+    [InlineData("普通 公司", "普通 公司")]
+    public void ParseQuote_ShouldNormalizeOnlySpecialStPrefixSpacing(string rawName, string expectedName)
+    {
+        var json = $"{{\"data\":{{\"f58\":\"{rawName}\",\"f43\":1103,\"f60\":1112,\"f170\":-81}}}}";
+
+        var quote = EastmoneyStockParser.ParseQuote("sh600000", json);
+
+        Assert.NotNull(quote);
+        Assert.Equal(expectedName, quote.Name);
+    }
+
+    [Theory]
+    [InlineData("{\"rc\":0,\"rt\":1}")]
+    [InlineData("{\"data\":{}}")]
+    public void ParseQuote_WhenPayloadIsUnusable_ShouldReturnNullInsteadOfZeroPlaceholder(string json)
+    {
+        var quote = EastmoneyStockParser.ParseQuote("sh600000", json);
+
+        Assert.Null(quote);
     }
 
     [Fact]

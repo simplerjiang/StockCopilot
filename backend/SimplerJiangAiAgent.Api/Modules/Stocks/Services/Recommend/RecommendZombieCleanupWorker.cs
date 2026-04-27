@@ -77,5 +77,58 @@ public sealed class RecommendZombieCleanupWorker : BackgroundService
 
         if (zombieTurns.Count > 0 || zombieSessions.Count > 0)
             await db.SaveChangesAsync(ct);
+
+        var repairedStageRunIndexes = await RepairDuplicateStageRunIndexesAsync(db, _logger, ct);
+        if (repairedStageRunIndexes > 0)
+        {
+            await RecommendSessionSchemaInitializer.EnsureAsync(db, ct);
+        }
+
+        // Cascade: fail orphaned RoleStates where parent Turn is already terminal
+        await CleanupOrphanedRoleStatesAsync(db, ct);
+    }
+
+    internal static async Task<int> RepairDuplicateStageRunIndexesAsync(
+        AppDbContext db,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        return await RecommendStageRunIndexRepairer.RepairDuplicateStageRunIndexesAsync(db, logger, ct);
+    }
+
+    private async Task CleanupOrphanedRoleStatesAsync(AppDbContext db, CancellationToken ct)
+    {
+        var terminalTurnIds = await db.RecommendationTurns
+            .Where(t => t.Status == RecommendTurnStatus.Failed
+                     || t.Status == RecommendTurnStatus.Cancelled
+                     || t.Status == RecommendTurnStatus.Completed)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        if (terminalTurnIds.Count == 0) return;
+
+        var stageIds = await db.RecommendationStageSnapshots
+            .Where(ss => terminalTurnIds.Contains(ss.TurnId))
+            .Select(ss => ss.Id)
+            .ToListAsync(ct);
+
+        if (stageIds.Count == 0) return;
+
+        var orphanRoles = await db.RecommendationRoleStates
+            .Where(rs => stageIds.Contains(rs.StageId)
+                && (rs.Status == RecommendRoleStatus.Running || rs.Status == RecommendRoleStatus.Pending))
+            .ToListAsync(ct);
+
+        if (orphanRoles.Count == 0) return;
+
+        var now = DateTime.UtcNow;
+        foreach (var role in orphanRoles)
+        {
+            role.Status = RecommendRoleStatus.Failed;
+            role.CompletedAt ??= now;
+        }
+
+        await db.SaveChangesAsync(ct);
+        _logger.LogWarning("Cleaned up {Count} orphaned recommend role states stuck in Running/Pending", orphanRoles.Count);
     }
 }

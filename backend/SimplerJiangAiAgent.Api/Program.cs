@@ -39,6 +39,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new ChinaDateTimeJsonConverter());
     options.SerializerOptions.Converters.Add(new ChinaNullableDateTimeJsonConverter());
+    options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
 });
 builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
 builder.Services.Configure<StockSyncOptions>(builder.Configuration.GetSection(StockSyncOptions.SectionName));
@@ -141,6 +142,14 @@ app.UseExceptionHandler(errorApp =>
 {
     errorApp.Run(async context =>
     {
+        var exceptionFeature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerPathFeature>();
+        if (exceptionFeature?.Error is UnsupportedStockSourceException unsupportedSource)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsJsonAsync(new { error = "unsupported_source", message = $"不支持的数据源: {unsupportedSource.SourceName}" });
+            return;
+        }
+
         context.Response.StatusCode = 500;
         await context.Response.WriteAsJsonAsync(new { error = "Internal server error" });
     });
@@ -197,6 +206,14 @@ app.MapGet("/api/app/version", () => Results.Ok(new
     .WithOpenApi();
 
 app.MapModules();
+
+// V048-S2 #71: /api/* 未命中应进入标准 404，而不是被 SPA fallback 吞成 index.html
+// MapFallback 路由特异性：/api/{**path} 比 {**path} 更具体，会优先匹配
+app.MapFallback("/api/{**path}", () => Results.NotFound(new
+{
+    error = "api_endpoint_not_found",
+    message = "请求的 API 路径不存在"
+}));
 
 // 前端路由兜底
 if (!string.IsNullOrWhiteSpace(distPath) && Directory.Exists(distPath))

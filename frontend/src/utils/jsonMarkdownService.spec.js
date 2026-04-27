@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ensureMarkdown,
+  markdownToSafeHtml,
   parseJsonIfPossible,
   toReadableInlineText,
   parseJsonArray
@@ -67,5 +68,20 @@ describe('jsonMarkdownService', () => {
   it('parses only valid JSON-like strings', () => {
     expect(parseJsonIfPossible('{"a":1}')).toEqual({ a: 1 })
     expect(parseJsonIfPossible('not json')).toBe('not json')
+  })
+
+  describe('markdown code block stripping', () => {
+    it('should handle JSON wrapped in code fence', () => {
+      const input = '```json\n{"key":"value"}\n```'
+      const result = markdownToSafeHtml(input)
+      expect(result).not.toContain('```')
+      expect(result).not.toContain('"key"')
+    })
+
+    it('should handle plain text code fence', () => {
+      const input = '```\nsome text\n```'
+      const result = markdownToSafeHtml(input)
+      expect(result).toContain('some text')
+    })
   })
 })

@@ -33,6 +33,8 @@ public sealed record TradeExecutionUpdateDto(
     string? AbandonReason = null
 );
 
+public sealed record ResetAllTradesRequestDto(string? ConfirmText);
+
 // 交易记录响应
 public sealed record TradeExecutionItemDto(
     long Id,
@@ -242,13 +244,13 @@ public sealed record TradeBehaviorStatsDto(
     decimal AvgDailyTrades30Days,
     int PlannedTrades30Days,
     int TotalTrades30Days,
-    decimal PlanExecutionRate,
+    decimal? PlanExecutionRate,
     int CurrentLossStreak,
     int MaxLossStreak30Days,
     int ChasingBuyCount30Days,
     decimal ChasingBuyRate,
     bool IsOverTrading,
-    int DisciplineScore,
+    int? DisciplineScore,
     IReadOnlyList<BehaviorAlertDto> ActiveAlerts
 );
 

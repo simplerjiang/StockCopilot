@@ -8,22 +8,33 @@ internal static class EastmoneyStockParser
 {
     private static readonly TimeZoneInfo ChinaTimeZone = ResolveChinaTimeZone();
 
-    public static StockQuoteDto ParseQuote(string symbol, string json)
+    public static StockQuoteDto? ParseQuote(string symbol, string json)
     {
         using var document = JsonDocument.Parse(json);
         if (!document.RootElement.TryGetProperty("data", out var dataNode))
         {
-            return EmptyQuote(symbol);
+            return null;
         }
 
         var rawName = dataNode.TryGetProperty("f58", out var nameNode) ? nameNode.GetString() ?? symbol : symbol;
-        var name = rawName.Replace(" ", "").Trim();
+        var name = StockNameNormalizer.NormalizeDisplayName(rawName);
         var price = ParseScaledDecimal(dataNode, "f43");
         var prevClose = ParseScaledDecimal(dataNode, "f60");
         var percent = ParseScaledDecimal(dataNode, "f170");
         var floatMarketCap = ParseDecimal(dataNode, "f117");
         var peRatio = ParseScaledDecimal(dataNode, "f162");
         var volumeRatio = ParseScaledDecimal(dataNode, "f10");
+
+        if (price <= 0m
+            && prevClose <= 0m
+            && percent == 0m
+            && floatMarketCap <= 0m
+            && peRatio <= 0m
+            && volumeRatio <= 0m
+            && string.Equals(name, symbol, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
 
         var change = price - prevClose;
         var changePercent = prevClose == 0 ? percent : Math.Round(change / prevClose * 100, 2);
@@ -181,12 +192,6 @@ internal static class EastmoneyStockParser
             return value;
         }
         return 0m;
-    }
-
-    private static StockQuoteDto EmptyQuote(string symbol)
-    {
-        return new StockQuoteDto(symbol, symbol, 0m, 0m, 0m, 0m, 0m, 0m, 0m, 0m, DateTime.UtcNow,
-            Array.Empty<StockNewsDto>(), Array.Empty<StockIndicatorDto>());
     }
 
     private static TimeZoneInfo ResolveChinaTimeZone()

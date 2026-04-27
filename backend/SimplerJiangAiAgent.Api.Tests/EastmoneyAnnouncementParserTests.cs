@@ -1,4 +1,6 @@
+using SimplerJiangAiAgent.Api.Infrastructure.Serialization;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
+using System.Text.Json;
 
 namespace SimplerJiangAiAgent.Api.Tests;
 
@@ -29,5 +31,36 @@ public sealed class EastmoneyAnnouncementParserTests
         Assert.Equal("东方财富公告", item.Source);
         Assert.Equal("AN202603120001", item.ExternalId);
         Assert.Contains("AN202603120001", item.Url);
+    }
+
+    [Fact]
+    public void Parse_ShouldStoreChinaDisplayTimeAsUtcAndRenderBackToChinaTime()
+    {
+        const string json = """
+        {
+          "data": {
+            "list": [
+              {
+                "art_code": "AN202604241821562475",
+                "display_time": "2026-04-24 19:49:32",
+                "title": "贵州茅台：董事会决议公告"
+              }
+            ]
+          }
+        }
+        """;
+
+        var items = EastmoneyAnnouncementParser.Parse("sh600519", "贵州茅台", "白酒", json, new DateTime(2026, 4, 24, 12, 0, 0, DateTimeKind.Utc));
+
+        var item = Assert.Single(items);
+        Assert.Equal(new DateTime(2026, 4, 24, 11, 49, 32, DateTimeKind.Utc), item.PublishTime);
+
+        var options = new JsonSerializerOptions();
+        options.Converters.Add(new ChinaDateTimeJsonConverter());
+        var rendered = JsonSerializer.Serialize(item.PublishTime, options);
+
+        Assert.Contains("2026-04-24T19:49:32", rendered);
+        Assert.Contains("\\u002B08:00", rendered);
+        Assert.DoesNotContain("2026-04-25T03:49:32", rendered);
     }
 }
