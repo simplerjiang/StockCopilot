@@ -79,14 +79,27 @@ flowchart TD
 | 资金流向 | Eastmoney 实时推送 | 仅当日 | 无持久化 | ❌ 无法冻结，需外接历史源 |
 | RAG 内容 | FinancialWorker chunks | 取决于采集 | 无 publishTime 字段 | ❌ 需补 SourcePublishTime |
 
-### 前置工作（开发前必须完成）
+### 已完成的基础设施修复
 
-1. ✅ cninfo 翻页修复（已完成）
-2. ⏳ K 线回填至 24 个月+（Baostock 或 Eastmoney push2his）
-3. ⏳ 对 watchlist 股票执行一次全量财报+公告采集
-4. ⏳ RAG chunks 表补 `SourcePublishTime` 字段
-5. ⏳ 新闻回填：Eastmoney 新闻 API 支持 page_index 翻页（最多 1000 页 × 20 条 ≈ 26 个月），需打开翻页做全量回填
-6. ⚠️ 资金流向维度：MVP 阶段回测不含资金流向数据（除非接入历史源）
+- ✅ cninfo 公告翻页 (fa38c29)
+- ✅ 东方财富市场新闻/公司公告/公告PDF/财报数据翻页 (3a2c236)
+
+### 回测前资源检查 + 按需回填
+
+回填不提前全量跑。每次回测启动时，系统自动检查所选股票+时点范围内的数据是否充足，缺什么补什么。
+
+| 资源 | 检查逻辑 | 不足时的回填动作 |
+|------|---------|---------------|
+| K 线 | KLinePoints 是否覆盖 asOf 前后各 30 日 | 调 Eastmoney push2his 补缺 |
+| 财报 PDF | LiteDB 中是否有 ≤ asOf 的报表 | 调 cninfo + Eastmoney datacenter 补 |
+| 公告 | 公告表是否有 ≤ asOf 的记录 | 调 cninfo 翻页补 |
+| 新闻 | LocalStockNews 是否有 asOf 附近的新闻 | 调 Eastmoney 新闻 API 翻页补（最多 26 个月） |
+| RAG | chunks 是否有 ≤ asOf 的内容 | 触发 FinancialWorker 重新 ingest + chunk |
+
+### MVP 阶段不覆盖的维度
+
+- ⚠️ 资金流向：无历史持久化，MVP 回测不含此维度
+- ⚠️ RAG 内容：chunks 表缺少 SourcePublishTime 字段，需后续补充才能做 PIT 切片
 
 ## 分几步做
 
