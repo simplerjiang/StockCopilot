@@ -117,35 +117,62 @@ public class AnnouncementPdfCollector
     private async Task<List<EastmoneyAnnouncement>> QueryAnnouncementListAsync(
         string code, int pageSize, CancellationToken ct)
     {
-        var url = $"https://np-anotice-stock.eastmoney.com/api/security/ann" +
-                  $"?sr=-1&page_size={pageSize}&page_index=1" +
-                  $"&ann_type=SHA,SZA&client_source=web" +
-                  $"&stock_list={code}&f_node=0&s_node=0";
+        var allResults = new List<EastmoneyAnnouncement>();
+        int pageIndex = 1;
+        const int maxPages = 10;
 
-        const int maxRetries = 3;
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        while (pageIndex <= maxPages)
         {
-            try
-            {
-                var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Add("Referer", "https://data.eastmoney.com/");
+            var url = $"https://np-anotice-stock.eastmoney.com/api/security/ann" +
+                      $"?sr=-1&page_size={pageSize}&page_index={pageIndex}" +
+                      $"&ann_type=SHA,SZA&client_source=web" +
+                      $"&stock_list={code}&f_node=0&s_node=0";
 
-                var response = await _httpClient.SendAsync(request, ct);
-                response.EnsureSuccessStatusCode();
-
-                var json = await response.Content.ReadAsStringAsync(ct);
-                return ParseAnnouncementList(json);
-            }
-            catch (Exception ex) when (attempt < maxRetries && !ct.IsCancellationRequested)
+            List<EastmoneyAnnouncement>? pageResults = null;
+            const int maxRetries = 3;
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                _logger.LogWarning(ex, "[AnnouncementPdf] API 查询失败 (第 {Attempt}/{Max} 次): {Code}",
-                    attempt, maxRetries, code);
-                await Task.Delay(1000 * attempt, ct);
+                try
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, url);
+                    request.Headers.Add("Referer", "https://data.eastmoney.com/");
+
+                    var response = await _httpClient.SendAsync(request, ct);
+                    response.EnsureSuccessStatusCode();
+
+                    var json = await response.Content.ReadAsStringAsync(ct);
+                    pageResults = ParseAnnouncementList(json);
+                    break;
+                }
+                catch (Exception ex) when (attempt < maxRetries && !ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "[AnnouncementPdf] API 查询失败 (第 {Attempt}/{Max} 次): {Code} page={Page}",
+                        attempt, maxRetries, code, pageIndex);
+                    await Task.Delay(1000 * attempt, ct);
+                }
             }
+
+            if (pageResults == null || pageResults.Count == 0)
+                break;
+
+            allResults.AddRange(pageResults);
+
+            _logger.LogDebug("[AnnouncementPdf] {Code} page={Page}: 本页 {Count} 条, 累计 {Total} 条",
+                code, pageIndex, pageResults.Count, allResults.Count);
+
+            if (pageResults.Count < pageSize)
+                break;
+
+            pageIndex++;
+            await Task.Delay(300, ct);
         }
 
-        _logger.LogError("[AnnouncementPdf] API 查询最终失败: {Code}", code);
-        return new List<EastmoneyAnnouncement>();
+        if (allResults.Count == 0)
+        {
+            _logger.LogError("[AnnouncementPdf] API 查询最终失败: {Code}", code);
+        }
+
+        return allResults;
     }
 
     /// <summary>
