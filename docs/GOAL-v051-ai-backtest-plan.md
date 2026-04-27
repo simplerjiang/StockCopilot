@@ -77,7 +77,7 @@ flowchart TD
 | 板块轮动 | SectorRotationSnapshot | 取决于采集时长 | TradingDate ≤ asOf | ✅ 已有采集服务 |
 | 市场情绪 | MarketSentimentSnapshot | 取决于采集时长 | TradingDate ≤ asOf | ✅ 已有采集服务 |
 | 资金流向 | Eastmoney 实时推送 | 仅当日 | 无持久化 | ❌ 无法冻结，需外接历史源 |
-| RAG 内容 | FinancialWorker chunks | 取决于采集 | 无 publishTime 字段 | ❌ 需补 SourcePublishTime |
+| RAG 内容 | FinancialWorker chunks | 取决于采集 | 无原始文档发布时间字段 | ❌ 需补 SourcePublishTime（原始 PDF 的发布日期，非入库时间） |
 
 ### 已完成的基础设施修复
 
@@ -99,7 +99,7 @@ flowchart TD
 ### MVP 阶段不覆盖的维度
 
 - ⚠️ 资金流向：无历史持久化，MVP 回测不含此维度
-- ⚠️ RAG 内容：chunks 表缺少 SourcePublishTime 字段，需后续补充才能做 PIT 切片
+- ⚠️ RAG 内容：chunks 表缺少 `SourcePublishTime` 字段（指原始财报/公告 PDF 的发布日期，不是存入 RAG 的时间），需后续补充才能做 PIT 切片
 
 ## 分几步做
 
