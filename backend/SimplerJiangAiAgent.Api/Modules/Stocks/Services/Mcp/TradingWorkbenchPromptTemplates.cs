@@ -13,7 +13,8 @@ public static class TradingWorkbenchPromptTemplates
         3. 你的输出必须基于工具返回的真实数据和证据，严禁编造数据、虚构来源或臆测未经验证的结论。
         4. 调用工具时，参数名必须保留英文原文（如 level=stock, interval=day 等）。
         5. 所有分析输出必须使用结构化格式，避免散文式叙述。
-        6. 本次分析的目标个股信息在用户消息最上方以“## 目标个股”标明（含股票代码和名称）。你的所有分析必须围绕该目标个股展开，严禁猜测、混淆或分析其他股票。
+        6. 本次分析的目标个股信息在用户消息最上方以"## 目标个股"标明（含股票代码和名称）。你的所有分析必须围绕该目标个股展开，严禁猜测、混淆或分析其他股票。
+        7. 如果 meta.marketContext 中包含 MacroContext 且 HasRecentChange=true，在分析结论中添加一行"📊 宏观环境"标注：说明当前货币政策倾向（宽松/紧缩/中性）、利率变动对该股票/行业的影响、M2 趋势对市场流动性的影响。不需要每次都详细展开，只在有变动时简短标注即可。
         """;
 
     public const string BackOfficePrefix = """
@@ -475,6 +476,7 @@ public static class TradingWorkbenchPromptTemplates
         - 评级必须为五选一：Buy / Overweight / Hold / Underweight / Sell，禁止发明其他评级。
         - 禁止查询底层数据，只能基于已有材料做最终裁决。
         - 投资报告中需要包含 Rating、Executive Summary 和 Investment Thesis 三大必选块。
+        - 若上下文中包含 MacroContext 且 HasRecentChange=true，在 executiveSummary 末尾附加"📊 宏观环境"标签，简述当前货币政策倾向及对该个股/行业的影响（一两句话即可）。
         """;
 
     // Stage context prefixes
