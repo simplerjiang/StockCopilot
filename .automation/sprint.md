@@ -168,3 +168,34 @@
 ### Backlog
 
 （无）
+
+---
+
+## v0.5.1 Sprint — 宏观经济数据全量接入（批次 1：基础数据层）
+
+> 接入 Baostock.NET 宏观五维数据 + 分红数据，暴露 REST API，为后续 LLM 集成和前端面板打基础。
+
+**Sprint 开始**: 2026-04-28
+**分支**: `v051`
+**计划文档**: [GOAL-v050 §3.2](../docs/GOAL-v050-baostock-integration-plan.md)
+
+### Active Stories (max 3)
+
+| Story | Title | Level | 描述 | 验收标准 | Status |
+|-------|-------|-------|------|---------|--------|
+| V051-S1 | 宏观数据全量采集 | M | 接入 5 个 Baostock.NET 宏观 API（存款利率/贷款利率/准备金率/月度货币供应/年度货币供应）；创建 MacroIndicator 实体；MacroDataWorker 后台定时采集 | 全部 5 类宏观数据落库；数据时间跨度 ≥ 5 年；Worker 日志无异常 | TODO |
+| V051-S2 | 宏观数据 REST API | M | 暴露统一端点 `GET /api/macro/{indicator}?from=&to=`；支持 JSON 时间序列响应；包含趋势方向标注 | 5 个指标均可通过 API 查询；响应包含时间序列 + 趋势方向 | TODO |
+| V051-S3 | 分红数据接入 | M | 接入 Baostock.NET QueryDividendDataAsync；创建 DividendRecord 实体；暴露 API 端点 `GET /api/stocks/{symbol}/dividends` | 分红数据可查询；与公开数据交叉验证通过 | TODO |
+
+### 批次 2 预告（下一 Sprint）
+
+| Story | Title | Level |
+|-------|-------|-------|
+| V051-S4 | LLM Context 结构化 | L |
+| V051-S5 | 情绪分析集成 | M |
+| V051-S6 | 前端宏观面板 | M |
+| V051-S7 | 公告检索 Baostock 切换 | M |
+
+### Backlog
+
+（继承 v0.4.8 技术债）
