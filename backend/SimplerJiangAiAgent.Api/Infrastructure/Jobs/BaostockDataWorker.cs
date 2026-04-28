@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Services;
@@ -87,12 +88,14 @@ public sealed class BaostockDataWorker : BackgroundService
             var newRows = new List<StockIndustryClassification>();
             await foreach (var row in client.QueryStockIndustryAsync(ct: ct))
             {
+                var (code, name) = ParseIndustryField(row.Industry);
                 newRows.Add(new StockIndustryClassification
                 {
                     StockCode = row.Code,
                     StockName = row.CodeName,
-                    Industry = row.Industry,
-                    IndustryCode = row.IndustryClassification,
+                    Industry = name,
+                    IndustryCode = code,
+                    ClassificationSystem = row.IndustryClassification,
                     UpdateDate = row.UpdateDate,
                     CreatedAt = DateTime.UtcNow
                 });
@@ -136,5 +139,16 @@ public sealed class BaostockDataWorker : BackgroundService
             db.IndexConstituents.AddRange(newRows);
             _logger.LogInformation("Refreshed {Index}: {Count} constituents", indexCode, newRows.Count);
         }
+    }
+
+    /// <summary>
+    /// Parses "C15酒、饮料和精制茶制造业" → ("C15", "酒、饮料和精制茶制造业").
+    /// Falls back to ("", raw) if the pattern doesn't match.
+    /// </summary>
+    private static (string Code, string Name) ParseIndustryField(string raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return (string.Empty, string.Empty);
+        var m = Regex.Match(raw, @"^([A-Z]\d+)(.+)$");
+        return m.Success ? (m.Groups[1].Value, m.Groups[2].Value) : (string.Empty, raw);
     }
 }

@@ -36,6 +36,7 @@ public static class StockMarketDataSchemaInitializer
                         StockName TEXT NOT NULL,
                         Industry TEXT NOT NULL,
                         IndustryCode TEXT NOT NULL,
+                        ClassificationSystem TEXT NOT NULL DEFAULT '',
                         UpdateDate TEXT NOT NULL,
                         CreatedAt TEXT NOT NULL
                     );

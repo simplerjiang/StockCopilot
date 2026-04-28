@@ -676,6 +676,7 @@ public sealed class AppDbContext : DbContext
             e.Property(x => x.StockName).HasMaxLength(128);
             e.Property(x => x.Industry).HasMaxLength(128);
             e.Property(x => x.IndustryCode).HasMaxLength(16);
+            e.Property(x => x.ClassificationSystem).HasMaxLength(64);
             e.Property(x => x.UpdateDate).HasMaxLength(16);
         });
 
