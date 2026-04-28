@@ -156,15 +156,15 @@
 
 | Story | Title | Level | 描述 | Status |
 |-------|-------|-------|------|--------|
-| V050-S1 | NuGet 集成 + 连接管理 | S | 添加 Baostock.NET 本地项目引用，实现 IBaostockClientFactory 连接池 | TODO |
-| V050-S2 | 交易日历替换 | M | 用 QueryTradeDatesAsync() 替换 KnownHolidayClosures 硬编码 | TODO |
-| V050-S3 | K线历史数据切换 | M | SC 日期参数 bug，切换为 Baostock.NET 作为 K线历史主源 | TODO |
+| V050-S1 | NuGet 集成 + 连接管理 | S | 添加 Baostock.NET 本地项目引用，实现 IBaostockClientFactory 连接池 | DONE |
+| V050-S2 | 交易日历替换 | M | 用 QueryTradeDatesAsync() 替换 KnownHolidayClosures 硬编码 | DONE |
+| V050-S3 | K线历史数据切换 | M | SC 日期参数 bug，切换为 Baostock.NET 作为 K线历史主源 | DONE |
+| V050-S4 | 实时行情增加 Baostock 源 | M | 与东财互补，增加 Baostock 为实时行情数据源 | TODO |
+| V050-S5 | 指数成分数据采集 | S | 接入 HS300/SZ50/ZZ500 成分股列表，存储到 SQL | TODO |
+| V050-S6 | 行业分类数据 | M | 接入证监会行业分类，关联到 Stock 实体 | TODO |
 
 ### Backlog
 
 | Story | Title | Level | 描述 | Status |
 |-------|-------|-------|------|--------|
-| V050-S4 | 实时行情增加 Baostock 源 | M | 与东财互补，增加 Baostock 为实时行情数据源 | BACKLOG |
-| V050-S5 | 指数成分数据采集 | S | 接入 HS300/SZ50/ZZ500 成分股列表，存储到 SQL | BACKLOG |
-| V050-S6 | 行业分类数据 | M | 接入证监会行业分类，关联到 Stock 实体 | BACKLOG |
 | V050-S7 | v0.5.0 全链路验收 | S | 集成测试 + 浏览器验收 | BACKLOG |
