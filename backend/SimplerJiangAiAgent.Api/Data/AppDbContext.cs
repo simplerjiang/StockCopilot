@@ -77,6 +77,7 @@ public sealed class AppDbContext : DbContext
     public DbSet<TradeExecution> TradeExecutions => Set<TradeExecution>();
     public DbSet<TradeReview> TradeReviews => Set<TradeReview>();
     public DbSet<UserPortfolioSettings> UserPortfolioSettings => Set<UserPortfolioSettings>();
+    public DbSet<IndexConstituentSnapshot> IndexConstituents => Set<IndexConstituentSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -655,6 +656,16 @@ public sealed class AppDbContext : DbContext
         // ── StockPosition extra config ───────────────────────────
         modelBuilder.Entity<StockPosition>()
             .Property(x => x.Name).HasMaxLength(128);
+
+        // ── IndexConstituentSnapshot ─────────────────────────────
+        modelBuilder.Entity<IndexConstituentSnapshot>(e =>
+        {
+            e.HasIndex(x => new { x.IndexCode, x.StockCode }).IsUnique();
+            e.Property(x => x.IndexCode).HasMaxLength(16);
+            e.Property(x => x.StockCode).HasMaxLength(32);
+            e.Property(x => x.StockName).HasMaxLength(128);
+            e.Property(x => x.UpdateDate).HasMaxLength(16);
+        });
 
         // Global decimal(18,2) default
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
