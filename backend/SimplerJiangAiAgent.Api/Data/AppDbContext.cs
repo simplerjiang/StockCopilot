@@ -83,6 +83,7 @@ public sealed class AppDbContext : DbContext
     public DbSet<MacroLoanRate> MacroLoanRates => Set<MacroLoanRate>();
     public DbSet<MacroMoneySupply> MacroMoneySupplies => Set<MacroMoneySupply>();
     public DbSet<MacroShibor> MacroShibors => Set<MacroShibor>();
+    public DbSet<StockDividendRecord> StockDividendRecords => Set<StockDividendRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -735,6 +736,20 @@ public sealed class AppDbContext : DbContext
         {
             e.HasIndex(x => x.Date).IsUnique();
             e.Property(x => x.Date).HasConversion(dateOnlyConverter);
+        });
+
+        // ── StockDividendRecord ──────────────────────────────────
+        modelBuilder.Entity<StockDividendRecord>(e =>
+        {
+            e.HasIndex(x => new { x.StockCode, x.ExDividendDate }).IsUnique();
+            e.Property(x => x.StockCode).HasMaxLength(20);
+            e.Property(x => x.StockName).HasMaxLength(128);
+            e.Property(x => x.StockDividendPerShare).HasMaxLength(64);
+            e.Property(x => x.PreNoticeDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.RecordDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.ExDividendDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.LastTradeDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.ListedDate).HasConversion(dateOnlyConverter);
         });
     }
 

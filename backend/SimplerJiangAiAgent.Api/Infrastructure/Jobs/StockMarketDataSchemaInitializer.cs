@@ -104,6 +104,23 @@ public static class StockMarketDataSchemaInitializer
                     );
                     CREATE UNIQUE INDEX IF NOT EXISTS IX_MacroShibors_Date
                         ON MacroShibors (Date);
+
+                    CREATE TABLE IF NOT EXISTS StockDividendRecords (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        StockCode TEXT NOT NULL,
+                        StockName TEXT NOT NULL DEFAULT '',
+                        PreNoticeDate TEXT,
+                        DividendPerShare TEXT,
+                        DividendPerShareAfterTax TEXT,
+                        StockDividendPerShare TEXT,
+                        RecordDate TEXT,
+                        ExDividendDate TEXT,
+                        LastTradeDate TEXT,
+                        ListedDate TEXT,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_StockDividendRecords_StockCode_ExDividendDate
+                        ON StockDividendRecords (StockCode, ExDividendDate);
                     """;
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
             }
