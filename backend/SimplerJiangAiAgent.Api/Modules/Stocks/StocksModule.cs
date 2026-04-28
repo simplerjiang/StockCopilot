@@ -19,6 +19,7 @@ using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
+using SimplerJiangAiAgent.Api.Modules.Backtest;
 using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.IntentClassification;
@@ -89,6 +90,7 @@ public sealed class StocksModule : IModule
         services.AddScoped<IStockCopilotLiveGateService, StockCopilotLiveGateService>();
         services.AddScoped<IStockCopilotAcceptanceService, StockCopilotAcceptanceService>();
         services.AddScoped<IStockAgentReplayCalibrationService, StockAgentReplayCalibrationService>();
+        services.AddScoped<IBacktestService, BacktestService>();
         services.AddScoped<IMcpToolGateway, McpToolGateway>();
         services.AddSingleton<IMcpServiceRegistry, McpServiceRegistry>();
         services.AddSingleton<IRoleToolPolicyService, RoleToolPolicyService>();
