@@ -49,6 +49,30 @@ public sealed class MacroModule : IModule
         })
         .WithName("GetMacroIndicator")
         .WithOpenApi();
+
+        group.MapGet("/summary", async (
+            IMacroEnvironmentService macroService,
+            CancellationToken ct) =>
+        {
+            var macro = await macroService.GetCurrentAsync(ct);
+            if (macro is null)
+                return Results.Ok(new { available = false, message = "宏观数据尚未采集" });
+
+            return Results.Ok(new
+            {
+                available = true,
+                policySignal = macro.PolicySignal,
+                depositRate1Y = macro.DepositRate1Y,
+                loanRate1Y = macro.LoanRate1Y,
+                m2YoY = macro.M2YoY,
+                m2Trend = macro.M2Trend,
+                liquiditySignal = macro.LiquiditySignal,
+                latestRateChange = macro.LatestRateChange,
+                hasRecentChange = macro.HasRecentChange
+            });
+        })
+        .WithName("GetMacroSummary")
+        .WithOpenApi();
     }
 
     private static async Task<object> QueryDepositRates(AppDbContext db, DateOnly? from, DateOnly? to, CancellationToken ct)
