@@ -146,14 +146,15 @@ public sealed class BacktestModule : IModule
                     {
                         count = list.Count,
                         accuracy1d = AccuracyOf(list, r => r.IsCorrect1d),
+                        accuracy3d = AccuracyOf(list, r => r.IsCorrect3d),
                         accuracy5d = AccuracyOf(list, r => r.IsCorrect5d),
                         accuracy10d = AccuracyOf(list, r => r.IsCorrect10d),
                     };
                 });
 
         // Ensure 看多/看空 always present
-        directions.TryAdd("看多", new { count = 0, accuracy1d = 0.0, accuracy5d = 0.0, accuracy10d = 0.0 });
-        directions.TryAdd("看空", new { count = 0, accuracy1d = 0.0, accuracy5d = 0.0, accuracy10d = 0.0 });
+        directions.TryAdd("看多", new { count = 0, accuracy1d = 0.0, accuracy3d = 0.0, accuracy5d = 0.0, accuracy10d = 0.0 });
+        directions.TryAdd("看空", new { count = 0, accuracy1d = 0.0, accuracy3d = 0.0, accuracy5d = 0.0, accuracy10d = 0.0 });
 
         return directions;
     }
