@@ -8,6 +8,49 @@ public static class StockMarketDataSchemaInitializer
     public static async Task EnsureAsync(AppDbContext dbContext, CancellationToken cancellationToken = default)
     {
         var provider = dbContext.Database.ProviderName ?? string.Empty;
+
+        // SQLite: EnsureCreated() only works when the DB file is brand-new.
+        // For existing databases, v0.5.0 tables must be created explicitly.
+        if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+        {
+            var conn = dbContext.Database.GetDbConnection();
+            await conn.OpenAsync(cancellationToken);
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = """
+                    CREATE TABLE IF NOT EXISTS IndexConstituents (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        IndexCode TEXT NOT NULL,
+                        StockCode TEXT NOT NULL,
+                        StockName TEXT NOT NULL,
+                        UpdateDate TEXT NOT NULL,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_IndexConstituents_IndexCode_StockCode
+                        ON IndexConstituents (IndexCode, StockCode);
+
+                    CREATE TABLE IF NOT EXISTS StockIndustryClassifications (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        StockCode TEXT NOT NULL,
+                        StockName TEXT NOT NULL,
+                        Industry TEXT NOT NULL,
+                        IndustryCode TEXT NOT NULL,
+                        UpdateDate TEXT NOT NULL,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_StockIndustryClassifications_StockCode
+                        ON StockIndustryClassifications (StockCode);
+                    """;
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+            finally
+            {
+                await conn.CloseAsync();
+            }
+            return;
+        }
+
         if (!provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
         {
             return;
