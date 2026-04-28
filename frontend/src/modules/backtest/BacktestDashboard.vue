@@ -64,6 +64,10 @@ function formatPct(val) { return val != null ? `${Number(val).toFixed(1)}%` : '-
 function accuracyClass(v) { return v >= 60 ? 'good' : v >= 40 ? 'neutral' : 'poor' }
 function directionClass(d) { return d?.includes('多') ? 'bull' : d?.includes('空') ? 'bear' : '' }
 function correctClass(v) { return v === true ? 'correct' : v === false ? 'wrong' : '' }
+function formatStatus(s) {
+  const map = { 'calculated': '已计算', 'insufficient_data': '数据不足', 'pending': '待计算' }
+  return map[s] || s
+}
 
 onMounted(() => { loadStats(); loadResults() })
 </script>
@@ -148,7 +152,7 @@ onMounted(() => { loadStats(); loadResults() })
           <tr v-for="r in results" :key="r.id">
             <td>{{ r.name || r.symbol }}</td>
             <td>{{ r.analysisDate }}</td>
-            <td :class="directionClass(r.predictedDirection)">{{ r.predictedDirection }}</td>
+            <td :class="directionClass(r.predictedDirection)">{{ r.predictedDirection || '-' }}</td>
             <td>{{ r.confidence }}%</td>
             <td :class="correctClass(r.isCorrect1d)">{{ formatReturn(r.window1dActual) }}</td>
             <td :class="correctClass(r.isCorrect3d)">{{ formatReturn(r.window3dActual) }}</td>
@@ -156,7 +160,7 @@ onMounted(() => { loadStats(); loadResults() })
             <td :class="correctClass(r.isCorrect10d)">{{ formatReturn(r.window10dActual) }}</td>
             <td>{{ r.targetHit ? '✅' : r.targetHit === false ? '❌' : '-' }}</td>
             <td>{{ r.stopTriggered ? '⚠️' : r.stopTriggered === false ? '✅' : '-' }}</td>
-            <td>{{ r.calcStatus }}</td>
+            <td>{{ formatStatus(r.calcStatus) }}</td>
           </tr>
         </tbody>
       </table>

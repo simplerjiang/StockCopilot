@@ -674,10 +674,19 @@ export const buildBacktestMarkers = (backtestResults, klineRecords) => {
     if (bt.calcStatus !== 'calculated') continue
 
     const analysisDate = bt.analysisDate
-    const kline = klineRecords.find(k => {
-      const d = new Date(k.timestamp || k.date)
-      return d.toISOString().slice(0, 10) === analysisDate
-    })
+    const analysisTs = new Date(analysisDate + 'T00:00:00').getTime()
+    let kline = null
+    let minDiff = Infinity
+    for (const k of klineRecords) {
+      const kTs = k.timestamp || new Date(k.date).getTime()
+      const diff = analysisTs - kTs
+      if (diff >= 0 && diff < minDiff) {
+        minDiff = diff
+        kline = k
+      }
+    }
+    // 最多向前查找 5 天（避免匹配到太久远的数据）
+    if (minDiff > 5 * 24 * 3600 * 1000) kline = null
 
     if (!kline) continue
 
