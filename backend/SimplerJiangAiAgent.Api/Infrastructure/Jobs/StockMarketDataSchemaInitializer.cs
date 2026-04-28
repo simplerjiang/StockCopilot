@@ -42,6 +42,68 @@ public static class StockMarketDataSchemaInitializer
                     );
                     CREATE UNIQUE INDEX IF NOT EXISTS IX_StockIndustryClassifications_StockCode
                         ON StockIndustryClassifications (StockCode);
+
+                    CREATE TABLE IF NOT EXISTS MacroDepositRates (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Date TEXT NOT NULL,
+                        DemandDeposit TEXT,
+                        Fixed3M TEXT,
+                        Fixed6M TEXT,
+                        Fixed1Y TEXT,
+                        Fixed2Y TEXT,
+                        Fixed3Y TEXT,
+                        Fixed5Y TEXT,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_MacroDepositRates_Date
+                        ON MacroDepositRates (Date);
+
+                    CREATE TABLE IF NOT EXISTS MacroLoanRates (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Date TEXT NOT NULL,
+                        Loan6M TEXT,
+                        Loan6MTo1Y TEXT,
+                        Loan1YTo3Y TEXT,
+                        Loan3YTo5Y TEXT,
+                        Loan5YPlus TEXT,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_MacroLoanRates_Date
+                        ON MacroLoanRates (Date);
+
+                    CREATE TABLE IF NOT EXISTS MacroMoneySupplies (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Granularity TEXT NOT NULL DEFAULT 'month',
+                        Date TEXT NOT NULL,
+                        M0 TEXT,
+                        M0YoY TEXT,
+                        M0MoM TEXT,
+                        M1 TEXT,
+                        M1YoY TEXT,
+                        M1MoM TEXT,
+                        M2 TEXT,
+                        M2YoY TEXT,
+                        M2MoM TEXT,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_MacroMoneySupplies_Granularity_Date
+                        ON MacroMoneySupplies (Granularity, Date);
+
+                    CREATE TABLE IF NOT EXISTS MacroShibors (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Date TEXT NOT NULL,
+                        Overnight TEXT,
+                        Week1 TEXT,
+                        Week2 TEXT,
+                        Month1 TEXT,
+                        Month3 TEXT,
+                        Month6 TEXT,
+                        Month9 TEXT,
+                        Year1 TEXT,
+                        CreatedAt TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS IX_MacroShibors_Date
+                        ON MacroShibors (Date);
                     """;
                 await cmd.ExecuteNonQueryAsync(cancellationToken);
             }
