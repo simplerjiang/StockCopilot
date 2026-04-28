@@ -78,7 +78,7 @@ public sealed class MacroEnvironmentService : IMacroEnvironmentService
             PolicySignal: policySignal,
             LatestRateChange: latestRateChange,
             DepositRate1Y: latestDeposit?.Fixed1Y,
-            LoanRate1Y: loanRates.FirstOrDefault()?.Loan1YTo3Y,
+            LoanRate1Y: loanRates.FirstOrDefault()?.Loan6MTo1Y,
             M2YoY: latestM?.M2YoY,
             M2Trend: m2Trend,
             LiquiditySignal: liquiditySignal,

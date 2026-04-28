@@ -1229,9 +1229,14 @@ public sealed class StocksModule : IModule
                         .FirstOrDefaultAsync(s => s.StockCode == normalizedSymbol || s.StockCode == upperSymbol, ct);
                     var stockName = stockInfo?.StockName ?? string.Empty;
 
-                    await foreach (var row in lease.Client.QueryDividendDataAsync(normalizedSymbol, null, "operate", ct))
+                    // Query multiple years to get full dividend history (year=null defaults to current year which may have no data)
+                    var currentYear = DateTime.Now.Year;
+                    for (var y = currentYear; y >= 2000; y--)
                     {
-                        rows.Add(MapDividendRow(row, normalizedSymbol, stockName));
+                        await foreach (var row in lease.Client.QueryDividendDataAsync(normalizedSymbol, y.ToString(), "operate", ct))
+                        {
+                            rows.Add(MapDividendRow(row, normalizedSymbol, stockName));
+                        }
                     }
 
                     if (rows.Count > 0)
