@@ -14,6 +14,7 @@ using SimplerJiangAiAgent.Api.Modules;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
+using SimplerJiangAiAgent.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -55,6 +56,7 @@ builder.Services.AddScoped<ISourceGovernanceReadService>(serviceProvider =>
         serviceProvider.GetRequiredService<AppDbContext>(),
         serviceProvider.GetRequiredService<AppRuntimePaths>()));
 builder.Services.AddSingleton<ICommandRunner, ProcessCommandRunner>();
+builder.Services.AddSingleton<IBaostockClientFactory, BaostockClientFactory>();
 
 var runtimePaths = new AppRuntimePaths(builder.Environment, builder.Configuration);
 runtimePaths.EnsureWritableDirectories();
