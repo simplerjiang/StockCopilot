@@ -78,6 +78,7 @@ public sealed class AppDbContext : DbContext
     public DbSet<TradeReview> TradeReviews => Set<TradeReview>();
     public DbSet<UserPortfolioSettings> UserPortfolioSettings => Set<UserPortfolioSettings>();
     public DbSet<IndexConstituentSnapshot> IndexConstituents => Set<IndexConstituentSnapshot>();
+    public DbSet<StockIndustryClassification> StockIndustryClassifications => Set<StockIndustryClassification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -664,6 +665,17 @@ public sealed class AppDbContext : DbContext
             e.Property(x => x.IndexCode).HasMaxLength(16);
             e.Property(x => x.StockCode).HasMaxLength(32);
             e.Property(x => x.StockName).HasMaxLength(128);
+            e.Property(x => x.UpdateDate).HasMaxLength(16);
+        });
+
+        // ── StockIndustryClassification ──────────────────────────
+        modelBuilder.Entity<StockIndustryClassification>(e =>
+        {
+            e.HasIndex(x => x.StockCode).IsUnique();
+            e.Property(x => x.StockCode).HasMaxLength(32);
+            e.Property(x => x.StockName).HasMaxLength(128);
+            e.Property(x => x.Industry).HasMaxLength(128);
+            e.Property(x => x.IndustryCode).HasMaxLength(16);
             e.Property(x => x.UpdateDate).HasMaxLength(16);
         });
 

@@ -23,7 +23,7 @@ public sealed class BaostockDataWorker : BackgroundService
         // Wait for calendar service and other workers to initialize
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 
-        await RefreshIndexConstituentsAsync(stoppingToken);
+        await RefreshAllAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -42,32 +42,73 @@ public sealed class BaostockDataWorker : BackgroundService
                 }
             }
 
-            await RefreshIndexConstituentsAsync(stoppingToken);
+            await RefreshAllAsync(stoppingToken);
         }
     }
 
-    private async Task RefreshIndexConstituentsAsync(CancellationToken ct)
+    private async Task RefreshAllAsync(CancellationToken ct)
     {
         try
         {
             await using var lease = await _clientFactory.GetClientAsync(ct);
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-            await RefreshSingleIndexAsync(db, "HS300",
-                lease.Client.QueryHs300StocksAsync(ct: ct), ct);
-            await RefreshSingleIndexAsync(db, "SZ50",
-                lease.Client.QuerySz50StocksAsync(ct: ct), ct);
-            await RefreshSingleIndexAsync(db, "ZZ500",
-                lease.Client.QueryZz500StocksAsync(ct: ct), ct);
-
-            await db.SaveChangesAsync(ct);
-            _logger.LogInformation("Index constituent refresh completed");
+            await RefreshIndexConstituentsAsync(lease.Client, ct);
+            await RefreshIndustryClassificationsAsync(lease.Client, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to refresh index constituents from Baostock");
+            _logger.LogWarning(ex, "Failed to refresh Baostock data");
+        }
+    }
+
+    private async Task RefreshIndexConstituentsAsync(Baostock.NET.Client.BaostockClient client, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await RefreshSingleIndexAsync(db, "HS300",
+            client.QueryHs300StocksAsync(ct: ct), ct);
+        await RefreshSingleIndexAsync(db, "SZ50",
+            client.QuerySz50StocksAsync(ct: ct), ct);
+        await RefreshSingleIndexAsync(db, "ZZ500",
+            client.QueryZz500StocksAsync(ct: ct), ct);
+
+        await db.SaveChangesAsync(ct);
+        _logger.LogInformation("Index constituent refresh completed");
+    }
+
+    private async Task RefreshIndustryClassificationsAsync(Baostock.NET.Client.BaostockClient client, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var newRows = new List<StockIndustryClassification>();
+            await foreach (var row in client.QueryStockIndustryAsync(ct: ct))
+            {
+                newRows.Add(new StockIndustryClassification
+                {
+                    StockCode = row.Code,
+                    StockName = row.CodeName,
+                    Industry = row.Industry,
+                    IndustryCode = row.IndustryClassification,
+                    UpdateDate = row.UpdateDate,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            if (newRows.Count > 0)
+            {
+                db.StockIndustryClassifications.RemoveRange(db.StockIndustryClassifications);
+                db.StockIndustryClassifications.AddRange(newRows);
+                await db.SaveChangesAsync(ct);
+                _logger.LogInformation("Refreshed industry classifications: {Count} stocks", newRows.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh industry classifications from Baostock");
         }
     }
 
