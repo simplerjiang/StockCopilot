@@ -24,6 +24,7 @@
 | v0.4.6 | 2026-04-24 | S0–S8 + HF-1 + HF-2 全部 DONE | — | 多 Agent 路由 / 财报 RAG 闭环 / LiveGate 合成 / 散户热度图表 / cninfo 修复 / 论坛重试 |
 | v0.4.7 | 2026-04-24 | S1–S5 全部 DONE | 768+466 tests, 0 fail | AI 分析 JSON 修复 / 公告 PDF 爬取+RAG / MCP 注册 |
 | v0.4.8 | 2026-04-28 | S1–S3 全部 DONE | — | 交易账务闭环 / 核心稳定性四件套 / 财报数据语义完整 |
+| v0.5.0 | 2026-04-28 | S1–S7 全部 DONE | — | Baostock.NET 集成 / 交易日历 / K线切换 / 实时行情 / 指数成分 / 行业分类 |
 
 ---
 
@@ -159,12 +160,11 @@
 | V050-S1 | NuGet 集成 + 连接管理 | S | 添加 Baostock.NET 本地项目引用，实现 IBaostockClientFactory 连接池 | DONE |
 | V050-S2 | 交易日历替换 | M | 用 QueryTradeDatesAsync() 替换 KnownHolidayClosures 硬编码 | DONE |
 | V050-S3 | K线历史数据切换 | M | SC 日期参数 bug，切换为 Baostock.NET 作为 K线历史主源 | DONE |
-| V050-S4 | 实时行情增加 Baostock 源 | M | 与东财互补，增加 Baostock 为实时行情数据源 | TODO |
-| V050-S5 | 指数成分数据采集 | S | 接入 HS300/SZ50/ZZ500 成分股列表，存储到 SQL | TODO |
-| V050-S6 | 行业分类数据 | M | 接入证监会行业分类，关联到 Stock 实体 | TODO |
+| V050-S4 | 实时行情增加 Baostock 源 | M | 与东财互补，增加 Baostock 为实时行情数据源 | DONE |
+| V050-S5 | 指数成分数据采集 | S | 接入 HS300/SZ50/ZZ500 成分股列表，存储到 SQL | DONE |
+| V050-S6 | 行业分类数据 | M | 接入证监会行业分类，关联到 Stock 实体 | DONE |
+| V050-S7 | v0.5.0 全链路验收 | S | 集成测试 + 浏览器验收 | DONE |
 
 ### Backlog
 
-| Story | Title | Level | 描述 | Status |
-|-------|-------|-------|------|--------|
-| V050-S7 | v0.5.0 全链路验收 | S | 集成测试 + 浏览器验收 | BACKLOG |
+（无）
