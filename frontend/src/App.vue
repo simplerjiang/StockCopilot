@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onErrorCaptured, onMounted, ref, w
 import StockInfoTab from './modules/stocks/StockInfoTab.vue'
 import NewsArchiveTab from './modules/stocks/NewsArchiveTab.vue'
 import StockRecommendTab from './modules/stocks/StockRecommendTab.vue'
+import BacktestDashboard from './modules/backtest/BacktestDashboard.vue'
 import TradeLogTab from './modules/stocks/TradeLogTab.vue'
 import MarketSentimentTab from './modules/market/MarketSentimentTab.vue'
 import AdminLlmSettings from './modules/admin/AdminLlmSettings.vue'
@@ -20,7 +21,8 @@ const mainTabs = [
   { key: 'news-archive', name: '全量资讯库', shortName: '资讯', component: NewsArchiveTab },
   { key: 'financial-center', name: '财报中心', shortName: '财报', component: FinancialCenterPage },
   { key: 'trade-log', name: '交易日志', shortName: '交易', component: TradeLogTab },
-  { key: 'stock-recommend', name: '股票推荐', shortName: '推荐', component: StockRecommendTab }
+  { key: 'stock-recommend', name: '股票推荐', shortName: '推荐', component: StockRecommendTab },
+  { key: 'backtest', name: 'AI 回测', shortName: '回测', component: BacktestDashboard }
 ]
 
 const adminTabs = [
