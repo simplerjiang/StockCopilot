@@ -308,8 +308,11 @@ const trendRows = computed(() => {
     rows.push({
       period: revenueItem?.period || netProfitItem?.period || totalAssetsItem?.period || '-',
       revenue: formatCellValue(revenueItem?.value, revenueItem?.yoY),
+      revenueQoQ: formatQoQ(revenueItem?.qoQ),
       netProfit: formatCellValue(netProfitItem?.value, netProfitItem?.yoY),
-      totalAssets: formatCellValue(totalAssetsItem?.value, totalAssetsItem?.yoY)
+      netProfitQoQ: formatQoQ(netProfitItem?.qoQ),
+      totalAssets: formatCellValue(totalAssetsItem?.value, totalAssetsItem?.yoY),
+      totalAssetsQoQ: formatQoQ(totalAssetsItem?.qoQ)
     })
   }
   return rows
@@ -422,6 +425,11 @@ const dividendRows = computed(() => {
 function formatYoY(yoy) {
   if (yoy == null) return ''
   return (yoy >= 0 ? '+' : '') + yoy.toFixed(2) + '%'
+}
+
+function formatQoQ(qoq) {
+  if (qoq == null) return ''
+  return (qoq >= 0 ? '+' : '') + qoq.toFixed(2) + '%'
 }
 
 function getYoYClass(yoy) {
@@ -769,16 +777,22 @@ async function refreshPdfViewerFileList(detail) {
               <tr>
                 <th>期间</th>
                 <th>营业收入</th>
+                <th>收入环比</th>
                 <th>净利润</th>
+                <th>利润环比</th>
                 <th>总资产</th>
+                <th>资产环比</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(item, idx) in trendRows" :key="idx">
                 <td>{{ item.period }}</td>
                 <td>{{ item.revenue }}</td>
+                <td>{{ item.revenueQoQ }}</td>
                 <td>{{ item.netProfit }}</td>
+                <td>{{ item.netProfitQoQ }}</td>
                 <td>{{ item.totalAssets }}</td>
+                <td>{{ item.totalAssetsQoQ }}</td>
               </tr>
             </tbody>
           </table>
@@ -940,16 +954,18 @@ table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  background: var(--vscode-editor-background, var(--bg-secondary, #1e1e2e));
+  color: var(--vscode-editor-foreground, var(--text-primary, #e0e0e0));
 }
 th, td {
   padding: 6px 8px;
-  border-bottom: 1px solid #2a3a4a;
+  border-bottom: 1px solid var(--vscode-panel-border, var(--border-color, #2a3a4a));
   text-align: right;
   white-space: nowrap;
 }
-th { color: #999; font-weight: normal; background: #1a2535; }
+th { color: var(--vscode-descriptionForeground, #999); font-weight: normal; background: var(--vscode-editorWidget-background, var(--bg-secondary, #1a2535)); }
 td:first-child, th:first-child { text-align: left; }
-.metric-name { color: #bbb; }
+.metric-name { color: var(--vscode-descriptionForeground, #bbb); }
 
 .dividend-table { max-width: 400px; }
 

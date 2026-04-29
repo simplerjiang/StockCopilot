@@ -214,10 +214,12 @@ public class FinancialDataReadService : IFinancialDataReadService
         var trend = new FinancialTrendSummary { Symbol = symbol };
 
         double? prevRevenue = null, prevProfit = null, prevAssets = null;
+        var prevByType = new Dictionary<string, (double? rev, double? profit, double? assets)>();
 
         foreach (var doc in docs)
         {
             var periodLabel = SafeString(doc, "ReportDate");
+            var reportType = SafeString(doc, "ReportType");
             var inc = SafeDoc(doc, "IncomeStatement");
             var bs = SafeDoc(doc, "BalanceSheet");
 
@@ -236,25 +238,43 @@ public class FinancialDataReadService : IFinancialDataReadService
                 if (totalAssets.HasValue) totalAssets = totalAssets.Value * 10000;
             }
 
+            // YoY: compare with same report type from previous year
+            prevByType.TryGetValue(reportType, out var prevSameType);
+            var yoyRevenue = CalcYoY(revenue, prevSameType.rev);
+            var yoyProfit = CalcYoY(netProfit, prevSameType.profit);
+            var yoyAssets = CalcYoY(totalAssets, prevSameType.assets);
+
+            // QoQ: compare with previous sequential entry regardless of type
+            var qoqRevenue = CalcYoY(revenue, prevRevenue);
+            var qoqProfit = CalcYoY(netProfit, prevProfit);
+            var qoqAssets = CalcYoY(totalAssets, prevAssets);
+
             trend.Revenue.Add(new TrendPoint
             {
                 Period = periodLabel,
                 Value = revenue,
-                YoY = CalcYoY(revenue, prevRevenue)
+                YoY = yoyRevenue,
+                QoQ = qoqRevenue
             });
             trend.NetProfit.Add(new TrendPoint
             {
                 Period = periodLabel,
                 Value = netProfit,
-                YoY = CalcYoY(netProfit, prevProfit)
+                YoY = yoyProfit,
+                QoQ = qoqProfit
             });
             trend.TotalAssets.Add(new TrendPoint
             {
                 Period = periodLabel,
                 Value = totalAssets,
-                YoY = CalcYoY(totalAssets, prevAssets)
+                YoY = yoyAssets,
+                QoQ = qoqAssets
             });
 
+            if (!string.IsNullOrEmpty(reportType))
+            {
+                prevByType[reportType] = (revenue, netProfit, totalAssets);
+            }
             prevRevenue = revenue;
             prevProfit = netProfit;
             prevAssets = totalAssets;
@@ -859,6 +879,7 @@ public class TrendPoint
     public string Period { get; set; } = "";
     public double? Value { get; set; }
     public double? YoY { get; set; }
+    public double? QoQ { get; set; }
 }
 
 public class DividendInfo

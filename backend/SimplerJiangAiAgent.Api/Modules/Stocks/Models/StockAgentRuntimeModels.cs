@@ -563,7 +563,8 @@ public sealed record StockCopilotFinancialTrendDataDto(
 public sealed record FinancialTrendPointDto(
     string Period,
     double? Value,
-    double? YoY);
+    double? YoY,
+    double? QoQ);
 
 public sealed record FinancialDividendDto(
     string Plan,

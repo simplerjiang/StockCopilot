@@ -926,11 +926,11 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
 
         var summary = _financialDataReadService?.GetTrendSummary(normalizedSymbol, periods);
 
-        var revenue = summary?.Revenue?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY)).ToList()
+        var revenue = summary?.Revenue?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY, t.QoQ)).ToList()
             ?? new List<FinancialTrendPointDto>();
-        var netProfit = summary?.NetProfit?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY)).ToList()
+        var netProfit = summary?.NetProfit?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY, t.QoQ)).ToList()
             ?? new List<FinancialTrendPointDto>();
-        var totalAssets = summary?.TotalAssets?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY)).ToList()
+        var totalAssets = summary?.TotalAssets?.Select(t => new FinancialTrendPointDto(t.Period, t.Value, t.YoY, t.QoQ)).ToList()
             ?? new List<FinancialTrendPointDto>();
         var dividends = summary?.RecentDividends?.Select(d => new FinancialDividendDto(d.Plan, d.DividendPerShare)).ToList()
             ?? new List<FinancialDividendDto>();
