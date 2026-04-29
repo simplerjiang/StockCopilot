@@ -9,6 +9,8 @@
 
 - **BACKLOG #113** 无 Vue Router/深链接仍未完成。（BACKLOG - 后续迭代）
 
+| **#114** | `fundamental-snapshot` 端点在无缓存数据时返回 404 而非 204/空响应，导致控制台出现 "Failed to load resource: 404" 红色日志。前端已通过 `detail/cache` 优雅降级，UI 无可见异常。建议改为返回 204 No Content 或空对象。 | OPEN (Minor) |
+
 ---
 
 ## 历史修复记录
