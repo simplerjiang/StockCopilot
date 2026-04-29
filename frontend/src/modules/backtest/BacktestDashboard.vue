@@ -35,7 +35,15 @@ async function loadResults() {
     results.value = data.items || []
     totalResults.value = data.total || 0
     if (!symbolList.value.length && results.value.length) {
-      symbolList.value = [...new Set(results.value.map(r => r.symbol))].sort()
+      const symbolMap = new Map()
+      results.value.forEach(r => {
+        if (!symbolMap.has(r.symbol)) {
+          symbolMap.set(r.symbol, r.name || r.symbol)
+        }
+      })
+      symbolList.value = Array.from(symbolMap.entries())
+        .map(([code, name]) => ({ code, label: name ? `${name} (${code})` : code }))
+        .sort((a, b) => a.code.localeCompare(b.code))
     }
   } catch (e) { console.error(e) }
 }
@@ -81,9 +89,19 @@ onMounted(() => { loadStats(); loadResults() })
         {{ batchRunning ? '回测中...' : '批量回测' }}
       </button>
       <span v-if="batchResult" class="batch-result">
-        处理 {{ batchResult.total }} 条: 成功 {{ batchResult.success }},
-        跳过 {{ batchResult.skipped }}, 失败 {{ batchResult.failed }}
+        <template v-if="batchResult.total === 0">
+          当前没有待回测的分析记录。请先在“股票信息”页执行 AI 分析。
+        </template>
+        <template v-else>
+          处理 {{ batchResult.total }} 条: 成功 {{ batchResult.success }},
+          跳过 {{ batchResult.skipped }}, 失败 {{ batchResult.failed }}
+        </template>
       </span>
+    </div>
+
+    <div v-if="stats && stats.totalAnalyses < 10" class="sample-warning">
+      ⚠️ 当前回测样本仅 {{ stats.totalAnalyses }} 条，统计数据不具代表性，仅供参考。
+      请在股票信息页多做 AI 分析以积累数据。
     </div>
 
     <div class="scorecard-grid" v-if="stats && stats.totalAnalyses > 0">
@@ -103,6 +121,17 @@ onMounted(() => { loadStats(); loadResults() })
         <div class="scorecard-value warning">{{ Number(stats.stopTriggerRate).toFixed(1) }}%</div>
       </div>
     </div>
+
+    <details v-if="stats && stats.totalAnalyses > 0" class="accuracy-rules">
+      <summary>📐 准确率计算规则</summary>
+      <ul>
+        <li><strong>看多/偏多</strong>：N 日后收盘价 &gt; 分析日 = 命中</li>
+        <li><strong>看空/偏空</strong>：N 日后收盘价 &lt; 分析日 = 命中</li>
+        <li><strong>中性/观察</strong>：N 日内波动 ±2% 以内 = 命中</li>
+        <li><strong>目标价触达</strong>：窗口内最高(多)/最低(空)价达到目标价</li>
+        <li><strong>止损触发</strong>：窗口内触及止损价</li>
+      </ul>
+    </details>
 
     <div v-else-if="loading" class="loading">加载中...</div>
     <div v-else class="empty">暂无回测数据，请先执行批量回测</div>
@@ -131,7 +160,7 @@ onMounted(() => { loadStats(); loadResults() })
       <div class="results-filter">
         <select v-model="filterSymbol" @change="page = 1; loadResults()">
           <option value="">全部股票</option>
-          <option v-for="s in symbolList" :key="s" :value="s">{{ s }}</option>
+          <option v-for="s in symbolList" :key="s.code" :value="s.code">{{ s.label }}</option>
         </select>
         <select v-model="filterStatus" @change="page = 1; loadResults()">
           <option value="">全部状态</option>
@@ -233,6 +262,39 @@ onMounted(() => { loadStats(); loadResults() })
 .scorecard-value.neutral { color: var(--color-warning); }
 .scorecard-value.poor { color: var(--color-danger); }
 .scorecard-value.warning { color: var(--color-warning); }
+
+/* 小样本警告 */
+.sample-warning {
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border: 1px solid #e8a735;
+  border-radius: 6px;
+  background: rgba(232, 167, 53, 0.08);
+  color: #b8860b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 准确率规则 */
+.accuracy-rules {
+  margin-bottom: 18px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.accuracy-rules summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding: 4px 0;
+}
+.accuracy-rules ul {
+  margin: 6px 0 0 8px;
+  padding-left: 16px;
+  line-height: 1.8;
+}
+.accuracy-rules li strong {
+  color: var(--color-text-primary);
+}
 
 /* 空态 / 加载 */
 .loading, .empty {
