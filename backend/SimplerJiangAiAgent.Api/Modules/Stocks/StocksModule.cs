@@ -1396,8 +1396,12 @@ public sealed class StocksModule : IModule
         .WithName("GetNewsImpact")
         .WithOpenApi();
 
-        app.MapGet("/api/news", async (string? symbol, string? level, ILocalFactIngestionService ingestionService, IQueryLocalFactDatabaseTool queryTool, ILogger<StocksModule> logger) =>
+        app.MapGet("/api/news", async (string? symbol, string? level, ILocalFactIngestionService ingestionService, IQueryLocalFactDatabaseTool queryTool, ILogger<StocksModule> logger, CancellationToken cancellationToken) =>
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            var ct = cts.Token;
+
             var normalizedLevel = string.IsNullOrWhiteSpace(level) ? "stock" : level.Trim().ToLowerInvariant();
             if (normalizedLevel is not ("stock" or "sector" or "market"))
             {
@@ -1406,8 +1410,19 @@ public sealed class StocksModule : IModule
 
             if (normalizedLevel == "market")
             {
-                await ingestionService.EnsureMarketFreshAsync();
-                var marketResult = await queryTool.QueryMarketAsync();
+                try
+                {
+                    await ingestionService.EnsureMarketFreshAsync(ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    logger.LogWarning("EnsureMarketFreshAsync timed out, using cached data");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "EnsureMarketFreshAsync failed, proceeding with cached data");
+                }
+                var marketResult = await queryTool.QueryMarketAsync(ct);
                 return Results.Ok(marketResult);
             }
 
@@ -1424,16 +1439,20 @@ public sealed class StocksModule : IModule
             var target = symbol.Trim();
             try
             {
-                await ingestionService.EnsureFreshAsync(target);
+                await ingestionService.EnsureFreshAsync(target, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException)
+            {
+                logger.LogWarning("EnsureFreshAsync timed out for {Symbol}, using cached data", target);
+            }
+            catch (Exception ex)
             {
                 logger.LogWarning(ex, "EnsureFreshAsync failed for {Symbol}, proceeding with cached data", target);
             }
 
             try
             {
-                var result = await queryTool.QueryLevelAsync(target, normalizedLevel);
+                var result = await queryTool.QueryLevelAsync(target, normalizedLevel, ct);
                 return Results.Ok(result);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
