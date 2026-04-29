@@ -80,6 +80,11 @@ public sealed class AppDbContext : DbContext
     public DbSet<IndexConstituentSnapshot> IndexConstituents => Set<IndexConstituentSnapshot>();
     public DbSet<StockIndustryClassification> StockIndustryClassifications => Set<StockIndustryClassification>();
     public DbSet<BacktestResult> BacktestResults => Set<BacktestResult>();
+    public DbSet<MacroDepositRate> MacroDepositRates => Set<MacroDepositRate>();
+    public DbSet<MacroLoanRate> MacroLoanRates => Set<MacroLoanRate>();
+    public DbSet<MacroMoneySupply> MacroMoneySupplies => Set<MacroMoneySupply>();
+    public DbSet<MacroShibor> MacroShibors => Set<MacroShibor>();
+    public DbSet<StockDividendRecord> StockDividendRecords => Set<StockDividendRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -715,6 +720,50 @@ public sealed class AppDbContext : DbContext
             .Property(x => x.UnrealizedReturnRate).HasPrecision(18, 6);
         modelBuilder.Entity<StockPosition>()
             .Property(x => x.PositionRatio).HasPrecision(18, 6);
+
+        // ── Macro Data entities ──────────────────────────────────
+        var dateOnlyConverter = new ValueConverter<DateOnly, string>(
+            v => v.ToString("yyyy-MM-dd"),
+            v => DateOnly.ParseExact(v, "yyyy-MM-dd"));
+
+        modelBuilder.Entity<MacroDepositRate>(e =>
+        {
+            e.HasIndex(x => x.Date).IsUnique();
+            e.Property(x => x.Date).HasConversion(dateOnlyConverter);
+        });
+
+        modelBuilder.Entity<MacroLoanRate>(e =>
+        {
+            e.HasIndex(x => x.Date).IsUnique();
+            e.Property(x => x.Date).HasConversion(dateOnlyConverter);
+        });
+
+        modelBuilder.Entity<MacroMoneySupply>(e =>
+        {
+            e.HasIndex(x => new { x.Granularity, x.Date }).IsUnique();
+            e.Property(x => x.Granularity).HasMaxLength(16);
+            e.Property(x => x.Date).HasConversion(dateOnlyConverter);
+        });
+
+        modelBuilder.Entity<MacroShibor>(e =>
+        {
+            e.HasIndex(x => x.Date).IsUnique();
+            e.Property(x => x.Date).HasConversion(dateOnlyConverter);
+        });
+
+        // ── StockDividendRecord ──────────────────────────────────
+        modelBuilder.Entity<StockDividendRecord>(e =>
+        {
+            e.HasIndex(x => new { x.StockCode, x.ExDividendDate }).IsUnique();
+            e.Property(x => x.StockCode).HasMaxLength(20);
+            e.Property(x => x.StockName).HasMaxLength(128);
+            e.Property(x => x.StockDividendPerShare).HasMaxLength(64);
+            e.Property(x => x.PreNoticeDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.RecordDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.ExDividendDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.LastTradeDate).HasConversion(dateOnlyConverter);
+            e.Property(x => x.ListedDate).HasConversion(dateOnlyConverter);
+        });
     }
 
     internal static TradingPlanStatus ParseTradingPlanStatus(string? value)

@@ -185,6 +185,16 @@ public sealed record StockCopilotMcpWindowOptions(
     int FactSkip = 0,
     int? FactTake = null);
 
+public sealed record MacroEnvironmentContextDto(
+    string PolicySignal,
+    string? LatestRateChange,
+    decimal? DepositRate1Y,
+    decimal? LoanRate1Y,
+    decimal? M2YoY,
+    string? M2Trend,
+    string? LiquiditySignal,
+    bool HasRecentChange);
+
 public sealed record StockCopilotMcpMarketContextDto(
     decimal? StageConfidence,
     string? StockSectorName,
@@ -194,6 +204,7 @@ public sealed record StockCopilotMcpMarketContextDto(
 {
     public string? StockSectorCode => SectorCode;
     public string? MainlineSectorCode { get; init; }
+    public MacroEnvironmentContextDto? MacroContext { get; init; }
 }
 
 public sealed record MarketContextIndexDto(string Symbol, string Name, decimal Price, decimal ChangePercent);

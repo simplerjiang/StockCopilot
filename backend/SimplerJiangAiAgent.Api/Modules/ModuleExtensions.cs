@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Modules.Backtest;
 using SimplerJiangAiAgent.Api.Modules.Llm;
+using SimplerJiangAiAgent.Api.Modules.Macro;
 using SimplerJiangAiAgent.Api.Modules.Market;
 using SimplerJiangAiAgent.Api.Modules.Stocks;
 
@@ -19,7 +20,8 @@ public static class ModuleExtensions
             new StocksModule(),
             new MarketModule(),
             new LlmModule(),
-            new BacktestModule()
+            new BacktestModule(),
+            new MacroModule()
         };
 
         foreach (var module in modules)

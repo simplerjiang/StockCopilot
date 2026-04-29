@@ -270,6 +270,8 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             sb.AppendLine("\n请基于以上数据提供深度分析，直接回答用户的问题。分析必须基于实际数据，不要凭空推测。");
         }
 
+        sb.AppendLine("\n如果工具结果中包含 MacroContext 且 HasRecentChange=true，在分析结论末尾添加一行\"📊 宏观环境\"标注，简述当前货币政策倾向及对该股票/行业的影响，不需要详细展开。");
+
         var request = new LlmChatRequest(
             sb.ToString(),
             model,

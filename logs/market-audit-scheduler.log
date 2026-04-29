@@ -26,3 +26,10 @@ Sync: FAIL
 Audit: FAIL
 Log written: C:\Users\kong\AiAgent\logs\market-audit-check-20260427-143001.json
 Exit code: 2
+=== Market Audit Daily Check (Once) ===
+Base URL: http://localhost:5119
+Sync: FAIL
+  sync_error: URL error @ /api/market/sync: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+Audit: FAIL
+Log written: C:\Users\kong\AiAgent\logs\market-audit-check-20260428-143001.json
+Exit code: 2

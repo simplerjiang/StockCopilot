@@ -3,6 +3,7 @@ defineOptions({ name: 'MarketSentimentTab' })
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import MarketTemperatureBar from './MarketTemperatureBar.vue'
 import IndexMetricStrip from './IndexMetricStrip.vue'
+import MacroEnvironmentCard from './MacroEnvironmentCard.vue'
 import BreadthBucketChart from './BreadthBucketChart.vue'
 import CapitalBreadthPanel from './CapitalBreadthPanel.vue'
 import SectorToolbar from './SectorToolbar.vue'
@@ -758,6 +759,8 @@ onUnmounted(() => {
       :limit-up-unavailable="isLimitUpUnavailable"
       :max-streak-unavailable="isMaxStreakUnavailable"
     />
+
+    <MacroEnvironmentCard />
 
     <!-- 3. 涨跌分布 + 资金广度 并排 -->
     <div class="overview-row">

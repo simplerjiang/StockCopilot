@@ -14,6 +14,7 @@ using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Serialization;
+using SimplerJiangAiAgent.Api.Modules.Macro;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
@@ -88,6 +89,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     private readonly IPortfolioSnapshotService? _portfolioSnapshotService;
     private readonly IRetailHeatIndexService? _retailHeatIndexService;
     private readonly IFinancialDataReadService? _financialDataReadService;
+    private readonly IMacroEnvironmentService? _macroEnvironmentService;
     private readonly ILogger<StockCopilotMcpService> _logger;
     private readonly ConcurrentDictionary<string, Lazy<Task<SymbolRefreshExecutionResult>>> _scopedSymbolRefreshes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Lazy<Task<SymbolBundleExecutionResult>>> _scopedSymbolBundles = new(StringComparer.OrdinalIgnoreCase);
@@ -109,6 +111,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         IPortfolioSnapshotService? portfolioSnapshotService = null,
         IRetailHeatIndexService? retailHeatIndexService = null,
         IFinancialDataReadService? financialDataReadService = null,
+        IMacroEnvironmentService? macroEnvironmentService = null,
         ILogger<StockCopilotMcpService>? logger = null)
     {
         _dataService = dataService;
@@ -127,6 +130,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         _portfolioSnapshotService = portfolioSnapshotService;
         _retailHeatIndexService = retailHeatIndexService;
         _financialDataReadService = financialDataReadService;
+        _macroEnvironmentService = macroEnvironmentService;
         _logger = logger ?? NullLogger<StockCopilotMcpService>.Instance;
     }
 
@@ -354,6 +358,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         var windowOptions = NormalizeWindowOptions(window);
         var rawMarketContext = await _marketContextService.GetLatestAsync(normalizedSymbol, cancellationToken);
         var marketContext = RedactProgrammaticMarketContext(rawMarketContext);
+        marketContext = await EnrichWithMacroContextAsync(marketContext, cancellationToken);
         var warnings = new List<string>();
         var degradedFlags = new List<string>();
 
@@ -566,7 +571,7 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             symbol: normalizedSymbol,
             interval: null,
             query: null,
-            marketContext: ToCopilotMarketContext(marketContext),
+            marketContext: await EnrichWithMacroContextAsync(ToCopilotMarketContext(marketContext), cancellationToken),
             degradedFlags: degradedFlags,
             warnings: warnings);
     }
@@ -1221,7 +1226,8 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
             NormalizeNullableText(marketContext.SectorCode),
             marketContext.MainlineScore)
         {
-            MainlineSectorCode = NormalizeNullableText(marketContext.MainlineSectorCode)
+            MainlineSectorCode = NormalizeNullableText(marketContext.MainlineSectorCode),
+            MacroContext = marketContext.MacroContext
         };
     }
 
@@ -2761,7 +2767,8 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
         }
 
         var marketContext = await _marketContextService.GetLatestAsync(symbol, sectorNameHint, cancellationToken);
-        return ToCopilotMarketContext(marketContext);
+        var result = ToCopilotMarketContext(marketContext);
+        return await EnrichWithMacroContextAsync(result, cancellationToken);
     }
 
     /// <summary>
@@ -2771,7 +2778,36 @@ public sealed class StockCopilotMcpService : IStockCopilotMcpService
     private async Task<StockCopilotMcpMarketContextDto?> ResolveMcpMarketContextAsync(string symbol, string? sectorNameHint, CancellationToken cancellationToken)
     {
         var marketContext = await _marketContextService.GetLatestAsync(symbol, sectorNameHint, cancellationToken);
-        return ToCopilotMarketContext(marketContext);
+        var result = ToCopilotMarketContext(marketContext);
+        return await EnrichWithMacroContextAsync(result, cancellationToken);
+    }
+
+    private async Task<StockCopilotMcpMarketContextDto?> EnrichWithMacroContextAsync(StockCopilotMcpMarketContextDto? dto, CancellationToken ct)
+    {
+        if (_macroEnvironmentService is null)
+            return dto;
+
+        try
+        {
+            var macro = await _macroEnvironmentService.GetCurrentAsync(ct);
+            if (macro is null)
+                return dto;
+
+            if (dto is null)
+            {
+                return new StockCopilotMcpMarketContextDto(null, null, null, null, null)
+                {
+                    MacroContext = macro
+                };
+            }
+
+            return dto with { MacroContext = macro };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to enrich market context with macro environment data");
+            return dto;
+        }
     }
 
     private static StockCopilotMcpMarketContextDto? RedactProgrammaticMarketContext(StockMarketContextDto? marketContext)

@@ -22,6 +22,8 @@ using SimplerJiangAiAgent.Api.Modules.Market.Services;
 using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.IntentClassification;
+using SimplerJiangAiAgent.Api.Services;
+using System.Globalization;
 
 namespace SimplerJiangAiAgent.Api.Modules.Stocks;
 
@@ -1188,6 +1190,104 @@ public sealed class StocksModule : IModule
             return Results.Ok(data);
         })
         .WithName("GetMinuteLine")
+        .WithOpenApi();
+
+        // 获取分红数据（on-demand from Baostock.NET, cached in DB）
+        group.MapGet("/dividends/{symbol}", async (
+            string symbol,
+            int? year,
+            bool? refresh,
+            AppDbContext db,
+            IBaostockClientFactory clientFactory,
+            ILogger<StocksModule> logger,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+                return Results.BadRequest(new { error = "invalid_symbol", message = "symbol 不能为空" });
+
+            if (!StockSymbolNormalizer.IsValid(symbol))
+                return Results.BadRequest(new { error = "invalid_symbol", message = "无效的股票代码格式" });
+
+            var normalizedSymbol = StockSymbolNormalizer.Normalize(symbol);
+
+            // Check DB first; skip cache if refresh=true
+            var forceRefresh = refresh == true;
+            var cached = !forceRefresh && await db.StockDividendRecords.AsNoTracking()
+                .AnyAsync(x => x.StockCode == normalizedSymbol, ct);
+
+            if (!cached)
+            {
+                // On-demand fetch from Baostock
+                try
+                {
+                    await using var lease = await clientFactory.GetClientAsync(ct);
+                    var rows = new List<StockDividendRecord>();
+
+                    // Lookup StockName from StockIndustryClassification
+                    var upperSymbol = normalizedSymbol.ToUpperInvariant();
+                    var stockInfo = await db.StockIndustryClassifications.AsNoTracking()
+                        .FirstOrDefaultAsync(s => s.StockCode == normalizedSymbol || s.StockCode == upperSymbol, ct);
+                    var stockName = stockInfo?.StockName ?? string.Empty;
+
+                    // Query multiple years to get full dividend history (year=null defaults to current year which may have no data)
+                    var currentYear = DateTime.Now.Year;
+                    for (var y = currentYear; y >= 2000; y--)
+                    {
+                        await foreach (var row in lease.Client.QueryDividendDataAsync(normalizedSymbol, y.ToString(), "operate", ct))
+                        {
+                            rows.Add(MapDividendRow(row, normalizedSymbol, stockName));
+                        }
+                    }
+
+                    if (rows.Count > 0)
+                    {
+                        // Full-replace: delete old records to avoid NULL dedup issue
+                        var oldRecords = await db.StockDividendRecords
+                            .Where(r => r.StockCode == normalizedSymbol)
+                            .ToListAsync(ct);
+                        db.StockDividendRecords.RemoveRange(oldRecords);
+                        db.StockDividendRecords.AddRange(rows);
+                        await db.SaveChangesAsync(ct);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Failed to fetch dividend data from Baostock for {Symbol}", normalizedSymbol);
+                    return Results.Ok(new { symbol = normalizedSymbol, count = 0, data = Array.Empty<object>() });
+                }
+            }
+
+            // Re-query from DB (including freshly inserted)
+            var dbQuery = db.StockDividendRecords.AsNoTracking()
+                .Where(x => x.StockCode == normalizedSymbol);
+
+            if (year.HasValue)
+            {
+                var yearStart = new DateOnly(year.Value, 1, 1);
+                var yearEnd = new DateOnly(year.Value, 12, 31);
+                dbQuery = dbQuery.Where(x => x.ExDividendDate != null && x.ExDividendDate >= yearStart && x.ExDividendDate <= yearEnd);
+            }
+
+            var records = await dbQuery.OrderByDescending(x => x.ExDividendDate).ToListAsync(ct);
+
+            return Results.Ok(new
+            {
+                symbol = normalizedSymbol,
+                count = records.Count,
+                data = records.Select(r => new
+                {
+                    exDividendDate = r.ExDividendDate?.ToString("yyyy-MM-dd"),
+                    recordDate = r.RecordDate?.ToString("yyyy-MM-dd"),
+                    preNoticeDate = r.PreNoticeDate?.ToString("yyyy-MM-dd"),
+                    dividendPerShare = r.DividendPerShare,
+                    dividendPerShareAfterTax = r.DividendPerShareAfterTax,
+                    stockDividendPerShare = r.StockDividendPerShare,
+                    lastTradeDate = r.LastTradeDate?.ToString("yyyy-MM-dd"),
+                    listedDate = r.ListedDate?.ToString("yyyy-MM-dd")
+                })
+            });
+        })
+        .WithName("GetStockDividends")
         .WithOpenApi();
 
         group.MapGet("/chart", async (string symbol, string? interval, int? count, string? source, bool? includeQuote, bool? includeMinute, IStockDataService dataService, HttpContext httpContext) =>
@@ -3687,5 +3787,35 @@ public sealed class StocksModule : IModule
     private static Data.Entities.TradingPlanStatus NormalizeTradingPlanStatus(Data.Entities.TradingPlanStatus status)
     {
         return status;
+    }
+
+    private static StockDividendRecord MapDividendRow(Baostock.NET.Models.DividendRow row, string normalizedSymbol, string stockName)
+    {
+        return new StockDividendRecord
+        {
+            StockCode = normalizedSymbol,
+            StockName = stockName,
+            PreNoticeDate = TryParseDateOnly(row.DividPreNoticeDate),
+            DividendPerShare = TryParseDecimal(row.DividCashPsBeforeTax),
+            DividendPerShareAfterTax = TryParseDecimal(row.DividCashPsAfterTax),
+            StockDividendPerShare = row.DividStocksPs,
+            RecordDate = TryParseDateOnly(row.DividRegistDate),
+            ExDividendDate = TryParseDateOnly(row.DividOperateDate),
+            LastTradeDate = TryParseDateOnly(row.DividPayDate),
+            ListedDate = TryParseDateOnly(row.DividStockMarketDate),
+            CreatedAt = DateTime.UtcNow
+        };
+    }
+
+    private static DateOnly? TryParseDateOnly(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
+    }
+
+    private static decimal? TryParseDecimal(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ? d : null;
     }
 }
