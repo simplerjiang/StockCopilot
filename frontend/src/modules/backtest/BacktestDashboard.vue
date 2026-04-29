@@ -76,6 +76,12 @@ function formatStatus(s) {
   const map = { 'calculated': '已计算', 'insufficient_data': '数据不足', 'pending': '待计算' }
   return map[s] || s
 }
+function formatAnalysisTime(r) {
+  if (!r.createdAt && !r.CreatedAt) return ''
+  const d = new Date(r.createdAt || r.CreatedAt)
+  const pad = n => String(n).padStart(2, '0')
+  return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 onMounted(() => { loadStats(); loadResults() })
 </script>
@@ -134,7 +140,11 @@ onMounted(() => { loadStats(); loadResults() })
     </details>
 
     <div v-else-if="loading" class="loading">加载中...</div>
-    <div v-else class="empty">暂无回测数据，请先执行批量回测</div>
+    <div v-else class="empty-state">
+      <div class="empty-state__icon">📊</div>
+      <div class="empty-state__title">暂无回测数据</div>
+      <div class="empty-state__desc">请先在“股票信息”页对股票执行 AI 分析，然后回到此页点击“批量回测”。</div>
+    </div>
 
     <div class="direction-table" v-if="stats && stats.totalAnalyses > 0 && stats.byDirection">
       <h3>按方向统计</h3>
@@ -172,7 +182,7 @@ onMounted(() => { loadStats(); loadResults() })
       <table class="results-table" v-if="results.length">
         <thead>
           <tr>
-            <th>股票</th><th>分析日期</th><th>预测方向</th><th>置信度</th>
+            <th>股票</th><th>分析日期</th><th>分析时间</th><th>预测方向</th><th>置信度</th>
             <th>1日</th><th>3日</th><th>5日</th><th>10日</th>
             <th>目标价</th><th>止损</th><th>状态</th>
           </tr>
@@ -181,6 +191,7 @@ onMounted(() => { loadStats(); loadResults() })
           <tr v-for="r in results" :key="r.id">
             <td>{{ r.name || r.symbol }}</td>
             <td>{{ r.analysisDate }}</td>
+            <td class="analysis-time">{{ formatAnalysisTime(r) }}</td>
             <td :class="directionClass(r.predictedDirection)">{{ r.predictedDirection || '-' }}</td>
             <td>{{ r.confidence }}%</td>
             <td :class="correctClass(r.isCorrect1d)">{{ formatReturn(r.window1dActual) }}</td>
@@ -297,11 +308,37 @@ onMounted(() => { loadStats(); loadResults() })
 }
 
 /* 空态 / 加载 */
-.loading, .empty {
+.loading {
   padding: 32px;
   text-align: center;
   color: var(--color-text-muted);
   font-size: 14px;
+}
+.empty-state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+.empty-state__icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+}
+.empty-state__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+.empty-state__desc {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 分析时间列 */
+.analysis-time {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 /* 筛选 */

@@ -336,10 +336,10 @@ onBeforeUnmount(() => {
           :key="tab.key"
           class="nav-tab"
           :class="{ active: tab.key === activeTab }"
+          :title="tab.name"
           @click="activeTab = tab.key"
         >
-          <span class="nav-tab-full">{{ tab.name }}</span>
-          <span class="nav-tab-short">{{ tab.shortName }}</span>
+          {{ tab.shortName }}
         </button>
         <div class="nav-indicator" :style="indicatorStyle" />
       </nav>
@@ -482,8 +482,6 @@ onBeforeUnmount(() => {
   color: #ffffff;
   font-weight: 600;
 }
-.nav-tab-short { display: none; }
-
 /* 滑动指示线 */
 .nav-indicator {
   position: absolute;
@@ -677,14 +675,7 @@ onBeforeUnmount(() => {
 }
 
 /* ── 响应式 ── */
-@media (max-width: 1200px) {
-  .nav-tab-full { display: none; }
-  .nav-tab-short { display: inline; }
-}
-@media (min-width: 1201px) {
-  .nav-tab-short { display: none; }
-  .nav-tab-full { display: inline; }
-}
+
 @media (max-width: 800px) {
   .brand-text { display: none; }
   .nav-tab { padding: 0 var(--space-3); }

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { isEmbeddingStatusDegraded } from '../composables/useEmbeddingStatus.js'
 
 const props = defineProps({
@@ -11,13 +11,19 @@ const props = defineProps({
 
 defineEmits(['refresh'])
 
+const dismissed = ref(sessionStorage.getItem('rag-banner-dismissed') === 'true')
+function dismiss() {
+  dismissed.value = true
+  sessionStorage.setItem('rag-banner-dismissed', 'true')
+}
+
 const pick = (source, camelKey, pascalKey = null) => source?.[camelKey] ?? (pascalKey ? source?.[pascalKey] : undefined)
 const toNumber = value => {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
 }
 
-const shouldRender = computed(() => isEmbeddingStatusDegraded(props.status, props.error))
+const shouldRender = computed(() => !dismissed.value && isEmbeddingStatusDegraded(props.status, props.error))
 const modelText = computed(() => pick(props.status, 'model', 'Model') || '未识别')
 const dimensionText = computed(() => pick(props.status, 'dimension', 'Dimension') ?? '—')
 const embeddingCount = computed(() => toNumber(pick(props.status, 'embeddingCount', 'EmbeddingCount')) ?? 0)
@@ -64,6 +70,12 @@ const chunkSummary = computed(() => `${embeddingCount.value} / ${chunkCount.valu
       :disabled="loading"
       @click="$emit('refresh')"
     >{{ loading ? '刷新中' : '刷新状态' }}</button>
+    <button
+      type="button"
+      class="embedding-degraded-banner__dismiss"
+      @click="dismiss"
+      title="关闭提示（刷新页面后重新显示）"
+    >×</button>
   </section>
 </template>
 
@@ -73,13 +85,13 @@ const chunkSummary = computed(() => `${embeddingCount.value} / ${chunkCount.valu
   justify-content: space-between;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid #b45309;
-  border-left-width: 5px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid #d97706;
+  border-left-width: 4px;
   border-radius: 6px;
-  background: #fffbeb;
+  background: #fefce8;
   color: #78350f;
-  box-shadow: 0 6px 16px rgba(180, 83, 9, 0.12);
+  box-shadow: 0 2px 6px rgba(180, 83, 9, 0.06);
 }
 
 .embedding-degraded-banner--compact {
@@ -149,6 +161,23 @@ const chunkSummary = computed(() => `${embeddingCount.value} / ${chunkCount.valu
 .embedding-degraded-banner__refresh:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.embedding-degraded-banner__dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #92400e;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0.6;
+}
+.embedding-degraded-banner__dismiss:hover {
+  opacity: 1;
+  background: rgba(146, 64, 14, 0.08);
 }
 
 @media (max-width: 720px) {
