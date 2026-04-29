@@ -25,6 +25,7 @@
 | v0.4.7 | 2026-04-24 | S1–S5 全部 DONE | 768+466 tests, 0 fail | AI 分析 JSON 修复 / 公告 PDF 爬取+RAG / MCP 注册 |
 | v0.4.8 | 2026-04-28 | S1–S3 全部 DONE | — | 交易账务闭环 / 核心稳定性四件套 / 财报数据语义完整 |
 | v0.5.0 | 2026-04-28 | S1–S7 全部 DONE | — | Baostock.NET 集成 / 交易日历 / K线切换 / 实时行情 / 指数成分 / 行业分类 |
+| v0.5.1 | 2026-04-28 | S1–S4,S6,S8 全部 DONE | — | 宏观经济数据全量接入 / 分红数据 / LLM 宏观注入 / 前端宏观卡片 / 宏观标签 |
 
 ---
 
@@ -139,6 +140,8 @@
 - v0.4.2N PDF 管线重构 → 本看板"已完成 Sprint 摘要"
 - v0.4.2 必修 → 本看板"已完成 Sprint 摘要"
 - v0.4.8 回归测试 111 条 Bug 修复 → 本看板"已完成 Sprint 摘要"
+- v0.5.0 Baostock.NET 基础管道 → 本看板"已完成 Sprint 摘要"
+- v0.5.1 宏观经济数据全量接入 → 本看板"已完成 Sprint 摘要"
 - v0.4.1 PDF 原件对照 → `/memories/repo/sprints/v041-pdf-compare-reparse.md`
 - v0.4.0 财报中心基础设施 → `/memories/repo/sprints/v040-financial-center.md`
 - v0.3.2 散户热度反向指标 → `/memories/repo/sprints/v0.3.2-retail-heat-contrarian.md`
@@ -146,7 +149,30 @@
 
 ---
 
-## v0.5.0 Sprint — Baostock.NET 基础管道 + 交易日历 + 指数成分 + K线切换
+## v0.6.0 Sprint — AI 分析回测验证
+
+**目标**：对历史 AI 分析记录进行后验验证，计算多窗口命中率、目标价触达率，生成记分卡
+
+**Sprint 开始**: 2026-04-28
+**分支**: `v060`
+**计划书**: [GOAL-v060-ai-backtest-plan.md](../docs/GOAL-v060-ai-backtest-plan.md)
+
+### Active Stories (max 3)
+
+| Story | Title | Level | Status |
+|-------|-------|-------|--------|
+| V060-S1 | BacktestResult 实体 + Schema | M | DONE |
+| V060-S2 | BacktestService 核心计算 | L | DONE |
+| V060-S3 | 回测 REST API | M | DONE |
+| V060-S4 | 前端回测仪表板 | L | DONE |
+| V060-S5 | K 线图回测标注 | M | DONE |
+| V060-S6 | 自动回测 Worker | M | DONE |
+
+（空）
+
+---
+
+## v0.5.0 Sprint — Baostock.NET 基础管道 + 交易日历 + 指数成分 + K线切换 ✅ 已归档
 
 > 打通 Baostock.NET 接入管道，替换硬编码交易日历，切换 K 线历史数据主源，补齐指数成分和行业分类数据。
 
@@ -171,7 +197,7 @@
 
 ---
 
-## v0.5.1 Sprint — 宏观经济数据全量接入（批次 1：基础数据层）
+## v0.5.1 Sprint — 宏观经济数据全量接入（批次 1：基础数据层）✅ 已归档
 
 > 接入 Baostock.NET 宏观五维数据 + 分红数据，暴露 REST API，为后续 LLM 集成和前端面板打基础。
 

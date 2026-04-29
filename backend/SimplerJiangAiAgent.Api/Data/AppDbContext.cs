@@ -79,6 +79,7 @@ public sealed class AppDbContext : DbContext
     public DbSet<UserPortfolioSettings> UserPortfolioSettings => Set<UserPortfolioSettings>();
     public DbSet<IndexConstituentSnapshot> IndexConstituents => Set<IndexConstituentSnapshot>();
     public DbSet<StockIndustryClassification> StockIndustryClassifications => Set<StockIndustryClassification>();
+    public DbSet<BacktestResult> BacktestResults => Set<BacktestResult>();
     public DbSet<MacroDepositRate> MacroDepositRates => Set<MacroDepositRate>();
     public DbSet<MacroLoanRate> MacroLoanRates => Set<MacroLoanRate>();
     public DbSet<MacroMoneySupply> MacroMoneySupplies => Set<MacroMoneySupply>();
@@ -683,6 +684,18 @@ public sealed class AppDbContext : DbContext
             e.Property(x => x.IndustryCode).HasMaxLength(16);
             e.Property(x => x.ClassificationSystem).HasMaxLength(64);
             e.Property(x => x.UpdateDate).HasMaxLength(16);
+        });
+
+        // ── BacktestResult ──────────────────────────
+        modelBuilder.Entity<BacktestResult>(e =>
+        {
+            e.HasIndex(x => x.AnalysisHistoryId).IsUnique();
+            e.HasIndex(x => x.Symbol);
+            e.HasIndex(x => x.CalcStatus);
+            e.Property(x => x.Symbol).HasMaxLength(32);
+            e.Property(x => x.Name).HasMaxLength(128);
+            e.Property(x => x.PredictedDirection).HasMaxLength(32);
+            e.Property(x => x.CalcStatus).HasMaxLength(32);
         });
 
         // Global decimal(18,2) default

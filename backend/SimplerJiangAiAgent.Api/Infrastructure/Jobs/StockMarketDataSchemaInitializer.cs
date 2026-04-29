@@ -43,6 +43,34 @@ public static class StockMarketDataSchemaInitializer
                     CREATE UNIQUE INDEX IF NOT EXISTS IX_StockIndustryClassifications_StockCode
                         ON StockIndustryClassifications (StockCode);
 
+                    CREATE TABLE IF NOT EXISTS BacktestResults (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        AnalysisHistoryId INTEGER NOT NULL,
+                        Symbol TEXT NOT NULL,
+                        Name TEXT NOT NULL DEFAULT '',
+                        AnalysisDate TEXT NOT NULL,
+                        PredictedDirection TEXT NOT NULL DEFAULT '',
+                        Confidence INTEGER NOT NULL DEFAULT 0,
+                        TargetPrice REAL,
+                        StopLoss REAL,
+                        Window1dActual REAL,
+                        Window3dActual REAL,
+                        Window5dActual REAL,
+                        Window10dActual REAL,
+                        IsCorrect1d INTEGER,
+                        IsCorrect3d INTEGER,
+                        IsCorrect5d INTEGER,
+                        IsCorrect10d INTEGER,
+                        TargetHit INTEGER,
+                        StopTriggered INTEGER,
+                        CalcStatus TEXT NOT NULL DEFAULT 'pending',
+                        CreatedAt TEXT NOT NULL,
+                        UpdatedAt TEXT NOT NULL,
+                        UNIQUE(AnalysisHistoryId)
+                    );
+                    CREATE INDEX IF NOT EXISTS IX_BacktestResults_Symbol ON BacktestResults(Symbol);
+                    CREATE INDEX IF NOT EXISTS IX_BacktestResults_CalcStatus ON BacktestResults(CalcStatus);
+
                     CREATE TABLE IF NOT EXISTS MacroDepositRates (
                         Id INTEGER PRIMARY KEY AUTOINCREMENT,
                         Date TEXT NOT NULL,

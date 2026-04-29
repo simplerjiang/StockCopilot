@@ -1646,6 +1646,7 @@ watch(currentStockKey, (newKey) => {
               <div class="stock-chart-section" :style="{ minHeight: chartHeight + 'px' }">
                 <StockCharts
                   v-if="detail"
+                  :symbol="symbol"
                   :k-lines="detail.kLines"
                   :minute-lines="detail.minuteLines"
                   :base-price="Number(detail.quote.price) - Number(detail.quote.change)"

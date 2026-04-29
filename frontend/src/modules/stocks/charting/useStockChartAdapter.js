@@ -465,7 +465,7 @@ const mergeRetailHeat = (records, heatData) => {
 
 const emptyHoverState = { visible: false, x: 0, y: 0, lines: [] }
 
-export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibilityByView }) {
+export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibilityByView, backtestResults }) {
   const klineHover = ref({ ...emptyHoverState })
   const minuteHover = ref({ ...emptyHoverState })
   const minuteBasePrice = ref(null)
@@ -594,7 +594,7 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
       return chart
     }
 
-    const render = ({ records, periodKey, aiLevels, basePrice, styleOptions }) => {
+    const render = ({ records, periodKey, aiLevels, basePrice, styleOptions, backtestResults: btResults }) => {
       const instance = ensureChart()
       if (!instance) return
 
@@ -605,7 +605,8 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
         records,
         visibility,
         aiLevels,
-        basePrice
+        basePrice,
+        backtestResults: btResults
       })
 
       dataList = toChartData(records)
@@ -674,7 +675,8 @@ export function useStockChartAdapter({ props, klineRef, minuteRef, featureVisibi
       records,
       periodKey: normalizeKlineInterval(props.interval),
       aiLevels: props.aiLevels,
-      basePrice: null
+      basePrice: null,
+      backtestResults: backtestResults?.value ?? null
     })
   }
 

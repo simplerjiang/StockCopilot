@@ -3,8 +3,13 @@ import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } f
 import { CHART_VIEW_OPTIONS, isKlineChartView, normalizeKlineInterval, resolveInitialChartView } from './charting/chartViews'
 import { createStrategyVisibilityState, getActiveStrategyBadgesForView, getStrategyGroupsForView } from './charting/chartStrategyRegistry'
 import { useStockChartAdapter } from './charting/useStockChartAdapter'
+import { fetchBackendGet } from './stockInfoTabRequestUtils'
 
 const props = defineProps({
+  symbol: {
+    type: String,
+    default: ''
+  },
   kLines: {
     type: Array,
     default: () => []
@@ -53,6 +58,8 @@ const showFloatingBadges = ref(true)
 const hoveredBadgeId = ref(null)
 const isFullscreen = ref(false)
 const isFallbackFullscreen = ref(false)
+const backtestResults = ref(null)
+let backtestFetchedSymbol = ''
 
 const {
   aiLevelText,
@@ -63,7 +70,7 @@ const {
   queueResize,
   renderAll,
   scrollChartsToRealTime
-} = useStockChartAdapter({ props, chartShellRef, klineRef, minuteRef, featureVisibilityByView })
+} = useStockChartAdapter({ props, chartShellRef, klineRef, minuteRef, featureVisibilityByView, backtestResults })
 
 const activeTab = computed(() => CHART_VIEW_OPTIONS.find(item => item.id === activeView.value) ?? CHART_VIEW_OPTIONS[0])
 const activeHover = computed(() => (activeView.value === 'minute' ? minuteHover.value : klineHover.value))
@@ -167,6 +174,18 @@ const selectView = async viewId => {
   queueResize()
 }
 
+const fetchBacktestResults = async () => {
+  const sym = props.symbol
+  if (!sym || backtestFetchedSymbol === sym) return
+  try {
+    const resp = await fetchBackendGet(`/api/backtest/results?symbol=${encodeURIComponent(sym)}&status=calculated&size=100`)
+    backtestResults.value = resp?.items ?? []
+    backtestFetchedSymbol = sym
+  } catch {
+    backtestResults.value = []
+  }
+}
+
 const toggleFeature = async featureId => {
   const isActive = !featureVisibilityByView.value[activeView.value]?.[featureId]
   featureVisibilityByView.value = {
@@ -181,6 +200,9 @@ const toggleFeature = async featureId => {
     strategyId: featureId,
     active: isActive
   })
+  if (featureId === 'backtest' && isActive) {
+    await fetchBacktestResults()
+  }
   renderAll()
   await nextTick()
   queueResize()
@@ -277,6 +299,11 @@ watch(featureVisibilityByView, async () => {
   await nextTick()
   queueResize()
 }, { deep: true })
+
+watch(() => props.symbol, () => {
+  backtestResults.value = null
+  backtestFetchedSymbol = ''
+})
 
 watch(() => props.interval, interval => {
   syncKlineInterval(interval)
