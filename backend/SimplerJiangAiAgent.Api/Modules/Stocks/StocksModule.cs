@@ -1398,9 +1398,9 @@ public sealed class StocksModule : IModule
 
         app.MapGet("/api/news", async (string? symbol, string? level, ILocalFactIngestionService ingestionService, IQueryLocalFactDatabaseTool queryTool, ILogger<StocksModule> logger, CancellationToken cancellationToken) =>
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(15));
-            var ct = cts.Token;
+            // Separate timeout for EnsureFresh* (15s); Query* uses client cancellationToken only
+            using var freshCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            freshCts.CancelAfter(TimeSpan.FromSeconds(15));
 
             var normalizedLevel = string.IsNullOrWhiteSpace(level) ? "stock" : level.Trim().ToLowerInvariant();
             if (normalizedLevel is not ("stock" or "sector" or "market"))
@@ -1412,7 +1412,7 @@ public sealed class StocksModule : IModule
             {
                 try
                 {
-                    await ingestionService.EnsureMarketFreshAsync(ct);
+                    await ingestionService.EnsureMarketFreshAsync(freshCts.Token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1422,8 +1422,16 @@ public sealed class StocksModule : IModule
                 {
                     logger.LogWarning(ex, "EnsureMarketFreshAsync failed, proceeding with cached data");
                 }
-                var marketResult = await queryTool.QueryMarketAsync(ct);
-                return Results.Ok(marketResult);
+                try
+                {
+                    var marketResult = await queryTool.QueryMarketAsync(cancellationToken);
+                    return Results.Ok(marketResult);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "QueryMarketAsync failed");
+                    return Results.Ok(new LocalNewsBucketDto("market", "market", null, Array.Empty<LocalNewsItemDto>()));
+                }
             }
 
             if (string.IsNullOrWhiteSpace(symbol))
@@ -1439,7 +1447,7 @@ public sealed class StocksModule : IModule
             var target = symbol.Trim();
             try
             {
-                await ingestionService.EnsureFreshAsync(target, ct);
+                await ingestionService.EnsureFreshAsync(target, freshCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -1452,7 +1460,7 @@ public sealed class StocksModule : IModule
 
             try
             {
-                var result = await queryTool.QueryLevelAsync(target, normalizedLevel, ct);
+                var result = await queryTool.QueryLevelAsync(target, normalizedLevel, cancellationToken);
                 return Results.Ok(result);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
