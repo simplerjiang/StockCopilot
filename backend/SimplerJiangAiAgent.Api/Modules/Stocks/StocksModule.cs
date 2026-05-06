@@ -559,19 +559,62 @@ public sealed class StocksModule : IModule
         .WithName("GetEmbeddingStatus")
         .WithOpenApi();
 
-        // Embedding backfill proxy
+        // Embedding backfill proxy (streaming)
         financialGroup.MapPost("/embedding/backfill", async (IGpuTaskQueue gpuQueue, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
         {
             await using var gpuLease = await gpuQueue.AcquireAsync(
                 "向量补建", GpuTaskPriority.High, httpContext.RequestAborted);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted, gpuLease.CancellationToken);
+            var ct = linkedCts.Token;
 
-            return await ProxyFinancialWorkerAsync(
-                HttpMethod.Post,
-                "api/embedding/backfill",
-                configuration,
-                httpClientFactory,
-                linkedCts.Token);
+            try
+            {
+                var workerBaseUrl = ResolveFinancialWorkerBaseUrl(configuration);
+                var client = httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromMinutes(30);
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{workerBaseUrl}/api/embedding/backfill");
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                httpContext.Response.ContentType = "application/x-ndjson";
+                httpContext.Response.StatusCode = (int)response.StatusCode;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errBody = await response.Content.ReadAsStringAsync(ct);
+                    await httpContext.Response.WriteAsync(errBody, ct);
+                    gpuLease.MarkFailed();
+                    return;
+                }
+
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                using var reader = new StreamReader(stream);
+
+                while (!reader.EndOfStream && !ct.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(ct);
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    // Forward to client
+                    await httpContext.Response.WriteAsync(line + "\n", ct);
+                    await httpContext.Response.Body.FlushAsync(ct);
+
+                    // Parse progress for GPU queue display
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(line);
+                        var filled = doc.RootElement.GetProperty("filled").GetInt32();
+                        var total = doc.RootElement.TryGetProperty("total", out var totalEl) ? totalEl.GetInt32() : 0;
+                        gpuLease.ReportProgress(total > 0 ? $"{filled}/{total}" : $"{filled} 已处理");
+                    }
+                    catch { /* ignore parse errors in progress lines */ }
+                }
+            }
+            catch
+            {
+                gpuLease.MarkFailed();
+                throw;
+            }
         })
         .WithName("EmbeddingBackfill")
         .WithOpenApi();

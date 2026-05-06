@@ -100,14 +100,45 @@ async function triggerBackfill() {
   backfillResult.value = null
   try {
     const res = await fetch('/api/stocks/financial/embedding/backfill', { method: 'POST' })
-    if (res.ok) {
-      backfillResult.value = { type: 'success', text: '补建任务已启动，后台处理中...' }
-      setTimeout(() => emit('refresh'), 5000)
-    } else {
-      backfillResult.value = { type: 'error', text: '启动失败，请稍后重试' }
+    if (!res.ok) {
+      backfillResult.value = { type: 'error', text: `补建失败 (${res.status})` }
+      return
     }
-  } catch {
-    backfillResult.value = { type: 'error', text: '网络错误' }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let lastProgress = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split('\n')
+      buffer = lines.pop() // keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const data = JSON.parse(line)
+          lastProgress = data
+          backfillResult.value = { type: 'progress', text: `补建中... ${data.filled}/${data.total || '?'}` }
+        } catch { /* ignore */ }
+      }
+    }
+
+    if (lastProgress?.done) {
+      backfillResult.value = { type: 'success', text: `补建完成：已处理 ${lastProgress.filled} 条` }
+      setTimeout(() => emit('refresh'), 2000)
+    } else {
+      backfillResult.value = { type: 'success', text: '补建任务已完成' }
+      setTimeout(() => emit('refresh'), 2000)
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      backfillResult.value = { type: 'error', text: `补建异常: ${e.message}` }
+    }
   } finally {
     backfilling.value = false
   }
@@ -296,6 +327,10 @@ async function triggerBackfill() {
 
 .embedding-degraded-banner__backfill-result--error {
   color: #991b1b;
+}
+
+.embedding-degraded-banner__backfill-result--progress {
+  color: #1d4ed8;
 }
 
 .embedding-degraded-banner__dismiss {

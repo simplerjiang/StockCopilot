@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SimplerJiangAiAgent.FinancialWorker;
 using SimplerJiangAiAgent.FinancialWorker.Data;
 using SimplerJiangAiAgent.FinancialWorker.Models;
@@ -243,29 +244,52 @@ app.MapGet("/api/embedding/status", (RagDbContext ragDb, IEmbedder embedder) =>
     });
 });
 
-// v0.4.7: Embedding backfill — fill missing embeddings for all chunks
-app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embedder, CancellationToken ct) =>
+// v0.4.7: Embedding backfill — fill missing embeddings for all chunks (NDJSON streaming)
+app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embedder, HttpContext httpContext, CancellationToken ct) =>
 {
     if (!embedder.IsAvailable)
-        return Results.Ok(new { filled = 0, message = "Embedder not available (Ollama offline or model missing)" });
-
-    var missing = ragDb.GetChunkIdsWithoutEmbedding(500);
-    if (missing.Count == 0)
-        return Results.Ok(new { filled = 0, message = "All chunks already have embeddings" });
-
-    var filled = 0;
-    foreach (var (chunkId, text) in missing)
     {
-        ct.ThrowIfCancellationRequested();
-        var embedding = await embedder.EmbedAsync(text, ct);
-        if (embedding != null)
+        httpContext.Response.ContentType = "application/x-ndjson";
+        httpContext.Response.StatusCode = 200;
+        var msg = JsonSerializer.Serialize(new { filled = 0, total = 0, done = true, message = "Embedder not available" });
+        await httpContext.Response.WriteAsync(msg + "\n", ct);
+        await httpContext.Response.Body.FlushAsync(ct);
+        return;
+    }
+
+    httpContext.Response.ContentType = "application/x-ndjson";
+    httpContext.Response.StatusCode = 200;
+
+    var totalFilled = 0;
+    var grandTotal = ragDb.CountChunksWithoutEmbedding();
+
+    while (!ct.IsCancellationRequested)
+    {
+        var missing = ragDb.GetChunkIdsWithoutEmbedding(100);
+        if (missing.Count == 0) break;
+
+        foreach (var (chunkId, text) in missing)
         {
-            ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
-            filled++;
+            ct.ThrowIfCancellationRequested();
+            var embedding = await embedder.EmbedAsync(text, ct);
+            if (embedding != null)
+            {
+                ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
+                totalFilled++;
+            }
+
+            if (totalFilled % 10 == 0)
+            {
+                var progress = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, done = false });
+                await httpContext.Response.WriteAsync(progress + "\n", ct);
+                await httpContext.Response.Body.FlushAsync(ct);
+            }
         }
     }
 
-    return Results.Ok(new { filled, total = missing.Count });
+    var final = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, done = true });
+    await httpContext.Response.WriteAsync(final + "\n", ct);
+    await httpContext.Response.Body.FlushAsync(ct);
 })
 .WithName("EmbeddingBackfill");
 

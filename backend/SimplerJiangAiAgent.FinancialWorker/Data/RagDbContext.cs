@@ -327,6 +327,19 @@ public class RagDbContext : IDisposable
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
+    /// <summary>Count chunks that have no embedding yet.</summary>
+    public int CountChunksWithoutEmbedding()
+    {
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COUNT(*) FROM chunks c
+            LEFT JOIN chunk_embeddings e ON c.chunk_id = e.chunk_id
+            WHERE e.chunk_id IS NULL";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     /// <summary>Get chunk IDs and text for chunks that have no embedding yet.</summary>
     public List<(string ChunkId, string Text)> GetChunkIdsWithoutEmbedding(int limit = 200)
     {

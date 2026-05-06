@@ -110,8 +110,16 @@ describe('EmbeddingDegradedBanner', () => {
     expect(wrapper.emitted('refresh')).toHaveLength(1)
   })
 
-  it('calls backfill endpoint and shows success message', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+  it('calls backfill endpoint and shows streaming progress then success', async () => {
+    const ndjson = '{"filled":5,"total":10,"done":false}\n{"filled":10,"total":10,"done":true}\n'
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(ndjson))
+        controller.close()
+      }
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }))
     const wrapper = mount(EmbeddingDegradedBanner, {
       props: {
         status: {
@@ -129,12 +137,12 @@ describe('EmbeddingDegradedBanner', () => {
     await vi.dynamicImportSettled()
 
     expect(fetch).toHaveBeenCalledWith('/api/stocks/financial/embedding/backfill', { method: 'POST' })
-    expect(wrapper.text()).toContain('补建任务已启动')
+    expect(wrapper.text()).toContain('补建完成：已处理 10 条')
     vi.unstubAllGlobals()
   })
 
   it('shows error message on backfill failure', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }))
     const wrapper = mount(EmbeddingDegradedBanner, {
       props: {
         status: {
@@ -151,7 +159,7 @@ describe('EmbeddingDegradedBanner', () => {
     await wrapper.find('.embedding-degraded-banner__backfill').trigger('click')
     await vi.dynamicImportSettled()
 
-    expect(wrapper.text()).toContain('启动失败')
+    expect(wrapper.text()).toContain('补建失败')
     vi.unstubAllGlobals()
   })
 
