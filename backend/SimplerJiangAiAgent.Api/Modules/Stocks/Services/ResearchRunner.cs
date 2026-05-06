@@ -59,6 +59,7 @@ public sealed class ResearchRunner : IResearchRunner
     private readonly IResearchFollowUpRoutingService _followUpRoutingService;
     private readonly ILogger<ResearchRunner> _logger;
     private readonly ILlmSettingsStore? _llmSettingsStore;
+    private readonly IGpuTaskQueue _gpuQueue;
     private readonly ISessionFileLogger? _sessionLogger;
     private string? _positionContext;
     private string? _resolvedStockName;
@@ -69,8 +70,9 @@ public sealed class ResearchRunner : IResearchRunner
         IResearchEventBus eventBus,
         IResearchReportService reportService,
         IResearchFollowUpRoutingService followUpRoutingService,
-        ILogger<ResearchRunner> logger)
-        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, null, null)
+        ILogger<ResearchRunner> logger,
+        IGpuTaskQueue gpuQueue)
+        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, gpuQueue, null, null)
     {
     }
 
@@ -81,8 +83,9 @@ public sealed class ResearchRunner : IResearchRunner
         IResearchReportService reportService,
         IResearchFollowUpRoutingService followUpRoutingService,
         ILogger<ResearchRunner> logger,
+        IGpuTaskQueue gpuQueue,
         ILlmSettingsStore? llmSettingsStore)
-        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, llmSettingsStore, null)
+        : this(dbContext, roleExecutor, eventBus, reportService, followUpRoutingService, logger, gpuQueue, llmSettingsStore, null)
     {
     }
 
@@ -93,6 +96,7 @@ public sealed class ResearchRunner : IResearchRunner
         IResearchReportService reportService,
         IResearchFollowUpRoutingService followUpRoutingService,
         ILogger<ResearchRunner> logger,
+        IGpuTaskQueue gpuQueue,
         ILlmSettingsStore? llmSettingsStore,
         ISessionFileLogger? sessionLogger)
     {
@@ -102,12 +106,18 @@ public sealed class ResearchRunner : IResearchRunner
         _reportService = reportService;
         _followUpRoutingService = followUpRoutingService;
         _logger = logger;
+        _gpuQueue = gpuQueue;
         _llmSettingsStore = llmSettingsStore;
         _sessionLogger = sessionLogger;
     }
 
     public async Task RunTurnAsync(long turnId, CancellationToken cancellationToken = default)
     {
+        await using var gpuLease = await _gpuQueue.AcquireAsync(
+            $"深度研究 Turn#{turnId}", GpuTaskPriority.High, cancellationToken);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+        cancellationToken = linkedCts.Token;
+
         // Load turn without cancellation token so we can always set status on cancel
         var turn = await _dbContext.ResearchTurns
             .Include(t => t.Session)
@@ -350,6 +360,7 @@ public sealed class ResearchRunner : IResearchRunner
         }
         catch (OperationCanceledException)
         {
+            gpuLease.MarkFailed();
             turn.Status = ResearchTurnStatus.Cancelled;
             turn.CompletedAt = DateTime.UtcNow;
             session.Status = ResearchSessionStatus.Idle;
@@ -359,6 +370,7 @@ public sealed class ResearchRunner : IResearchRunner
         }
         catch (Exception ex)
         {
+            gpuLease.MarkFailed();
             var innerMsg = ex.InnerException?.Message;
             var fullMsg = innerMsg is not null ? $"{ex.Message} -> {innerMsg}" : ex.Message;
             var sanitizedFullMsg = ErrorSanitizer.SanitizeErrorMessage(fullMsg) ?? string.Empty;

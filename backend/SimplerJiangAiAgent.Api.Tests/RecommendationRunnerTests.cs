@@ -98,6 +98,7 @@ public sealed class RecommendationRunnerTests
             eventBus,
             new FakeLlmService(),
             provider.GetRequiredService<IServiceScopeFactory>(),
+            NullGpuTaskQueue.Instance,
             NullLogger<RecommendationRunner>.Instance);
     }
 

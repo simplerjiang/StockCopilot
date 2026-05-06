@@ -67,7 +67,7 @@ public sealed class ResearchArtifactTests
         });
 
         var eventBus = new ResearchEventBus();
-        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
         await runner.RunTurnAsync(turn.Id);
 
@@ -124,7 +124,7 @@ public sealed class ResearchArtifactTests
         });
 
         var eventBus = new ResearchEventBus();
-        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
         await runner.RunTurnAsync(turn.Id);
 
@@ -183,7 +183,7 @@ public sealed class ResearchArtifactTests
         });
 
         var eventBus = new ResearchEventBus();
-        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
         await runner.RunTurnAsync(turn.Id);
 
@@ -219,7 +219,7 @@ public sealed class ResearchArtifactTests
         });
 
         var eventBus = new ResearchEventBus();
-        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner = new ResearchRunner(db, executor, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
         await runner.RunTurnAsync(turn1.Id);
 
         // Create second turn
@@ -246,7 +246,7 @@ public sealed class ResearchArtifactTests
                 return JsonSerializer.Serialize(new { content = "{\"claim\":\"CONVERGED\",\"converged\":true}" });
             return "{\"content\":\"data\"}";
         });
-        var runner2 = new ResearchRunner(db, executor2, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner2 = new ResearchRunner(db, executor2, eventBus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
         await runner2.RunTurnAsync(turn2.Id);
 
         var proposals = await db.ResearchTraderProposals

@@ -25,6 +25,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
     private readonly IRecommendEventBus _eventBus;
     private readonly ILlmService _llmService;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IGpuTaskQueue _gpuQueue;
     private readonly ILogger<RecommendationRunner> _logger;
     private readonly ISessionFileLogger? _sessionLogger;
 
@@ -39,8 +40,9 @@ public sealed class RecommendationRunner : IRecommendationRunner
         IRecommendEventBus eventBus,
         ILlmService llmService,
         IServiceScopeFactory scopeFactory,
+        IGpuTaskQueue gpuQueue,
         ILogger<RecommendationRunner> logger)
-        : this(db, roleExecutor, eventBus, llmService, scopeFactory, logger, null)
+        : this(db, roleExecutor, eventBus, llmService, scopeFactory, gpuQueue, logger, null)
     {
     }
 
@@ -50,6 +52,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         IRecommendEventBus eventBus,
         ILlmService llmService,
         IServiceScopeFactory scopeFactory,
+        IGpuTaskQueue gpuQueue,
         ILogger<RecommendationRunner> logger,
         ISessionFileLogger? sessionLogger)
     {
@@ -58,14 +61,18 @@ public sealed class RecommendationRunner : IRecommendationRunner
         _eventBus = eventBus;
         _llmService = llmService;
         _scopeFactory = scopeFactory;
+        _gpuQueue = gpuQueue;
         _logger = logger;
         _sessionLogger = sessionLogger;
     }
 
     public async Task RunTurnAsync(long turnId, CancellationToken ct = default)
     {
+        await using var gpuLease = await _gpuQueue.AcquireAsync(
+            $"推荐组合 Turn#{turnId}", GpuTaskPriority.High, ct);
+
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(15));
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, gpuLease.CancellationToken, timeoutCts.Token);
         var effectiveCt = linkedCts.Token;
 
         var turn = await _db.RecommendationTurns
@@ -140,6 +147,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
+            gpuLease.MarkFailed();
             turn.Status = RecommendTurnStatus.Failed;
             turn.CompletedAt = DateTime.UtcNow;
             session.Status = RecommendSessionStatus.Failed;
@@ -162,6 +170,7 @@ public sealed class RecommendationRunner : IRecommendationRunner
         }
         catch (Exception ex)
         {
+            gpuLease.MarkFailed();
             _logger.LogError(ex, "Recommendation turn {TurnId} failed unexpectedly", turnId);
             turn.Status = RecommendTurnStatus.Failed;
             turn.CompletedAt = DateTime.UtcNow;

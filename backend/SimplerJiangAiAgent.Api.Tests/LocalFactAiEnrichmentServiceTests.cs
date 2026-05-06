@@ -47,6 +47,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             ]
             """),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -349,6 +350,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new EchoPromptLlmService(),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -423,6 +425,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             llmService,
             new StubSettingsStore(newsCleansingSettings: ("active", "", 5)),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -508,6 +511,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
                         Enabled = true
                     }
                 ]),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -570,6 +574,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
                         Enabled = true
                     }
                 ]),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -609,6 +614,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService("[]"),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -647,6 +653,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService("   "),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -698,6 +705,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService("模型整理如下：\n```json\n" + payload + "\n```"),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -747,6 +755,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService(payload + "\n以上为本轮整理结果，仅供校验。"),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -809,6 +818,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService(malformedResponse),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -851,6 +861,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService(invalidResponse),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -891,6 +902,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService(invalidResponse),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -939,6 +951,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             serviceContext,
             new AppendPendingDuringSweepLlmService(databaseName, root, initialId, publishBase.AddHours(1)),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -993,12 +1006,14 @@ public sealed class LocalFactAiEnrichmentServiceTests
             firstContext,
             blockingLlm,
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
         var secondService = new LocalFactAiEnrichmentService(
             secondContext,
             new StubLlmService(exception: new InvalidOperationException("Overlapping archive sweep should not reach a second LLM call.")),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1403,6 +1418,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService(exception: new InvalidOperationException("429 Too Many Requests")),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1458,6 +1474,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             llmService,
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1502,6 +1519,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             llmService,
             new StubSettingsStore(newsCleansingSettings: ("active", "", 20)),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1549,6 +1567,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
                         Enabled = true
                     }
                 ]),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1602,6 +1621,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             llmService,
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1648,6 +1668,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             llmService,
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 
@@ -1693,6 +1714,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             dbContext,
             new StubLlmService(llmPayload),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
     }
@@ -2085,6 +2107,7 @@ public sealed class LocalFactAiEnrichmentServiceTests
             ]
             """),
             new StubSettingsStore(),
+            NullGpuTaskQueue.Instance,
             Options.Create(new StockSyncOptions()),
             NullLogger<LocalFactAiEnrichmentService>.Instance);
 

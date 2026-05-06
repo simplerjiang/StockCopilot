@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Modules.Market.Models;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Contracts;
@@ -19,7 +20,6 @@ using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.Recommend.WebSearch;
 using SimplerJiangAiAgent.Api.Modules.Market.Services;
-using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs.ForumScraping;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services.IntentClassification;
 using SimplerJiangAiAgent.Api.Services;
@@ -504,14 +504,18 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // v0.4.2 S6: RAG search proxy
-        financialGroup.MapPost("/rag/search", async (JsonElement payload, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        financialGroup.MapPost("/rag/search", async (JsonElement payload, IGpuTaskQueue gpuQueue, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
         {
+            await using var gpuLease = await gpuQueue.AcquireAsync(
+                "RAG 语义搜索", GpuTaskPriority.High, httpContext.RequestAborted);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted, gpuLease.CancellationToken);
+
             return await ProxyFinancialWorkerAsync(
                 HttpMethod.Post,
                 "api/rag/search",
                 configuration,
                 httpClientFactory,
-                httpContext.RequestAborted,
+                linkedCts.Token,
                 payload);
         })
         .WithName("SearchFinancialRag")
@@ -553,6 +557,23 @@ public sealed class StocksModule : IModule
                 httpContext.RequestAborted);
         })
         .WithName("GetEmbeddingStatus")
+        .WithOpenApi();
+
+        // Embedding backfill proxy
+        financialGroup.MapPost("/embedding/backfill", async (IGpuTaskQueue gpuQueue, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        {
+            await using var gpuLease = await gpuQueue.AcquireAsync(
+                "向量补建", GpuTaskPriority.High, httpContext.RequestAborted);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted, gpuLease.CancellationToken);
+
+            return await ProxyFinancialWorkerAsync(
+                HttpMethod.Post,
+                "api/embedding/backfill",
+                configuration,
+                httpClientFactory,
+                linkedCts.Token);
+        })
+        .WithName("EmbeddingBackfill")
         .WithOpenApi();
 
         group.MapGet("/watchlist", async (IActiveWatchlistService watchlistService) =>
@@ -3424,6 +3445,8 @@ public sealed class StocksModule : IModule
         {
             return FinancialWorkerPdfCollectProxyTimeout;
         }
+        if (normalizedRelativePath.StartsWith("api/embedding/", StringComparison.OrdinalIgnoreCase))
+            return TimeSpan.FromMinutes(30);
         return normalizedRelativePath.StartsWith("api/collect/", StringComparison.OrdinalIgnoreCase)
             ? FinancialWorkerCollectProxyTimeout
             : FinancialWorkerProxyTimeout;

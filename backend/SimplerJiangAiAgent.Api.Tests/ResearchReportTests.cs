@@ -550,7 +550,7 @@ public sealed class ResearchReportTests
 
         var eventBus = new ResearchEventBus();
         var reportService = new ResearchReportService(db);
-        var runner = new ResearchRunner(db, executor, eventBus, reportService, new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner = new ResearchRunner(db, executor, eventBus, reportService, new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
         await runner.RunTurnAsync(turn.Id);
 
@@ -610,7 +610,7 @@ public sealed class ResearchReportTests
 
         var eventBus = new ResearchEventBus();
         var reportService = new ResearchReportService(db);
-        var runner = new ResearchRunner(db, executor, eventBus, reportService, new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+        var runner = new ResearchRunner(db, executor, eventBus, reportService, new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
         await runner.RunTurnAsync(turn.Id);
 

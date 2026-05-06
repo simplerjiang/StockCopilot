@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SimplerJiangAiAgent.Api.Modules.Backtest;
+using SimplerJiangAiAgent.Api.Modules.GpuQueue;
 using SimplerJiangAiAgent.Api.Modules.Llm;
 using SimplerJiangAiAgent.Api.Modules.Macro;
 using SimplerJiangAiAgent.Api.Modules.Market;
@@ -21,7 +22,8 @@ public static class ModuleExtensions
             new MarketModule(),
             new LlmModule(),
             new BacktestModule(),
-            new MacroModule()
+            new MacroModule(),
+            new GpuQueueModule()
         };
 
         foreach (var module in modules)

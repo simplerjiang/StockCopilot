@@ -36,6 +36,7 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
     private readonly IEvidencePackBuilder _evidencePackBuilder;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
+    private readonly IGpuTaskQueue _gpuQueue;
     private readonly ILogger<StockCopilotLiveGateService> _logger;
 
     public StockCopilotLiveGateService(
@@ -51,6 +52,7 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         IEvidencePackBuilder evidencePackBuilder,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
+        IGpuTaskQueue gpuQueue,
         ILogger<StockCopilotLiveGateService> logger)
     {
         _chatHistoryService = chatHistoryService;
@@ -65,6 +67,7 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         _evidencePackBuilder = evidencePackBuilder;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
+        _gpuQueue = gpuQueue;
         _logger = logger;
     }
 
@@ -73,6 +76,14 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Symbol);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Question);
 
+        await using var gpuLease = await _gpuQueue.AcquireAsync(
+            $"Copilot: {(request.Question.Length > 30 ? request.Question[..30] : request.Question)}",
+            GpuTaskPriority.High, cancellationToken);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+        cancellationToken = linkedCts.Token;
+
+        try
+        {
         var normalizedSymbol = StockSymbolNormalizer.Normalize(request.Symbol);
         var trimmedQuestion = request.Question.Trim();
         var sessionTitle = string.IsNullOrWhiteSpace(request.SessionTitle)
@@ -218,6 +229,12 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             prompt,
             rawModelResponse,
             validation.RejectedCalls);
+        }
+        catch
+        {
+            gpuLease.MarkFailed();
+            throw;
+        }
     }
 
     private async Task<string> SynthesizeAnalysisAsync(

@@ -344,6 +344,7 @@ public sealed class StockCopilotLiveGateServiceTests
             new NoOpEvidencePackBuilder(),
             new NoOpHttpClientFactory(),
             new ConfigurationBuilder().Build(),
+            NullGpuTaskQueue.Instance,
             NullLogger<StockCopilotLiveGateService>.Instance);
     }
 

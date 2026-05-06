@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Models;
 
@@ -19,6 +20,7 @@ public sealed class TradeReviewService : ITradeReviewService
 {
     private readonly AppDbContext _db;
     private readonly ILlmService _llmService;
+    private readonly IGpuTaskQueue _gpuQueue;
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
     {
@@ -26,10 +28,11 @@ public sealed class TradeReviewService : ITradeReviewService
         WriteIndented = false
     };
 
-    public TradeReviewService(AppDbContext db, ILlmService llmService)
+    public TradeReviewService(AppDbContext db, ILlmService llmService, IGpuTaskQueue gpuQueue)
     {
         _db = db;
         _llmService = llmService;
+        _gpuQueue = gpuQueue;
     }
 
     public async Task<TradeReviewItemDto> GenerateReviewAsync(TradeReviewGenerateDto dto, CancellationToken cancellationToken = default)
@@ -140,10 +143,23 @@ public sealed class TradeReviewService : ITradeReviewService
         var prompt = BuildPrompt(contextJson);
 
         // 8. Call LLM
-        var llmResult = await _llmService.ChatAsync(
-            "active",
-            new LlmChatRequest(prompt, null, 0.3),
-            cancellationToken);
+        await using var gpuLease = await _gpuQueue.AcquireAsync(
+            "交易复盘", GpuTaskPriority.High, cancellationToken);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+
+        LlmChatResult llmResult;
+        try
+        {
+            llmResult = await _llmService.ChatAsync(
+                "active",
+                new LlmChatRequest(prompt, null, 0.3),
+                linkedCts.Token);
+        }
+        catch
+        {
+            gpuLease.MarkFailed();
+            throw;
+        }
 
         var reviewContent = llmResult.Content?.Trim() ?? "复盘生成失败，LLM 无响应。";
 

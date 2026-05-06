@@ -119,6 +119,7 @@ public sealed class StocksModuleHttpClientTests
     [InlineData("/api/collect/000001", 60)]
     [InlineData("health", 10)]
     [InlineData("api/config", 10)]
+    [InlineData("api/embedding/backfill", 1800)]
     public void ResolveFinancialWorkerProxyTimeout_UsesLongerTimeoutOnlyForCollect(string relativePath, int expectedSeconds)
     {
         var result = StocksModule.ResolveFinancialWorkerProxyTimeout(relativePath);

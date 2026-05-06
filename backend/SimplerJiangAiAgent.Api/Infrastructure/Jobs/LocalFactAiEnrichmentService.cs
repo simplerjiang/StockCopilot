@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Modules.Stocks.Services;
 
@@ -940,6 +941,7 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
     private readonly AppDbContext _dbContext;
     private readonly ILlmService _llmService;
     private readonly ILlmSettingsStore _settingsStore;
+    private readonly IGpuTaskQueue _gpuQueue;
     private readonly StockSyncOptions _options;
     private readonly ILogger<LocalFactAiEnrichmentService> _logger;
     private sealed record AiBatchExecutionOptions(string Provider, string Model, int BatchSize, int MaxConcurrency, string ProviderType);
@@ -955,12 +957,14 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
         AppDbContext dbContext,
         ILlmService llmService,
         ILlmSettingsStore settingsStore,
+        IGpuTaskQueue gpuQueue,
         IOptions<StockSyncOptions> options,
         ILogger<LocalFactAiEnrichmentService> logger)
     {
         _dbContext = dbContext;
         _llmService = llmService;
         _settingsStore = settingsStore;
+        _gpuQueue = gpuQueue;
         _options = options.Value;
         _logger = logger;
     }
@@ -985,6 +989,11 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
 
     public async Task<LocalFactPendingProcessSummary> ProcessPendingBatchAsync(CancellationToken cancellationToken = default)
     {
+        await using var gpuLease = await _gpuQueue.AcquireAsync(
+            "新闻AI清洗 (batch)", GpuTaskPriority.Low, cancellationToken);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+        cancellationToken = linkedCts.Token;
+
         var gateHeld = false;
         try
         {
@@ -1029,6 +1038,11 @@ public sealed class LocalFactAiEnrichmentService : ILocalFactAiEnrichmentService
             {
                 Events = processedResult.Events
             };
+        }
+        catch
+        {
+            gpuLease.MarkFailed();
+            throw;
         }
         finally
         {

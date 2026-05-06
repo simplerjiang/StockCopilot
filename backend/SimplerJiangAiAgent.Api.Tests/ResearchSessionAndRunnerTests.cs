@@ -1391,7 +1391,7 @@ public sealed class ResearchSessionAndRunnerTests
         {
             var executor = new StubRoleExecutor();
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1429,7 +1429,7 @@ public sealed class ResearchSessionAndRunnerTests
                 null, null, Array.Empty<string>(), "TOOL_BLOCKED", "Required tool blocked");
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1459,7 +1459,7 @@ public sealed class ResearchSessionAndRunnerTests
                 null, null);
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1479,7 +1479,7 @@ public sealed class ResearchSessionAndRunnerTests
         {
             var executor = new StubRoleExecutor();
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             using var cts = new CancellationTokenSource();
             cts.Cancel();
@@ -1500,7 +1500,7 @@ public sealed class ResearchSessionAndRunnerTests
         {
             var executor = new StubRoleExecutor();
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1544,6 +1544,7 @@ public sealed class ResearchSessionAndRunnerTests
                 new NullReportService(),
                 new StubFollowUpRoutingService(),
                 NullLogger<ResearchRunner>.Instance,
+                NullGpuTaskQueue.Instance,
                 settingsStore);
 
             await runner.RunTurnAsync(turn.Id);
@@ -1589,6 +1590,7 @@ public sealed class ResearchSessionAndRunnerTests
                 new NullReportService(),
                 new StubFollowUpRoutingService(),
                 NullLogger<ResearchRunner>.Instance,
+                NullGpuTaskQueue.Instance,
                 settingsStore);
 
             await runner.RunTurnAsync(turn.Id);
@@ -1634,6 +1636,7 @@ public sealed class ResearchSessionAndRunnerTests
                 new NullReportService(),
                 new StubFollowUpRoutingService(),
                 NullLogger<ResearchRunner>.Instance,
+                NullGpuTaskQueue.Instance,
                 settingsStore);
 
             await runner.RunTurnAsync(turn.Id);
@@ -1664,7 +1667,7 @@ public sealed class ResearchSessionAndRunnerTests
         {
             var executor = new StubRoleExecutor();
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1707,7 +1710,7 @@ public sealed class ResearchSessionAndRunnerTests
                 null, null);
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1733,7 +1736,7 @@ public sealed class ResearchSessionAndRunnerTests
         {
             var executor = new StubRoleExecutor();
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             // Complete the first turn (full pipeline)
             await runner.RunTurnAsync(turn.Id);
@@ -1798,7 +1801,7 @@ public sealed class ResearchSessionAndRunnerTests
                 null, null);
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1841,7 +1844,7 @@ public sealed class ResearchSessionAndRunnerTests
             ]);
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1873,7 +1876,7 @@ public sealed class ResearchSessionAndRunnerTests
                 null, null);
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 
@@ -1954,7 +1957,7 @@ public sealed class ResearchSessionAndRunnerTests
             ]);
 
             var bus = new ResearchEventBus();
-            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance);
+            var runner = new ResearchRunner(db, executor, bus, new NullReportService(), new StubFollowUpRoutingService(), NullLogger<ResearchRunner>.Instance, NullGpuTaskQueue.Instance);
 
             await runner.RunTurnAsync(turn.Id);
 

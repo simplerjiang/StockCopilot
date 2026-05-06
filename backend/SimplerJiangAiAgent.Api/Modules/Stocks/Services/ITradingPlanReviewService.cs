@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Services;
 
@@ -23,19 +24,22 @@ public sealed class TradingPlanReviewService : ITradingPlanReviewService
     private readonly TradingPlanReviewOptions _options;
     private readonly ILogger<TradingPlanReviewService> _logger;
     private readonly ITradingCalendarService _calendar;
+    private readonly IGpuTaskQueue _gpuQueue;
 
     public TradingPlanReviewService(
         AppDbContext dbContext,
         ILlmService llmService,
         IOptions<TradingPlanReviewOptions> options,
         ILogger<TradingPlanReviewService> logger,
-        ITradingCalendarService calendar)
+        ITradingCalendarService calendar,
+        IGpuTaskQueue gpuQueue)
     {
         _dbContext = dbContext;
         _llmService = llmService;
         _options = options.Value;
         _logger = logger;
         _calendar = calendar;
+        _gpuQueue = gpuQueue;
     }
 
     public async Task<int> EvaluateAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
@@ -125,13 +129,17 @@ public sealed class TradingPlanReviewService : ITradingPlanReviewService
                 TradingPlanThreatReviewResult review;
                 try
                 {
+                    await using var gpuLease = await _gpuQueue.AcquireAsync(
+                        "交易计划复核", GpuTaskPriority.Low, cancellationToken);
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+
                     var llmResult = await _llmService.ChatAsync(
                         _options.LlmProvider,
                         new LlmChatRequest(BuildPrompt(plan, news), _options.LlmModel, 0.1, false),
-                        cancellationToken);
+                        linkedCts.Token);
                     review = ParseResult(llmResult.Content);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.LogWarning(ex, "交易计划突发新闻语义复核失败，symbol={Symbol}, planId={PlanId}, newsId={NewsId}", plan.Symbol, plan.Id, news.Id);
                     continue;

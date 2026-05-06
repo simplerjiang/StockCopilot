@@ -4,10 +4,10 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.EventLog;
 using System.Reflection;
 using SimplerJiangAiAgent.Api.Data;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Config;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
-using SimplerJiangAiAgent.Api.Infrastructure.Security;
 using SimplerJiangAiAgent.Api.Infrastructure.Serialization;
 using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 using SimplerJiangAiAgent.Api.Modules;
@@ -47,15 +47,15 @@ builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(Dat
 builder.Services.Configure<StockSyncOptions>(builder.Configuration.GetSection(StockSyncOptions.SectionName));
 builder.Services.Configure<SourceGovernanceOptions>(builder.Configuration.GetSection(SourceGovernanceOptions.SectionName));
 builder.Services.Configure<ConfigCenterOptions>(builder.Configuration.GetSection(ConfigCenterOptions.SectionName));
-builder.Services.Configure<PermissionOptions>(builder.Configuration.GetSection(PermissionOptions.SectionName));
-builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection(AdminOptions.SectionName));
-builder.Services.AddSingleton<IPermissionService, PermissionService>();
+
 builder.Services.AddScoped<IStockSyncService, StockSyncService>();
 builder.Services.AddScoped<ISourceGovernanceService, SourceGovernanceService>();
 builder.Services.AddScoped<ISourceGovernanceReadService>(serviceProvider =>
     new SourceGovernanceReadService(
         serviceProvider.GetRequiredService<AppDbContext>(),
         serviceProvider.GetRequiredService<AppRuntimePaths>()));
+builder.Services.AddSingleton<GpuTaskQueueService>();
+builder.Services.AddSingleton<IGpuTaskQueue>(sp => sp.GetRequiredService<GpuTaskQueueService>());
 builder.Services.AddSingleton<ICommandRunner, ProcessCommandRunner>();
 builder.Services.AddSingleton<IBaostockClientFactory, BaostockClientFactory>();
 builder.Services.AddSingleton<ITradingCalendarService, TradingCalendarService>();

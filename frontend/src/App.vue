@@ -10,6 +10,7 @@ import AdminLlmSettings from './modules/admin/AdminLlmSettings.vue'
 import SourceGovernanceDeveloperMode from './modules/admin/SourceGovernanceDeveloperMode.vue'
 import FinancialDataTestPanel from './modules/admin/FinancialDataTestPanel.vue'
 import FinancialWorkerPanel from './modules/admin/FinancialWorkerPanel.vue'
+import GpuQueuePanel from './modules/admin/GpuQueuePanel.vue'
 import FinancialConfigPage from './modules/financial/FinancialConfigPage.vue'
 import FinancialCenterPage from './modules/financial/FinancialCenterPage.vue'
 import AppToast from './components/AppToast.vue'
@@ -30,7 +31,8 @@ const adminTabs = [
   { key: 'source-governance-dev', name: '治理开发者模式', shortName: '治理', component: SourceGovernanceDeveloperMode },
   { key: 'financial-data-test', name: '财务数据测试', shortName: '财务', component: FinancialDataTestPanel },
   { key: 'financial-worker', name: '财务工作者监控', shortName: '工作者', component: FinancialWorkerPanel },
-  { key: 'financial-config', name: '财报采集设置', shortName: '采集设置', component: FinancialConfigPage }
+  { key: 'financial-config', name: '财报采集设置', shortName: '采集设置', component: FinancialConfigPage },
+  { key: 'gpu-queue', name: 'GPU 任务队列', shortName: 'GPU', component: GpuQueuePanel }
 ]
 
 const tabs = [...mainTabs, ...adminTabs]

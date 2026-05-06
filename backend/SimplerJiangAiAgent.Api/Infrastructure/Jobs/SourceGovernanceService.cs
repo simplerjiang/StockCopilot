@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SimplerJiangAiAgent.Api.Data;
 using SimplerJiangAiAgent.Api.Data.Entities;
+using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
 using System.Net;
@@ -24,6 +25,7 @@ public sealed class SourceGovernanceService : ISourceGovernanceService
     private readonly ILlmService _llmService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ICommandRunner _commandRunner;
+    private readonly IGpuTaskQueue _gpuQueue;
     private readonly string _repoRoot;
 
     private static readonly string[] AllowedCrawlerPathPrefixes =
@@ -42,7 +44,8 @@ public sealed class SourceGovernanceService : ISourceGovernanceService
         IFileLogWriter fileLogWriter,
         ILlmService llmService,
         IHttpClientFactory httpClientFactory,
-        ICommandRunner commandRunner)
+        ICommandRunner commandRunner,
+        IGpuTaskQueue gpuQueue)
     {
         _dbContext = dbContext;
         _options = options.Value;
@@ -50,42 +53,56 @@ public sealed class SourceGovernanceService : ISourceGovernanceService
         _llmService = llmService;
         _httpClientFactory = httpClientFactory;
         _commandRunner = commandRunner;
+        _gpuQueue = gpuQueue;
         _repoRoot = string.IsNullOrWhiteSpace(_options.RepositoryRoot) ? ResolveRepositoryRoot() : _options.RepositoryRoot;
     }
 
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
-        if (_options.EnableLlmDiscovery)
+        await using var gpuLease = await _gpuQueue.AcquireAsync(
+            "数据源治理", GpuTaskPriority.Low, cancellationToken);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+        cancellationToken = linkedCts.Token;
+
+        try
         {
-            await DiscoverCandidatesFromLlmAsync(cancellationToken);
+            if (_options.EnableLlmDiscovery)
+            {
+                await DiscoverCandidatesFromLlmAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            await VerifyPendingCandidatesAsync(cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
+
+            await PromoteQualifiedCandidatesAsync(cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            await RefreshSourceStatusesAsync(cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            if (_options.EnableCrawlerAutoFix)
+            {
+                await EnqueueCrawlerFixesAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                await GenerateCrawlerPatchProposalsAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                await ValidateCrawlerPatchProposalsAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                await DeployValidatedCrawlerPatchesAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                await EvaluateRollbackForDeployedChangesAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
         }
-
-        await VerifyPendingCandidatesAsync(cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        await PromoteQualifiedCandidatesAsync(cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        await RefreshSourceStatusesAsync(cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        if (_options.EnableCrawlerAutoFix)
+        catch
         {
-            await EnqueueCrawlerFixesAsync(cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            await GenerateCrawlerPatchProposalsAsync(cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            await ValidateCrawlerPatchProposalsAsync(cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            await DeployValidatedCrawlerPatchesAsync(cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            await EvaluateRollbackForDeployedChangesAsync(cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            gpuLease.MarkFailed();
+            throw;
         }
     }
 

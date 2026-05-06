@@ -57,6 +57,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
 
     private int _autoRestartCount;
     private DateTime? _lastAutoRestart;
+    private CancellationToken _stoppingToken;
 
     public FinancialWorkerSupervisorService(
         IHttpClientFactory httpClientFactory,
@@ -70,6 +71,7 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _stoppingToken = stoppingToken;
         await Task.Delay(5000, stoppingToken); // 等主 API 完全启动
 
         await TryAutoStartAsync(stoppingToken);
@@ -120,8 +122,8 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
         {
             _ = Task.Run(async () =>
             {
-                try { await TryAutoStartAsync(CancellationToken.None); }
-                catch (Exception ex) { _logger.LogError(ex, "Auto-restart after process exit failed"); }
+                try { await TryAutoStartAsync(_stoppingToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "Auto-restart after process exit failed"); }
             });
             return;
         }
@@ -200,14 +202,16 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
             lock (_lock) { _consecutiveFailures = 0; }
             _ = Task.Run(async () =>
             {
-                try { await TryAutoStartAsync(CancellationToken.None); }
-                catch (Exception ex) { _logger.LogError(ex, "Auto-restart failed"); }
+                try { await TryAutoStartAsync(_stoppingToken); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "Auto-restart failed"); }
             });
         }
     }
 
     private async Task TryAutoStartAsync(CancellationToken ct)
     {
+        if (ct.IsCancellationRequested) return;
+
         if (await CheckHealthAsync(ct))
         {
             lock (_lock) { if (_state != "running") _workerStartedAt = DateTime.UtcNow; _state = "running"; }
@@ -232,6 +236,8 @@ public sealed class FinancialWorkerSupervisorService : BackgroundService, IFinan
 
     private async Task StartWorkerInternalAsync(CancellationToken ct)
     {
+        if (ct.IsCancellationRequested) return;
+
         lock (_lock)
         {
             _state = "starting";
