@@ -74,3 +74,6 @@ out1.txt
 .github/agents/role.zip
 api_*.log
 .tmp-baostock-probe/
+
+# Log files
+logs/
