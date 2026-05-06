@@ -567,15 +567,24 @@ public sealed class StocksModule : IModule
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted, gpuLease.CancellationToken);
             var ct = linkedCts.Token;
 
+            var workerBaseUrl = ResolveFinancialWorkerBaseUrl(configuration);
+            var client = httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromMinutes(30);
+
+            HttpResponseMessage? response = null;
             try
             {
-                var workerBaseUrl = ResolveFinancialWorkerBaseUrl(configuration);
-                var client = httpClientFactory.CreateClient();
-                client.Timeout = TimeSpan.FromMinutes(30);
-
                 using var request = new HttpRequestMessage(HttpMethod.Post, $"{workerBaseUrl}/api/embedding/backfill");
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch
+            {
+                gpuLease.MarkFailed();
+                throw;
+            }
 
+            using (response)
+            {
                 httpContext.Response.ContentType = "application/x-ndjson";
                 httpContext.Response.StatusCode = (int)response.StatusCode;
 
@@ -587,33 +596,62 @@ public sealed class StocksModule : IModule
                     return;
                 }
 
-                await using var stream = await response.Content.ReadAsStreamAsync(ct);
-                using var reader = new StreamReader(stream);
+                var receivedDone = false;
+                var linesForwarded = 0;
 
-                while (!reader.EndOfStream && !ct.IsCancellationRequested)
+                try
                 {
-                    var line = await reader.ReadLineAsync(ct);
-                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                    using var reader = new StreamReader(stream);
 
-                    // Forward to client
-                    await httpContext.Response.WriteAsync(line + "\n", ct);
-                    await httpContext.Response.Body.FlushAsync(ct);
-
-                    // Parse progress for GPU queue display
-                    try
+                    while (!reader.EndOfStream && !ct.IsCancellationRequested)
                     {
-                        using var doc = JsonDocument.Parse(line);
-                        var filled = doc.RootElement.GetProperty("filled").GetInt32();
-                        var total = doc.RootElement.TryGetProperty("total", out var totalEl) ? totalEl.GetInt32() : 0;
-                        gpuLease.ReportProgress(total > 0 ? $"{filled}/{total}" : $"{filled} 已处理");
+                        var line = await reader.ReadLineAsync(ct);
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+
+                        // Forward to client
+                        try
+                        {
+                            await httpContext.Response.WriteAsync(line + "\n", ct);
+                            await httpContext.Response.Body.FlushAsync(ct);
+                        }
+                        catch { /* Client may have disconnected, but work continues in Worker */ break; }
+
+                        linesForwarded++;
+
+                        // Parse progress for GPU queue display
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(line);
+                            if (doc.RootElement.TryGetProperty("done", out var doneEl) && doneEl.GetBoolean())
+                                receivedDone = true;
+                            var filled = doc.RootElement.GetProperty("filled").GetInt32();
+                            var total = doc.RootElement.TryGetProperty("total", out var totalEl) ? totalEl.GetInt32() : 0;
+                            var aborted = doc.RootElement.TryGetProperty("aborted", out var abortedEl) && abortedEl.GetBoolean();
+                            gpuLease.ReportProgress(total > 0 ? $"{filled}/{total}" : $"{filled} 已处理");
+
+                            if (aborted) gpuLease.MarkFailed();
+                        }
+                        catch { /* ignore parse errors */ }
                     }
-                    catch { /* ignore parse errors in progress lines */ }
                 }
-            }
-            catch
-            {
-                gpuLease.MarkFailed();
-                throw;
+                catch (OperationCanceledException) when (receivedDone || linesForwarded > 0)
+                {
+                    // Stream ended after data was received - not a failure
+                }
+                catch (IOException) when (receivedDone || linesForwarded > 0)
+                {
+                    // Connection closed after data was forwarded - not a failure
+                }
+                catch (HttpRequestException) when (receivedDone || linesForwarded > 0)
+                {
+                    // Same as above
+                }
+                catch
+                {
+                    if (!receivedDone) gpuLease.MarkFailed();
+                    throw;
+                }
             }
         })
         .WithName("EmbeddingBackfill")
