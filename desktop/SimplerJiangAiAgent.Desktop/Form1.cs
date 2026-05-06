@@ -173,8 +173,20 @@ public partial class Form1 : Form
     {
         _isClosing = true;
         _backendHealthTimer.Stop();
+        TryGracefulWorkerShutdown();
         StopOwnedFinancialWorkerProcess();
         StopOwnedBackendProcess();
+    }
+
+    private void TryGracefulWorkerShutdown()
+    {
+        if (string.IsNullOrWhiteSpace(_backendBaseUrl)) return;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            http.PostAsync($"{_backendBaseUrl}/api/stocks/worker/stop", null).Wait(3000);
+        }
+        catch { /* Best effort - will force kill anyway */ }
     }
 
     private static BackendLaunchCommand? FindPackagedBackendLaunchCommand()
@@ -563,6 +575,17 @@ public partial class Form1 : Form
         {
             process.Dispose();
         }
+
+        // 兆底：按进程名查杀可能残留的 FinancialWorker
+        try
+        {
+            foreach (var p in Process.GetProcessesByName("SimplerJiangAiAgent.FinancialWorker"))
+            {
+                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                p.Dispose();
+            }
+        }
+        catch { }
     }
 
     private void StopOwnedFinancialWorkerProcess()
