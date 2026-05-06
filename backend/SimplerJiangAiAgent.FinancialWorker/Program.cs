@@ -260,6 +260,10 @@ app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embe
     httpContext.Response.ContentType = "application/x-ndjson";
     httpContext.Response.StatusCode = 200;
 
+    const int maxRetries = 3;
+    const int retryDelayMs = 2000;
+    const int maxConsecutiveFailures = 3;
+
     var totalFilled = 0;
     var totalErrors = 0;
     var consecutiveErrors = 0;
@@ -273,29 +277,41 @@ app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embe
         foreach (var (chunkId, text) in missing)
         {
             ct.ThrowIfCancellationRequested();
-            try
+
+            float[]? embedding = null;
+            var success = false;
+
+            for (var attempt = 1; attempt <= maxRetries; attempt++)
             {
-                var embedding = await embedder.EmbedAsync(text, ct);
-                if (embedding != null)
+                try
                 {
-                    ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
-                    totalFilled++;
-                    consecutiveErrors = 0;
+                    embedding = await embedder.EmbedAsync(text, ct);
+                    if (embedding != null)
+                    {
+                        success = true;
+                        break;
+                    }
                 }
-                else
-                {
-                    totalErrors++;
-                    consecutiveErrors++;
-                }
+                catch (OperationCanceledException) { throw; }
+                catch { /* will retry */ }
+
+                if (attempt < maxRetries)
+                    await Task.Delay(retryDelayMs, ct);
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception)
+
+            if (success && embedding != null)
+            {
+                ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
+                totalFilled++;
+                consecutiveErrors = 0;
+            }
+            else
             {
                 totalErrors++;
                 consecutiveErrors++;
             }
 
-            if (consecutiveErrors >= 5) break;
+            if (consecutiveErrors >= maxConsecutiveFailures) break;
 
             if (totalFilled % 10 == 0 && totalFilled > 0)
             {
@@ -305,10 +321,10 @@ app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embe
             }
         }
 
-        if (consecutiveErrors >= 5) break;
+        if (consecutiveErrors >= maxConsecutiveFailures) break;
     }
 
-    var finalMsg = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, errors = totalErrors, done = true, aborted = consecutiveErrors >= 5 });
+    var finalMsg = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, errors = totalErrors, done = true, aborted = consecutiveErrors >= maxConsecutiveFailures });
     await httpContext.Response.WriteAsync(finalMsg + "\n", ct);
     await httpContext.Response.Body.FlushAsync(ct);
 })
