@@ -43,7 +43,9 @@ public sealed class CompositeStockCrawler : IStockCrawler
 
             try
             {
-                var quote = await crawler.GetQuoteAsync(symbol, cancellationToken);
+                using var perSourceCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, perSourceCts.Token);
+                var quote = await crawler.GetQuoteAsync(symbol, linkedCts.Token);
                 if (quote is not null && IsUsableQuote(quote))
                 {
                     quotes.Add((crawler.SourceName, quote));
@@ -51,7 +53,7 @@ public sealed class CompositeStockCrawler : IStockCrawler
             }
             catch
             {
-                // 忽略单一来源错误
+                // 忽略单一来源错误（含超时）
             }
         }
 
@@ -221,10 +223,9 @@ public sealed class CompositeStockCrawler : IStockCrawler
 
     private static bool HasCompletePreferredQuote(StockQuoteDto quote)
     {
+        // 收盘后/盘前 high/low 可能为 0，只要有核心报价即可
         return IsUsableQuote(quote)
-            && HasFundamentalData(quote)
-            && quote.High > 0m
-            && quote.Low > 0m;
+            && HasFundamentalData(quote);
     }
 
     private static int GetRealtimeScore(StockQuoteDto quote)

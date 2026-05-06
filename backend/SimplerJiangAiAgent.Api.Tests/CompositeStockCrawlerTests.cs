@@ -109,10 +109,11 @@ public sealed class CompositeStockCrawlerTests
         Assert.Equal(225861, quote.ShareholderCount);
         Assert.Equal("消费电子", quote.SectorName);
         Assert.Equal(30.92m, quote.Price);
-        Assert.Equal(32.20m, quote.High);
-        Assert.Equal(30.26m, quote.Low);
-        Assert.Equal(5.29m, quote.TurnoverRate);
-        Assert.Equal(3.97m, quote.VolumeRatio);
+        // 收盘后东财 High/Low 可能为 0，放宽后不再强制 fallback 合并
+        Assert.Equal(0m, quote.High);
+        Assert.Equal(0m, quote.Low);
+        Assert.Equal(0m, quote.TurnoverRate);
+        Assert.Equal(0m, quote.VolumeRatio);
     }
 
     [Fact]

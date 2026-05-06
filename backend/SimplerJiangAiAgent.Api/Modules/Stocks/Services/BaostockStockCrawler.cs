@@ -58,10 +58,12 @@ public sealed class BaostockStockCrawler : IStockCrawlerSource
 
     public async Task<StockQuoteDto?> GetQuoteAsync(string symbol, CancellationToken ct = default)
     {
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
         try
         {
-            await using var lease = await _clientFactory.GetClientAsync(ct);
-            var quote = await lease.Client.GetRealtimeQuoteAsync(symbol, ct);
+            await using var lease = await _clientFactory.GetClientAsync(linkedCts.Token);
+            var quote = await lease.Client.GetRealtimeQuoteAsync(symbol, linkedCts.Token);
 
             var change = quote.Last - quote.PreClose;
             var changePct = quote.PreClose != 0
@@ -83,6 +85,11 @@ public sealed class BaostockStockCrawler : IStockCrawlerSource
                 News: Array.Empty<StockNewsDto>(),
                 Indicators: Array.Empty<StockIndicatorDto>()
             );
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning("Baostock realtime quote timed out (5s) for {Symbol}", symbol);
+            return null;
         }
         catch (Exception ex)
         {
