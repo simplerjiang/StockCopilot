@@ -129,7 +129,13 @@ async function triggerBackfill() {
     }
 
     if (lastProgress?.done) {
-      backfillResult.value = { type: 'success', text: `补建完成：已处理 ${lastProgress.filled} 条` }
+      if (lastProgress.aborted) {
+        backfillResult.value = { type: 'error', text: `补建中断：Ollama 可能离线，已处理 ${lastProgress.filled} 条，${lastProgress.errors} 个错误` }
+      } else if (lastProgress.errors > 0) {
+        backfillResult.value = { type: 'success', text: `补建完成：已处理 ${lastProgress.filled} 条（${lastProgress.errors} 个跳过）` }
+      } else {
+        backfillResult.value = { type: 'success', text: `补建完成：已处理 ${lastProgress.filled} 条` }
+      }
       setTimeout(() => emit('refresh'), 2000)
     } else {
       backfillResult.value = { type: 'success', text: '补建任务已完成' }

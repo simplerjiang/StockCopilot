@@ -261,6 +261,8 @@ app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embe
     httpContext.Response.StatusCode = 200;
 
     var totalFilled = 0;
+    var totalErrors = 0;
+    var consecutiveErrors = 0;
     var grandTotal = ragDb.CountChunksWithoutEmbedding();
 
     while (!ct.IsCancellationRequested)
@@ -271,24 +273,43 @@ app.MapPost("/api/embedding/backfill", async (RagDbContext ragDb, IEmbedder embe
         foreach (var (chunkId, text) in missing)
         {
             ct.ThrowIfCancellationRequested();
-            var embedding = await embedder.EmbedAsync(text, ct);
-            if (embedding != null)
+            try
             {
-                ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
-                totalFilled++;
+                var embedding = await embedder.EmbedAsync(text, ct);
+                if (embedding != null)
+                {
+                    ragDb.UpsertEmbedding(chunkId, embedding, "ollama");
+                    totalFilled++;
+                    consecutiveErrors = 0;
+                }
+                else
+                {
+                    totalErrors++;
+                    consecutiveErrors++;
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception)
+            {
+                totalErrors++;
+                consecutiveErrors++;
             }
 
-            if (totalFilled % 10 == 0)
+            if (consecutiveErrors >= 5) break;
+
+            if (totalFilled % 10 == 0 && totalFilled > 0)
             {
-                var progress = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, done = false });
+                var progress = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, errors = totalErrors, done = false });
                 await httpContext.Response.WriteAsync(progress + "\n", ct);
                 await httpContext.Response.Body.FlushAsync(ct);
             }
         }
+
+        if (consecutiveErrors >= 5) break;
     }
 
-    var final = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, done = true });
-    await httpContext.Response.WriteAsync(final + "\n", ct);
+    var finalMsg = JsonSerializer.Serialize(new { filled = totalFilled, total = grandTotal, errors = totalErrors, done = true, aborted = consecutiveErrors >= 5 });
+    await httpContext.Response.WriteAsync(finalMsg + "\n", ct);
     await httpContext.Response.Body.FlushAsync(ct);
 })
 .WithName("EmbeddingBackfill");
