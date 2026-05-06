@@ -1,7 +1,5 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -42,7 +40,6 @@ public sealed class LlmModuleErrorSanitizationTests : IClassFixture<LlmModuleErr
     {
         _factory.LlmExceptionMessage = SensitiveErrorMessage;
         var client = _factory.CreateClient();
-        await AuthenticateAsync(client);
 
         var response = await client.PostAsJsonAsync("/api/admin/llm/test/openai", new { prompt = "hello" });
 
@@ -66,20 +63,6 @@ public sealed class LlmModuleErrorSanitizationTests : IClassFixture<LlmModuleErr
         AssertSanitized(body);
     }
 
-    private async Task AuthenticateAsync(HttpClient client)
-    {
-        var loginResponse = await client.PostAsJsonAsync("/api/admin/login", new
-        {
-            username = Factory.AdminUsername,
-            password = Factory.AdminPassword
-        });
-        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
-        var loginBody = await loginResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var token = loginBody.GetProperty("token").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(token));
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-    }
-
     private static void AssertSanitized(string body)
     {
         Assert.DoesNotContain("api.bltcy.ai", body, StringComparison.OrdinalIgnoreCase);
@@ -91,9 +74,6 @@ public sealed class LlmModuleErrorSanitizationTests : IClassFixture<LlmModuleErr
 
     public sealed class Factory : WebApplicationFactory<Program>
     {
-        public const string AdminUsername = "test-admin";
-        public const string AdminPassword = "test-password";
-
         public string LlmExceptionMessage { get; set; } = SensitiveErrorMessage;
         public string StreamHttpExceptionMessage { get; set; } = SensitiveErrorMessage;
 
@@ -106,10 +86,7 @@ public sealed class LlmModuleErrorSanitizationTests : IClassFixture<LlmModuleErr
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
-                    ["Database:DataRootPath"] = dataRoot,
-                    ["Admin:Username"] = AdminUsername,
-                    ["Admin:Password"] = AdminPassword,
-                    ["Admin:TokenExpiryMinutes"] = "5"
+                    ["Database:DataRootPath"] = dataRoot
                 });
             });
             builder.ConfigureServices(services =>

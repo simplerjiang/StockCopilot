@@ -1,11 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { getSourceChannelTag, sourceChannelTagStyle } from '../financial/sourceChannelTag.js'
-import { readAdminToken, writeAdminToken } from './adminTokenStorage.js'
-
-// Auth token (same as other admin panels)
-const token = ref(readAdminToken())
-const isAuthed = ref(false)
 
 // Config state
 const config = ref({
@@ -34,8 +29,7 @@ const workerHealthy = ref(null)
 const workerStatusText = ref('检测中...')
 const workerStatusDetail = ref('')
 
-const authHeaders = computed(() => ({
-  'Authorization': `Bearer ${token.value}`,
+const defaultHeaders = computed(() => ({
   'Content-Type': 'application/json'
 }))
 
@@ -144,33 +138,11 @@ const collectPdfSummary = computed(() => {
 
 const collectChannelTag = computed(() => getSourceChannelTag(collectSourceChannel.value))
 
-// ---- Auth ----
-async function login() {
-  try {
-    const res = await fetch('/api/admin/verify-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: token.value })
-    })
-    if (res.ok) {
-      isAuthed.value = true
-      writeAdminToken(token.value)
-      await loadAll()
-    } else {
-      isAuthed.value = false
-      configMsg.value = '认证失败'
-    }
-  } catch {
-    isAuthed.value = false
-    configMsg.value = '认证请求失败'
-  }
-}
-
 // ---- Config ----
 async function loadConfig() {
   configLoading.value = true
   try {
-    const res = await fetch('/api/stocks/financial/config', { headers: authHeaders.value })
+    const res = await fetch('/api/stocks/financial/config')
     if (res.ok) {
       const data = await res.json()
       config.value = {
@@ -190,7 +162,7 @@ async function saveConfig() {
   try {
     const res = await fetch('/api/stocks/financial/config', {
       method: 'PUT',
-      headers: authHeaders.value,
+      headers: defaultHeaders.value,
       body: JSON.stringify(config.value)
     })
     if (res.ok) {
@@ -213,8 +185,7 @@ async function testCollect() {
   pdfSummaryOpen.value = false
   try {
     const res = await fetch(`/api/stocks/financial/collect/${testSymbol.value.trim()}`, {
-      method: 'POST',
-      headers: authHeaders.value
+      method: 'POST'
     })
     if (res.ok) {
       collectResult.value = await res.json()
@@ -236,7 +207,7 @@ async function testCollect() {
 async function loadLogs() {
   logsLoading.value = true
   try {
-    const res = await fetch('/api/stocks/financial/logs?limit=50', { headers: authHeaders.value })
+    const res = await fetch('/api/stocks/financial/logs?limit=50')
     if (res.ok) {
       logs.value = await res.json()
     }
@@ -251,7 +222,6 @@ async function loadLogs() {
 async function checkWorkerHealth() {
   try {
     const res = await fetch('/api/stocks/financial/worker/status', {
-      headers: authHeaders.value,
       signal: AbortSignal.timeout(3000)
     })
     const payload = await readResponsePayload(res)
@@ -278,7 +248,6 @@ async function loadAll() {
 }
 
 onMounted(() => {
-  isAuthed.value = true
   loadAll()
 })
 </script>

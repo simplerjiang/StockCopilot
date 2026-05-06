@@ -65,36 +65,7 @@ describe('AdminLlmSettings', () => {
     vi.restoreAllMocks()
   })
 
-  it('logs out when save returns unauthorized', async () => {
-    localStorage.setItem('admin_token', 'token')
-
-    const fetchMock = vi.fn(async (url, options) => {
-      if (url.includes('/api/admin/llm/settings/active')) {
-        return activeProviderResponse()
-      }
-      if (options?.method === 'PUT') {
-        return makeResponse({ ok: false, status: 401 })
-      }
-      return makeResponse({ ok: false, status: 404 })
-    })
-
-    vi.stubGlobal('fetch', fetchMock)
-
-    const wrapper = mount(AdminLlmSettings)
-    await flushPromises()
-
-    const saveButton = wrapper.findAll('button').find(button => button.text().includes('保存设置'))
-    expect(saveButton).toBeTruthy()
-    await saveButton.trigger('click')
-    await flushPromises()
-
-    expect(localStorage.getItem('admin_token')).toBeNull()
-    expect(wrapper.text()).toContain('管理员登录')
-    expect(wrapper.text()).toContain('登录已过期')
-  })
-
   it('shows neutral Antigravity authorization guidance without account-ban warning', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -139,7 +110,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('includes system prompt when saving', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -168,7 +138,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('includes forceChinese when saving', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -197,7 +166,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('emits settings-saved after save succeeds', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -223,7 +191,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('includes Tavily API key when saving', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -254,7 +221,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('auto-switches the active provider when provider settings are saved', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active') && options?.method === 'PUT') {
@@ -295,7 +261,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('saving news cleansing with active provider takes effect immediately without changing active provider', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -332,7 +297,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('shows the active-provider success message for Ollama without a clamp notice', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -380,7 +344,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('saving news cleansing with a dedicated provider does not change active provider and shows immediate effect', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -424,7 +387,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('loads Tavily API key metadata and renders masked state', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -458,7 +420,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('auto-selects an installed Ollama model for provider save when the saved value is blank', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -511,7 +472,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('loads saved Ollama runtime options into the settings form', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -568,7 +528,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('includes Ollama runtime options when saving provider settings', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -637,7 +596,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('applies and saves explicit Ollama runtime defaults when settings are blank', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -706,7 +664,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('auto-selects an installed Ollama model for news cleansing save when the saved value is stale', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -755,7 +712,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('blocks Ollama provider save clearly when no installed models are available', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -806,7 +762,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('shows Ollama as not running instead of not installed when the app is installed but stopped', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {
@@ -855,7 +810,6 @@ describe('AdminLlmSettings', () => {
   })
 
   it('blocks Ollama news cleansing actions and shows the local recovery hint when no installed models are available', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url, options) => {
       if (url.includes('/api/admin/llm/settings/active')) {

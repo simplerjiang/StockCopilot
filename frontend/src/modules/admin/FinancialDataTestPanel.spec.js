@@ -16,8 +16,7 @@ describe('FinancialDataTestPanel', () => {
     vi.restoreAllMocks()
   })
 
-  it('migrates legacy admin-token storage to admin_token for financial requests', async () => {
-    localStorage.setItem('admin-token', 'legacy-token')
+  it('loads config and worker status on mount', async () => {
     const fetchMock = vi.fn(async url => {
       if (url === '/api/stocks/financial/config') return makeResponse({ startDate: '2026-04-27T00:00:00Z' })
       if (url === '/api/stocks/financial/logs?limit=50') return makeResponse([])
@@ -29,10 +28,7 @@ describe('FinancialDataTestPanel', () => {
     mount(FinancialDataTestPanel)
     await flushPromises()
 
-    expect(localStorage.getItem('admin_token')).toBe('legacy-token')
-    expect(localStorage.getItem('admin-token')).toBeNull()
-    expect(fetchMock).toHaveBeenCalledWith('/api/stocks/financial/config', expect.objectContaining({
-      headers: expect.objectContaining({ Authorization: 'Bearer legacy-token' })
-    }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/stocks/financial/config')
+    expect(fetchMock).toHaveBeenCalledWith('/api/stocks/financial/logs?limit=50')
   })
 })

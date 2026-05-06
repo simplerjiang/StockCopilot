@@ -22,7 +22,6 @@ describe('SourceGovernanceDeveloperMode', () => {
   })
 
   it('loads dashboard after enabling developer mode', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)
@@ -56,13 +55,12 @@ describe('SourceGovernanceDeveloperMode', () => {
     await checkbox.setValue(true)
     await flushPromises()
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/admin/source-governance/overview', expect.any(Object))
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/source-governance/overview')
     expect(wrapper.text()).toContain('a.test')
     expect(wrapper.text()).toContain('参数说明')
   })
 
   it('keeps developer mode checked after remount', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)
@@ -98,7 +96,6 @@ describe('SourceGovernanceDeveloperMode', () => {
   })
 
   it('searches trace logs by trace id', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)
@@ -140,7 +137,6 @@ describe('SourceGovernanceDeveloperMode', () => {
   })
 
   it('loads change detail and jumps to trace from queue item', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)
@@ -196,7 +192,6 @@ describe('SourceGovernanceDeveloperMode', () => {
   })
 
   it('opens full-screen log viewer and prettifies embedded json', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)
@@ -235,7 +230,6 @@ describe('SourceGovernanceDeveloperMode', () => {
   })
 
   it('shows paired request and response content with prettified json', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)
@@ -283,7 +277,6 @@ describe('SourceGovernanceDeveloperMode', () => {
   })
 
   it('redacts historical mixed-language non-json response summaries', async () => {
-    localStorage.setItem('admin_token', 'token')
 
     const fetchMock = vi.fn(async (url) => {
       const target = String(url)

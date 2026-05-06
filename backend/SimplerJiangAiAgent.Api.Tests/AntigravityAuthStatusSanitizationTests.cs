@@ -1,8 +1,5 @@
 using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Reflection;
-using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -29,7 +26,6 @@ public sealed class AntigravityAuthStatusSanitizationTests : IClassFixture<Antig
     public async Task AuthStatus_WhenCallbackTaskFaulted_DoesNotLeakGatewayUrlOrToken()
     {
         var client = _factory.CreateClient();
-        await AuthenticateAsync(client);
 
         var response = await client.GetAsync("/api/admin/antigravity/auth-status");
 
@@ -43,24 +39,8 @@ public sealed class AntigravityAuthStatusSanitizationTests : IClassFixture<Antig
         Assert.Contains("[SECRET]", body, StringComparison.Ordinal);
     }
 
-    private static async Task AuthenticateAsync(HttpClient client)
-    {
-        var loginResponse = await client.PostAsJsonAsync("/api/admin/login", new
-        {
-            username = Factory.AdminUsername,
-            password = Factory.AdminPassword
-        });
-        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
-        var loginBody = await loginResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var token = loginBody.GetProperty("token").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(token));
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-    }
-
     public sealed class Factory : WebApplicationFactory<Program>
     {
-        public const string AdminUsername = "test-admin";
-        public const string AdminPassword = "test-password";
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -71,10 +51,7 @@ public sealed class AntigravityAuthStatusSanitizationTests : IClassFixture<Antig
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
-                    ["Database:DataRootPath"] = dataRoot,
-                    ["Admin:Username"] = AdminUsername,
-                    ["Admin:Password"] = AdminPassword,
-                    ["Admin:TokenExpiryMinutes"] = "5"
+                    ["Database:DataRootPath"] = dataRoot
                 });
             });
             builder.ConfigureServices(services =>

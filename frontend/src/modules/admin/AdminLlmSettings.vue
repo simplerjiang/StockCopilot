@@ -1,7 +1,6 @@
 <script setup>
 defineOptions({ name: 'AdminLlmSettings' })
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { clearAdminToken, readAdminToken, writeAdminToken } from './adminTokenStorage.js'
 
 const emit = defineEmits(['settings-saved'])
 
@@ -46,12 +45,6 @@ const ollamaRuntimeDefaults = Object.freeze({
   stop: [],
   think: false
 })
-
-const username = ref('')
-const password = ref('')
-const token = ref(readAdminToken() || 'local-bypass')
-const loginError = ref('')
-const loginLoading = ref(false)
 
 const activeProviderKey = ref('default')
 const provider = ref('default')
@@ -106,7 +99,6 @@ const embeddingPullModel = ref('bge-m3')
 const embeddingPulling = ref(false)
 const embeddingPullMsg = ref('')
 
-const isLoggedIn = computed(() => Boolean(token.value))
 const isAntigravity = computed(() => provider.value === 'antigravity')
 const isOllamaProvider = computed(() => provider.value === 'ollama')
 const modelPlaceholder = computed(() => 'gpt-4o-mini')
@@ -359,58 +351,9 @@ function syncNewsOllamaModelSelection() {
   }
 }
 
-const authHeaders = () => ({
-  Authorization: `Bearer ${token.value}`
-})
-
-const handleUnauthorized = message => {
-  logout()
-  loginError.value = message || '登录已过期，请重新登录'
-}
-
-const login = async () => {
-  loginLoading.value = true
-  loginError.value = ''
-  saveMessage.value = ''
-
-  try {
-    const response = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username.value, password: password.value })
-    })
-
-    if (!response.ok) {
-      throw new Error('登录失败')
-    }
-
-    const data = await response.json()
-    token.value = data.token
-    writeAdminToken(token.value)
-    const loaded = await loadActiveProvider()
-    if (loaded) {
-      provider.value = activeProviderKey.value
-      await loadSettings()
-      await loadNewsCleansing()
-      checkOllama()
-    }
-  } catch (error) {
-    loginError.value = error.message || '登录失败'
-  } finally {
-    loginLoading.value = false
-  }
-}
-
-const logout = () => {
-  token.value = ''
-  clearAdminToken()
-}
-
 const loadAntigravityModels = async () => {
   try {
-    const response = await fetch('/api/admin/antigravity/models', {
-      headers: authHeaders()
-    })
+    const response = await fetch('/api/admin/antigravity/models')
     if (response.ok) {
       antigravityModels.value = await response.json()
     }
@@ -425,8 +368,7 @@ const startAntigravityAuth = async () => {
 
   try {
     const startResponse = await fetch('/api/admin/antigravity/auth-start', {
-      method: 'POST',
-      headers: authHeaders()
+      method: 'POST'
     })
 
     if (!startResponse.ok) {
@@ -440,7 +382,7 @@ const startAntigravityAuth = async () => {
 
     const completeResponse = await fetch('/api/admin/antigravity/auth-complete', {
       method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ port })
     })
 
@@ -492,12 +434,8 @@ async function checkOllama() {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 10000)
   try {
-    const resp = await fetch('/api/admin/ollama/status', { headers: authHeaders(), signal: controller.signal })
+    const resp = await fetch('/api/admin/ollama/status', { signal: controller.signal })
     clearTimeout(timeoutId)
-    if (resp.status === 401 || resp.status === 403) {
-      handleUnauthorized()
-      return
-    }
     const data = await resp.json()
     if (data.status === 'not_running' && data.installed === false) {
       ollamaStatus.value = 'not_installed'
@@ -536,11 +474,7 @@ async function startOllama() {
   ollamaStatus.value = 'starting'
   ollamaMsg.value = '正在启动 Ollama...'
   try {
-    const resp = await fetch('/api/admin/ollama/start', { method: 'POST', headers: authHeaders() })
-    if (resp.status === 401 || resp.status === 403) {
-      handleUnauthorized()
-      return
-    }
+    const resp = await fetch('/api/admin/ollama/start', { method: 'POST' })
     const data = await resp.json()
     ollamaMsg.value = data.message
     if (data.success) {
@@ -559,8 +493,7 @@ async function stopOllama() {
   ollamaStatus.value = 'stopping'
   ollamaMsg.value = '正在停止 Ollama...'
   try {
-    const resp = await fetch('/api/admin/ollama/stop', { method: 'POST', headers: authHeaders() })
-    if (resp.status === 401 || resp.status === 403) { handleUnauthorized(); return }
+    const resp = await fetch('/api/admin/ollama/stop', { method: 'POST' })
     const data = await resp.json()
     ollamaMsg.value = data.message
     ollamaStatus.value = data.success ? 'not_running' : 'running'
@@ -579,10 +512,9 @@ async function pullModel() {
   try {
     const resp = await fetch('/api/admin/ollama/pull', {
       method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: name })
     })
-    if (resp.status === 401 || resp.status === 403) { handleUnauthorized(); return }
     const data = await resp.json()
     pullMsg.value = data.message
     if (data.success) {
@@ -621,10 +553,9 @@ async function pullEmbeddingModel() {
   try {
     const res = await fetch('/api/admin/ollama/pull', {
       method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: modelName })
     })
-    if (res.status === 401 || res.status === 403) { handleUnauthorized(); return }
     if (res.ok) {
       embeddingPullMsg.value = `✅ ${modelName} 拉取成功`
       await checkOllama()
@@ -658,7 +589,7 @@ function startKeepAlive() {
   stopKeepAlive()
   keepAliveTimer = setInterval(async () => {
     try {
-      const resp = await fetch('/api/admin/ollama/status', { headers: authHeaders() })
+      const resp = await fetch('/api/admin/ollama/status')
       const data = await resp.json()
       if (data.status !== 'running' && keepAlive.value) {
         ollamaMsg.value = '检测到 Ollama 离线，自动重启中...'
@@ -673,14 +604,7 @@ function stopKeepAlive() {
 }
 
 const loadActiveProvider = async () => {
-  const response = await fetch('/api/admin/llm/settings/active', {
-    headers: authHeaders()
-  })
-
-  if (response.status === 401 || response.status === 403) {
-    handleUnauthorized()
-    return false
-  }
+  const response = await fetch('/api/admin/llm/settings/active')
 
   if (!response.ok) {
     const message = await response.text()
@@ -693,20 +617,12 @@ const loadActiveProvider = async () => {
 }
 
 const loadSettings = async () => {
-  if (!token.value) return
   settingsLoading.value = true
   settingsError.value = ''
 
   try {
     applyProviderPreset(provider.value)
-    const response = await fetch(`/api/admin/llm/settings/${provider.value}`, {
-      headers: authHeaders()
-    })
-
-    if (response.status === 401 || response.status === 403) {
-      handleUnauthorized()
-      return
-    }
+    const response = await fetch(`/api/admin/llm/settings/${provider.value}`)
 
     if (response.status === 404) {
       applyProviderPreset(provider.value)
@@ -753,7 +669,6 @@ const loadSettings = async () => {
 }
 
 const saveSettings = async () => {
-  if (!token.value) return
   settingsLoading.value = true
   settingsError.value = ''
   saveMessage.value = ''
@@ -766,7 +681,6 @@ const saveSettings = async () => {
     const response = await fetch(`/api/admin/llm/settings/${provider.value}`, {
       method: 'PUT',
       headers: {
-        ...authHeaders(),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -783,11 +697,6 @@ const saveSettings = async () => {
         providerType: providerPresets[provider.value]?.providerType || undefined
       })
     })
-
-    if (response.status === 401 || response.status === 403) {
-      handleUnauthorized()
-      return
-    }
 
     if (!response.ok) {
       const message = await response.text()
@@ -818,21 +727,13 @@ const saveSettings = async () => {
 }
 
 const saveActiveProvider = async (providerKey = activeProviderKey.value) => {
-  if (!token.value) return
-
   const response = await fetch('/api/admin/llm/settings/active', {
     method: 'PUT',
     headers: {
-      ...authHeaders(),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({ activeProviderKey: providerKey })
   })
-
-  if (response.status === 401 || response.status === 403) {
-    handleUnauthorized('登录已过期，请重新登录')
-    throw new Error('登录已过期，请重新登录')
-  }
 
   if (!response.ok) {
     const message = await response.text()
@@ -850,7 +751,6 @@ const testError = ref('')
 const testAbortController = ref(null)
 
 const testConnection = async () => {
-  if (!token.value) return
   testLoading.value = true
   testResult.value = ''
   testError.value = ''
@@ -871,7 +771,6 @@ const testConnection = async () => {
     const response = await fetch(`/api/admin/llm/test/${testProvider}`, {
       method: 'POST',
       headers: {
-        ...authHeaders(),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -880,11 +779,6 @@ const testConnection = async () => {
       }),
       signal: controller.signal
     })
-
-    if (response.status === 401 || response.status === 403) {
-      handleUnauthorized()
-      return
-    }
 
     if (!response.ok) {
       const message = await response.text()
@@ -928,9 +822,7 @@ const newsOllamaActionHint = computed(() => buildOllamaActionHint(newsModel.valu
 
 async function loadNewsCleansing() {
   try {
-    const res = await fetch('/api/admin/llm/news-cleansing', {
-      headers: { 'Authorization': `Bearer ${token.value}` }
-    })
+    const res = await fetch('/api/admin/llm/news-cleansing')
     if (res.ok) {
       const data = await res.json()
       newsProvider.value = data.provider || 'active'
@@ -952,8 +844,7 @@ async function saveNewsCleansing() {
     const res = await fetch('/api/admin/llm/news-cleansing', {
       method: 'PUT',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token.value}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         provider: newsProvider.value,
@@ -1006,8 +897,7 @@ async function testNewsCleansing() {
     const res = await fetch(`/api/admin/llm/test/${newsProvider.value}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token.value}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({ prompt: '你好，请用一句话回复' }),
       signal: controller.signal
@@ -1055,17 +945,15 @@ watch([provider, () => installedOllamaModelNames.value.join('|')], () => {
 watch([newsProvider, () => installedOllamaModelNames.value.join('|')], () => {
   syncNewsOllamaModelSelection()
 })
-if (token.value) {
-  loadActiveProvider().then(loaded => {
-    if (loaded) {
-      provider.value = activeProviderKey.value
-      loadSettings()
-      loadNewsCleansing()
-      checkOllama()
-      checkEmbeddingStatus()
-    }
-  })
-}
+loadActiveProvider().then(loaded => {
+  if (loaded) {
+    provider.value = activeProviderKey.value
+    loadSettings()
+    loadNewsCleansing()
+    checkOllama()
+    checkEmbeddingStatus()
+  }
+})
 
 onMounted(() => {
   if (keepAlive.value) startKeepAlive()
@@ -1078,45 +966,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- ── 未登录：居中登录卡片 ── -->
-  <div v-if="!isLoggedIn" class="login-wrapper">
-    <div class="login-card">
-      <div class="login-header">
-        <div class="login-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-          </svg>
-        </div>
-        <h2 class="login-title">管理员登录</h2>
-        <p class="login-subtitle">登录后可管理 LLM 接口配置</p>
-      </div>
-      <div class="form-field">
-        <label class="form-label">账号</label>
-        <input class="form-input" v-model="username" placeholder="管理员账号" @keyup.enter="login" />
-      </div>
-      <div class="form-field">
-        <label class="form-label">密码</label>
-        <input class="form-input" v-model="password" type="password" placeholder="管理员密码" @keyup.enter="login" />
-      </div>
-      <button class="btn-primary-lg" @click="login" :disabled="loginLoading">
-        {{ loginLoading ? '登录中...' : '登   录' }}
-      </button>
-      <p v-if="loginError" class="form-error">{{ loginError }}</p>
-    </div>
-  </div>
-
-  <!-- ── 已登录：设置面板 ── -->
-  <div v-else class="settings-root">
+  <div class="settings-root">
     <!-- 页面头 -->
     <div class="page-header">
       <div>
         <h2 class="page-title">LLM 接口设置</h2>
         <p class="page-desc">管理 AI 模型通道与密钥</p>
-      </div>
-      <div class="page-header-actions">
-        <span class="user-badge">🟢 已登录</span>
-        <button class="btn-ghost-sm" @click="logout">退出登录</button>
       </div>
     </div>
 

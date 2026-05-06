@@ -11,7 +11,6 @@ using SimplerJiangAiAgent.Api.Infrastructure;
 using SimplerJiangAiAgent.Api.Infrastructure.Jobs;
 using SimplerJiangAiAgent.Api.Infrastructure.Llm;
 using SimplerJiangAiAgent.Api.Infrastructure.Logging;
-using SimplerJiangAiAgent.Api.Infrastructure.Security;
 using SimplerJiangAiAgent.Api.Infrastructure.Storage;
 using SimplerJiangAiAgent.Api.Modules.Llm.Models;
 
@@ -32,7 +31,6 @@ public sealed class LlmModule : IModule
                 serviceProvider.GetRequiredService<AppRuntimePaths>(),
                 serviceProvider.GetRequiredService<ILogger<JsonFileLlmSettingsStore>>()));
         services.AddSingleton<ILlmService, LlmService>();
-        services.AddSingleton<IAdminAuthService, AdminAuthService>();
         services.AddHttpClient<OpenAiProvider>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
@@ -72,28 +70,7 @@ public sealed class LlmModule : IModule
 
         var adminGroup = app.MapGroup("/api/admin");
 
-        adminGroup.MapPost("/login", (AdminLoginRequest request, IAdminAuthService authService) =>
-        {
-            if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-            {
-                return Results.BadRequest(new { message = "用户名或密码不能为空" });
-            }
-
-            if (!authService.ValidateCredentials(request.Username.Trim(), request.Password))
-            {
-                return Results.Unauthorized();
-            }
-
-            var token = authService.IssueToken();
-            var expiresAt = authService.GetExpiry(token);
-            return Results.Ok(new AdminLoginResponse(token, expiresAt));
-        })
-        .WithName("AdminLogin")
-        .WithOpenApi();
-
-        var secureAdminGroup = app.MapGroup("/api/admin").AddEndpointFilter<AdminAuthFilter>();
-
-        secureAdminGroup.MapGet("/llm/settings", async (ILlmSettingsStore store) =>
+        adminGroup.MapGet("/llm/settings", async (ILlmSettingsStore store) =>
         {
             var settings = await store.GetAllAsync();
             var result = settings.Select(ToResponse).ToArray();
@@ -102,7 +79,7 @@ public sealed class LlmModule : IModule
         .WithName("GetLlmSettings")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/llm/settings/active", async (ILlmSettingsStore store) =>
+        adminGroup.MapGet("/llm/settings/active", async (ILlmSettingsStore store) =>
         {
             var activeProviderKey = await store.GetActiveProviderKeyAsync();
             var providers = await store.GetAllAsync();
@@ -113,7 +90,7 @@ public sealed class LlmModule : IModule
         .WithName("GetActiveLlmProvider")
         .WithOpenApi();
 
-        secureAdminGroup.MapPut("/llm/settings/active", async (ActiveLlmProviderRequest request, ILlmSettingsStore store) =>
+        adminGroup.MapPut("/llm/settings/active", async (ActiveLlmProviderRequest request, ILlmSettingsStore store) =>
         {
             if (string.IsNullOrWhiteSpace(request.ActiveProviderKey))
             {
@@ -129,7 +106,7 @@ public sealed class LlmModule : IModule
         .WithName("SetActiveLlmProvider")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/llm/news-cleansing", async (ILlmSettingsStore store) =>
+        adminGroup.MapGet("/llm/news-cleansing", async (ILlmSettingsStore store) =>
         {
             var (provider, model, batchSize) = await store.GetNewsCleansingSettingsAsync();
             return Results.Ok(new NewsCleansingSettingsResponse(provider, model, batchSize));
@@ -137,7 +114,7 @@ public sealed class LlmModule : IModule
         .WithName("GetNewsCleansingSettings")
         .WithOpenApi();
 
-        secureAdminGroup.MapPut("/llm/news-cleansing", async (NewsCleansingSettingsRequest request, ILlmSettingsStore store) =>
+        adminGroup.MapPut("/llm/news-cleansing", async (NewsCleansingSettingsRequest request, ILlmSettingsStore store) =>
         {
             await store.SetNewsCleansingSettingsAsync(
                 request.Provider ?? "active",
@@ -149,7 +126,7 @@ public sealed class LlmModule : IModule
         .WithName("SetNewsCleansingSettings")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/llm/settings/{provider}", async (string provider, ILlmSettingsStore store) =>
+        adminGroup.MapGet("/llm/settings/{provider}", async (string provider, ILlmSettingsStore store) =>
         {
             var settings = await store.GetProviderAsync(provider);
             if (settings is null)
@@ -172,7 +149,7 @@ public sealed class LlmModule : IModule
         .WithName("GetLlmProviderSettings")
         .WithOpenApi();
 
-        secureAdminGroup.MapPut("/llm/settings/{provider}", async (string provider, LlmSettingsRequest request, ILlmSettingsStore store) =>
+        adminGroup.MapPut("/llm/settings/{provider}", async (string provider, LlmSettingsRequest request, ILlmSettingsStore store) =>
         {
             var existing = await store.GetProviderAsync(provider);
             var updated = await store.UpsertAsync(new LlmProviderSettings
@@ -207,7 +184,7 @@ public sealed class LlmModule : IModule
         .WithName("UpsertLlmProviderSettings")
         .WithOpenApi();
 
-        secureAdminGroup.MapPost("/antigravity/auth-start", async (AntigravityOAuthService oauthService) =>
+        adminGroup.MapPost("/antigravity/auth-start", async (AntigravityOAuthService oauthService) =>
         {
             var result = await oauthService.StartAuthFlowAsync();
             return Results.Ok(new { authUrl = result.AuthUrl, port = result.Port });
@@ -215,7 +192,7 @@ public sealed class LlmModule : IModule
         .WithName("AntigravityAuthStart")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/antigravity/auth-status", (AntigravityOAuthService oauthService) =>
+        adminGroup.MapGet("/antigravity/auth-status", (AntigravityOAuthService oauthService) =>
         {
             var status = oauthService.GetAuthStatus();
             return Results.Ok(new { status = status.Status, error = SanitizePublicErrorMessage(status.Error) });
@@ -223,7 +200,7 @@ public sealed class LlmModule : IModule
         .WithName("AntigravityAuthStatus")
         .WithOpenApi();
 
-        secureAdminGroup.MapPost("/antigravity/auth-complete", async (AntigravityOAuthService oauthService, HttpContext httpContext) =>
+        adminGroup.MapPost("/antigravity/auth-complete", async (AntigravityOAuthService oauthService, HttpContext httpContext) =>
         {
             var body = await httpContext.Request.ReadFromJsonAsync<AntigravityAuthCompleteRequest>();
             if (body is null || body.Port <= 0)
@@ -253,14 +230,14 @@ public sealed class LlmModule : IModule
         .WithName("AntigravityAuthComplete")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/antigravity/models", () =>
+        adminGroup.MapGet("/antigravity/models", () =>
         {
             return Results.Ok(AntigravityConstants.AvailableModels);
         })
         .WithName("AntigravityModels")
         .WithOpenApi();
 
-        secureAdminGroup.MapPost("/llm/test/{provider}", async (string provider, LlmChatRequestDto request, ILlmService llmService) =>
+        adminGroup.MapPost("/llm/test/{provider}", async (string provider, LlmChatRequestDto request, ILlmService llmService) =>
         {
             if (string.IsNullOrWhiteSpace(request.Prompt))
             {
@@ -367,7 +344,7 @@ public sealed class LlmModule : IModule
         .WithName("StartOllama")
         .WithOpenApi();
 
-        secureAdminGroup.MapPost("/ollama/stop", () =>
+        adminGroup.MapPost("/ollama/stop", () =>
         {
             try
             {
@@ -391,7 +368,7 @@ public sealed class LlmModule : IModule
         .WithName("StopOllama")
         .WithOpenApi();
 
-        secureAdminGroup.MapPost("/ollama/pull", async (HttpContext httpContext, IHttpClientFactory httpClientFactory) =>
+        adminGroup.MapPost("/ollama/pull", async (HttpContext httpContext, IHttpClientFactory httpClientFactory) =>
         {
             var body = await System.Text.Json.JsonSerializer.DeserializeAsync<Dictionary<string, string>>(httpContext.Request.Body);
             var model = body?.GetValueOrDefault("model")?.Trim();
@@ -439,7 +416,7 @@ public sealed class LlmModule : IModule
         .WithName("PullOllamaModel")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/overview", async (ISourceGovernanceReadService readService) =>
+        adminGroup.MapGet("/source-governance/overview", async (ISourceGovernanceReadService readService) =>
         {
             var result = await readService.GetOverviewAsync();
             return Results.Ok(result);
@@ -447,7 +424,7 @@ public sealed class LlmModule : IModule
         .WithName("GetSourceGovernanceOverview")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/sources", async (
+        adminGroup.MapGet("/source-governance/sources", async (
             string? status,
             string? tier,
             int? page,
@@ -462,7 +439,7 @@ public sealed class LlmModule : IModule
         .WithName("GetSourceGovernanceSources")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/candidates", async (
+        adminGroup.MapGet("/source-governance/candidates", async (
             string? status,
             int? page,
             int? pageSize,
@@ -476,7 +453,7 @@ public sealed class LlmModule : IModule
         .WithName("GetSourceGovernanceCandidates")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/changes", async (
+        adminGroup.MapGet("/source-governance/changes", async (
             string? status,
             string? domain,
             int? page,
@@ -491,7 +468,7 @@ public sealed class LlmModule : IModule
         .WithName("GetSourceGovernanceChanges")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/changes/{id:long}", async (long id, ISourceGovernanceReadService readService) =>
+        adminGroup.MapGet("/source-governance/changes/{id:long}", async (long id, ISourceGovernanceReadService readService) =>
         {
             var detail = await readService.GetChangeDetailAsync(id);
             return detail is null ? Results.NotFound() : Results.Ok(detail);
@@ -499,7 +476,7 @@ public sealed class LlmModule : IModule
         .WithName("GetSourceGovernanceChangeDetail")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/errors", async (int? take, ISourceGovernanceReadService readService) =>
+        adminGroup.MapGet("/source-governance/errors", async (int? take, ISourceGovernanceReadService readService) =>
         {
             var normalizedTake = Math.Clamp(take ?? 30, 1, 100);
             var result = await readService.GetErrorSnapshotsAsync(normalizedTake);
@@ -508,7 +485,7 @@ public sealed class LlmModule : IModule
         .WithName("GetSourceGovernanceErrors")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/trace/{traceId}", async (string traceId, int? take, ISourceGovernanceReadService readService) =>
+        adminGroup.MapGet("/source-governance/trace/{traceId}", async (string traceId, int? take, ISourceGovernanceReadService readService) =>
         {
             var normalizedTake = Math.Clamp(take ?? 50, 1, 200);
             var result = await readService.SearchTraceAsync(traceId, normalizedTake);
@@ -517,7 +494,7 @@ public sealed class LlmModule : IModule
         .WithName("SearchSourceGovernanceTrace")
         .WithOpenApi();
 
-        secureAdminGroup.MapGet("/source-governance/llm-logs", async (int? take, string? keyword, ISourceGovernanceReadService readService) =>
+        adminGroup.MapGet("/source-governance/llm-logs", async (int? take, string? keyword, ISourceGovernanceReadService readService) =>
         {
             var normalizedTake = Math.Clamp(take ?? 200, 1, 1000);
             var result = await readService.GetLlmConversationLogsAsync(normalizedTake, keyword);

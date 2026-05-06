@@ -1,19 +1,9 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { summarizeReasoningSafeText } from '../../utils/reasoningSanitizer'
-import { clearAdminToken, readAdminToken, writeAdminToken } from './adminTokenStorage.js'
 
 const DEV_MODE_KEY = 'source_governance_dev_mode'
 
-const username = ref('')
-const password = ref('')
-const token = ref(readAdminToken() || 'local-bypass')
-const loginError = ref('')
-const loginLoading = ref(false)
-
-const initialDeveloperModeEnabled =
-  localStorage.getItem(DEV_MODE_KEY) === '1'
-const developerModeEnabled = ref(initialDeveloperModeEnabled)
 const loading = ref(false)
 const errorMessage = ref('')
 
@@ -22,6 +12,10 @@ const sources = ref([])
 const candidates = ref([])
 const changes = ref([])
 const snapshots = ref([])
+
+const initialDeveloperModeEnabled =
+  localStorage.getItem(DEV_MODE_KEY) === '1'
+const developerModeEnabled = ref(initialDeveloperModeEnabled)
 
 const changeStatusFilter = ref('')
 const changeDomainFilter = ref('')
@@ -41,7 +35,6 @@ const llmLogs = ref([])
 const llmLogsLoading = ref(false)
 const selectedLlmLog = ref(null)
 
-const isLoggedIn = computed(() => Boolean(token.value))
 const selectedLlmRequestJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.requestText || '')))
 const selectedLlmResponseJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.responseText || '')))
 const selectedLlmErrorJson = computed(() => formatPrettyJson(extractJsonCandidate(selectedLlmLog.value?.errorText || '')))
@@ -52,57 +45,11 @@ const selectedLlmRawPreview = computed(() => summarizeAuditResponseText((selecte
 
 const SUSPICIOUS_NON_JSON_RESPONSE_FALLBACK = '返回内容不是结构化 JSON，已按安全摘要收口。'
 
-const authHeaders = () => ({
-  Authorization: `Bearer ${token.value}`
-})
-
-const handleUnauthorized = message => {
-  logout()
-  loginError.value = message || '登录已过期，请重新登录'
-}
-
-const login = async () => {
-  loginLoading.value = true
-  loginError.value = ''
-
-  try {
-    const response = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username.value, password: password.value })
-    })
-
-    if (!response.ok) {
-      throw new Error('登录失败')
-    }
-
-    const data = await response.json()
-    token.value = data.token
-    writeAdminToken(token.value)
-  } catch (error) {
-    loginError.value = error.message || '登录失败'
-  } finally {
-    loginLoading.value = false
-  }
-}
-
-const logout = () => {
-  token.value = ''
-  clearAdminToken()
-  developerModeEnabled.value = false
-  localStorage.removeItem(DEV_MODE_KEY)
-}
-
 watch(developerModeEnabled, value => {
   localStorage.setItem(DEV_MODE_KEY, value ? '1' : '0')
 })
 
 const readJsonOrThrow = async response => {
-  if (response.status === 401 || response.status === 403) {
-    handleUnauthorized()
-    throw new Error('unauthorized')
-  }
-
   if (!response.ok) {
     const message = await response.text()
     throw new Error(message || '请求失败')
@@ -112,7 +59,7 @@ const readJsonOrThrow = async response => {
 }
 
 const loadDashboard = async () => {
-  if (!developerModeEnabled.value || !token.value) {
+  if (!developerModeEnabled.value) {
     return
   }
 
@@ -121,10 +68,10 @@ const loadDashboard = async () => {
 
   try {
     const [overviewResp, sourcesResp, candidatesResp, errorsResp] = await Promise.all([
-      fetch('/api/admin/source-governance/overview', { headers: authHeaders() }),
-      fetch('/api/admin/source-governance/sources?page=1&pageSize=10', { headers: authHeaders() }),
-      fetch('/api/admin/source-governance/candidates?page=1&pageSize=10', { headers: authHeaders() }),
-      fetch('/api/admin/source-governance/errors?take=20', { headers: authHeaders() })
+      fetch('/api/admin/source-governance/overview'),
+      fetch('/api/admin/source-governance/sources?page=1&pageSize=10'),
+      fetch('/api/admin/source-governance/candidates?page=1&pageSize=10'),
+      fetch('/api/admin/source-governance/errors?take=20')
     ])
 
     overview.value = await readJsonOrThrow(overviewResp)
@@ -133,16 +80,14 @@ const loadDashboard = async () => {
     snapshots.value = await readJsonOrThrow(errorsResp)
     await Promise.all([loadChanges(), loadLlmLogs()])
   } catch (error) {
-    if (error.message !== 'unauthorized') {
-      errorMessage.value = error.message || '加载失败'
-    }
+    errorMessage.value = error.message || '加载失败'
   } finally {
     loading.value = false
   }
 }
 
 const loadLlmLogs = async () => {
-  if (!developerModeEnabled.value || !token.value) {
+  if (!developerModeEnabled.value) {
     return
   }
 
@@ -153,20 +98,18 @@ const loadLlmLogs = async () => {
       params.set('keyword', llmLogKeyword.value.trim())
     }
 
-    const response = await fetch(`/api/admin/source-governance/llm-logs?${params.toString()}`, { headers: authHeaders() })
+    const response = await fetch(`/api/admin/source-governance/llm-logs?${params.toString()}`)
     const data = await readJsonOrThrow(response)
     llmLogs.value = data.items || []
   } catch (error) {
-    if (error.message !== 'unauthorized') {
-      errorMessage.value = error.message || '加载 LLM 对话日志失败'
-    }
+    errorMessage.value = error.message || '加载 LLM 对话日志失败'
   } finally {
     llmLogsLoading.value = false
   }
 }
 
 const loadChanges = async () => {
-  if (!developerModeEnabled.value || !token.value) {
+  if (!developerModeEnabled.value) {
     return
   }
 
@@ -180,32 +123,24 @@ const loadChanges = async () => {
       params.set('domain', changeDomainFilter.value.trim())
     }
 
-    const response = await fetch(`/api/admin/source-governance/changes?${params.toString()}`, { headers: authHeaders() })
+    const response = await fetch(`/api/admin/source-governance/changes?${params.toString()}`)
     const data = await readJsonOrThrow(response)
     changes.value = data.items || []
   } catch (error) {
-    if (error.message !== 'unauthorized') {
-      errorMessage.value = error.message || '加载修复队列失败'
-    }
+    errorMessage.value = error.message || '加载修复队列失败'
   } finally {
     changeLoading.value = false
   }
 }
 
 const loadChangeDetail = async id => {
-  if (!token.value) {
-    return
-  }
-
   changeDetailLoading.value = true
   changeDetailError.value = ''
   try {
-    const response = await fetch(`/api/admin/source-governance/changes/${id}`, { headers: authHeaders() })
+    const response = await fetch(`/api/admin/source-governance/changes/${id}`)
     changeDetail.value = await readJsonOrThrow(response)
   } catch (error) {
-    if (error.message !== 'unauthorized') {
-      changeDetailError.value = error.message || '加载变更详情失败'
-    }
+    changeDetailError.value = error.message || '加载变更详情失败'
   } finally {
     changeDetailLoading.value = false
   }
@@ -222,21 +157,19 @@ const jumpToTrace = async value => {
 }
 
 const searchTrace = async () => {
-  if (!token.value || !traceId.value.trim()) {
+  if (!traceId.value.trim()) {
     return
   }
 
   traceLoading.value = true
   errorMessage.value = ''
   try {
-    const response = await fetch(`/api/admin/source-governance/trace/${encodeURIComponent(traceId.value.trim())}?take=50`, { headers: authHeaders() })
+    const response = await fetch(`/api/admin/source-governance/trace/${encodeURIComponent(traceId.value.trim())}?take=50`)
     const data = await readJsonOrThrow(response)
     traceLines.value = data.lines || []
     traceTimeline.value = data.timeline || []
   } catch (error) {
-    if (error.message !== 'unauthorized') {
-      errorMessage.value = error.message || 'Trace 查询失败'
-    }
+    errorMessage.value = error.message || 'Trace 查询失败'
   } finally {
     traceLoading.value = false
   }
@@ -354,40 +287,14 @@ const isValidJson = value => {
 }
 
 onMounted(async () => {
-  if (developerModeEnabled.value && token.value) {
+  if (developerModeEnabled.value) {
     await loadDashboard()
   }
 })
 </script>
 
 <template>
-  <!-- ── 未登录：居中登录卡片（共享风格） ── -->
-  <div v-if="!isLoggedIn" class="login-wrapper">
-    <div class="login-card">
-      <div class="login-header">
-        <div class="login-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
-        </div>
-        <h2 class="login-title">治理 Developer Mode</h2>
-        <p class="login-subtitle">管理员登录后可查看诊断面板</p>
-      </div>
-      <div class="form-field">
-        <label class="form-label">账号</label>
-        <input class="form-input" v-model="username" placeholder="管理员账号" @keyup.enter="login" />
-      </div>
-      <div class="form-field">
-        <label class="form-label">密码</label>
-        <input class="form-input" v-model="password" type="password" placeholder="管理员密码" @keyup.enter="login" />
-      </div>
-      <button class="btn-primary-full" @click="login" :disabled="loginLoading">{{ loginLoading ? '登录中...' : '登   录' }}</button>
-      <p v-if="loginError" class="form-error">{{ loginError }}</p>
-    </div>
-  </div>
-
-  <!-- ── 已登录：开发者面板 ── -->
-  <div v-else class="dev-root">
+  <div class="dev-root">
     <!-- 页面头 -->
     <div class="page-header">
       <div>
@@ -399,7 +306,6 @@ onMounted(async () => {
           <input v-model="developerModeEnabled" type="checkbox" @change="loadDashboard" />
           开启 Developer Mode
         </label>
-        <button class="btn-ghost-sm" @click="logout">退出登录</button>
       </div>
     </div>
 
