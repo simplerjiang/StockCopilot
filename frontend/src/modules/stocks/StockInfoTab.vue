@@ -122,6 +122,7 @@ const historyError = ref('')
 const historyRefreshSeconds = ref(Number(localStorage.getItem('stock_history_refresh_seconds') || 30))
 const historyAutoRefresh = ref(localStorage.getItem('stock_history_auto_refresh') === 'true')
 let historyTimer = null
+let quickQuoteTimer = null
 const contextMenu = ref({ visible: false, x: 0, y: 0, item: null })
 const RECENT_HISTORY_ORDER_KEY = 'stock_recent_history_order'
 const normalizeValidHistorySymbol = value => {
@@ -1253,6 +1254,53 @@ const setupHistoryRefresh = () => {
   }
 }
 
+const fetchQuickQuote = async symbol => {
+  try {
+    const params = new URLSearchParams({ symbol })
+    const response = await fetch(`/api/stocks/quote?${params.toString()}`)
+    if (response.ok) return await response.json()
+  } catch { /* ignore network errors */ }
+  return null
+}
+
+const refreshQuickQuotes = async () => {
+  const list = visibleHistoryList.value
+  if (!list?.length) return
+  const symbols = list.map(item => item.symbol ?? item.Symbol).filter(Boolean)
+  if (!symbols.length) return
+
+  const results = await Promise.allSettled(symbols.map(s => fetchQuickQuote(s)))
+  results.forEach((result, index) => {
+    if (result.status !== 'fulfilled' || !result.value) return
+    const quote = result.value
+    const item = list[index]
+    if (!item) return
+    const price = quote.price ?? quote.Price ?? quote.currentPrice ?? quote.CurrentPrice
+    const change = quote.changePercent ?? quote.ChangePercent
+    if (price != null) {
+      item.price = Number(price)
+      item.Price = Number(price)
+    }
+    if (change != null) {
+      item.changePercent = Number(change)
+      item.ChangePercent = Number(change)
+    }
+  })
+}
+
+const startQuickQuoteRefresh = () => {
+  stopQuickQuoteRefresh()
+  refreshQuickQuotes()
+  quickQuoteTimer = setInterval(refreshQuickQuotes, 5000)
+}
+
+const stopQuickQuoteRefresh = () => {
+  if (quickQuoteTimer) {
+    clearInterval(quickQuoteTimer)
+    quickQuoteTimer = null
+  }
+}
+
 const setupRefresh = () => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
@@ -1440,6 +1488,7 @@ onMounted(() => {
   fetchStockRealtimeOverview('', { force: true })
   setupHistoryRefresh()
   setupPlanRefresh()
+  startQuickQuoteRefresh()
   window.addEventListener('click', closeContextMenu)
   window.addEventListener('navigate-stock-load', handleNavigateStock)
   window.addEventListener('trade-execution-saved', handleTradeExecutionSaved)
@@ -1477,6 +1526,7 @@ onUnmounted(() => {
   if (historyTimer) {
     clearInterval(historyTimer)
   }
+  stopQuickQuoteRefresh()
   Object.values(stockWorkspaces).forEach(workspace => {
     workspace.detailAbortController?.abort()
     workspace.newsImpactAbortController?.abort()
