@@ -172,7 +172,7 @@ function formatTime(t) {
             ✖ 取消当前任务
           </button>
         </template>
-        <div v-else class="gq-idle">💤 GPU 空闲</div>
+        <div v-else class="gq-idle">💤 GPU 空闲 (VRAM 已释放)</div>
       </div>
 
       <!-- 排队中 -->

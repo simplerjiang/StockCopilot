@@ -1,3 +1,7 @@
+using System.Text.Json;
+
+using Microsoft.Extensions.Logging;
+
 namespace SimplerJiangAiAgent.Api.Infrastructure;
 
 public enum GpuTaskPriority
@@ -60,6 +64,16 @@ public sealed class GpuTaskQueueService : IGpuTaskQueue
     private bool _paused;
     private readonly List<GpuTaskInfo> _history = new();
     private const int MaxHistory = 200;
+
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILogger<GpuTaskQueueService> _logger;
+    private Timer? _idleUnloadTimer;
+
+    public GpuTaskQueueService(IHttpClientFactory httpClientFactory, ILogger<GpuTaskQueueService> logger)
+    {
+        _httpClientFactory = httpClientFactory;
+        _logger = logger;
+    }
 
     public bool IsPaused
     {
@@ -153,6 +167,9 @@ public sealed class GpuTaskQueueService : IGpuTaskQueue
             if (_current != null) return;
             if (_queue.Count == 0) return;
 
+            _idleUnloadTimer?.Dispose();
+            _idleUnloadTimer = null;
+
             var next = _queue[0];
             _queue.RemoveAt(0);
             _current = next;
@@ -178,6 +195,16 @@ public sealed class GpuTaskQueueService : IGpuTaskQueue
         }
         cts?.Dispose();
         TryScheduleNext();
+
+        // If queue is now empty, schedule idle unload
+        lock (_lock)
+        {
+            if (_current == null && _queue.Count == 0)
+            {
+                _idleUnloadTimer?.Dispose();
+                _idleUnloadTimer = new Timer(OnIdleTimerFired, null, TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+            }
+        }
     }
 
     private void RecordHistory(QueueEntry entry, GpuTaskState state)
@@ -187,6 +214,53 @@ public sealed class GpuTaskQueueService : IGpuTaskQueue
         _history.Add(info);
         while (_history.Count > MaxHistory)
             _history.RemoveAt(0);
+    }
+
+    private async void OnIdleTimerFired(object? state)
+    {
+        lock (_lock)
+        {
+            if (_current != null || _queue.Count > 0)
+                return;
+        }
+        await UnloadOllamaModelsAsync();
+    }
+
+    private async Task UnloadOllamaModelsAsync()
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var psResponse = await client.GetAsync("http://localhost:11434/api/ps");
+            if (!psResponse.IsSuccessStatusCode) return;
+
+            var psContent = await psResponse.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(psContent);
+
+            if (!doc.RootElement.TryGetProperty("models", out var models)) return;
+
+            foreach (var model in models.EnumerateArray())
+            {
+                var modelName = model.GetProperty("name").GetString();
+                if (string.IsNullOrEmpty(modelName)) continue;
+
+                var unloadPayload = JsonSerializer.Serialize(new { model = modelName, keep_alive = "0" });
+                var content = new StringContent(unloadPayload, System.Text.Encoding.UTF8, "application/json");
+
+                try
+                {
+                    await client.PostAsync("http://localhost:11434/api/generate", content);
+                    _logger.LogInformation("GPU queue idle - unloaded Ollama model: {Model}", modelName);
+                }
+                catch { /* best effort */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to unload Ollama models on GPU queue idle");
+        }
     }
 
     private static GpuTaskInfo ToInfo(QueueEntry entry, GpuTaskState state)
