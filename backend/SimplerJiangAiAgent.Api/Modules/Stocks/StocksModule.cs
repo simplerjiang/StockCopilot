@@ -504,18 +504,14 @@ public sealed class StocksModule : IModule
         .WithOpenApi();
 
         // v0.4.2 S6: RAG search proxy
-        financialGroup.MapPost("/rag/search", async (JsonElement payload, IGpuTaskQueue gpuQueue, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        financialGroup.MapPost("/rag/search", async (JsonElement payload, IConfiguration configuration, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
         {
-            await using var gpuLease = await gpuQueue.AcquireAsync(
-                "RAG 语义搜索", GpuTaskPriority.High, httpContext.RequestAborted);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(httpContext.RequestAborted, gpuLease.CancellationToken);
-
             return await ProxyFinancialWorkerAsync(
                 HttpMethod.Post,
                 "api/rag/search",
                 configuration,
                 httpClientFactory,
-                linkedCts.Token,
+                httpContext.RequestAborted,
                 payload);
         })
         .WithName("SearchFinancialRag")

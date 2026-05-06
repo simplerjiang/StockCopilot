@@ -76,14 +76,6 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Symbol);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Question);
 
-        await using var gpuLease = await _gpuQueue.AcquireAsync(
-            $"Copilot: {(request.Question.Length > 30 ? request.Question[..30] : request.Question)}",
-            GpuTaskPriority.High, cancellationToken);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
-        cancellationToken = linkedCts.Token;
-
-        try
-        {
         var normalizedSymbol = StockSymbolNormalizer.Normalize(request.Symbol);
         var trimmedQuestion = request.Question.Trim();
         var sessionTitle = string.IsNullOrWhiteSpace(request.SessionTitle)
@@ -153,15 +145,27 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
         string finalAnswerText;
         if (execution.ToolResults.Any(t => string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase)))
         {
-            finalAnswerText = await SynthesizeAnalysisAsync(
-                provider,
-                request.Model,
-                normalizedSymbol,
-                trimmedQuestion,
-                parsedPlan.FinalAnswerDraft,
-                execution.ToolResults,
-                evidenceContext,
-                cancellationToken);
+            await using var gpuLease = await _gpuQueue.AcquireAsync(
+                $"Copilot LLM: {(trimmedQuestion.Length > 20 ? trimmedQuestion[..20] : trimmedQuestion)}",
+                GpuTaskPriority.High, cancellationToken);
+            using var llmCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
+            try
+            {
+                finalAnswerText = await SynthesizeAnalysisAsync(
+                    provider,
+                    request.Model,
+                    normalizedSymbol,
+                    trimmedQuestion,
+                    parsedPlan.FinalAnswerDraft,
+                    execution.ToolResults,
+                    evidenceContext,
+                    llmCts.Token);
+            }
+            catch
+            {
+                gpuLease.MarkFailed();
+                throw;
+            }
         }
         else
         {
@@ -229,12 +233,6 @@ public sealed class StockCopilotLiveGateService : IStockCopilotLiveGateService
             prompt,
             rawModelResponse,
             validation.RejectedCalls);
-        }
-        catch
-        {
-            gpuLease.MarkFailed();
-            throw;
-        }
     }
 
     private async Task<string> SynthesizeAnalysisAsync(

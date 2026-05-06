@@ -30,7 +30,6 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
     private readonly IQueryLocalFactDatabaseTool _queryLocalFactDatabaseTool;
     private readonly IStockAgentFeatureEngineeringService _featureEngineeringService;
     private readonly IPortfolioSnapshotService _portfolioSnapshotService;
-    private readonly IGpuTaskQueue _gpuQueue;
 
     public StockAgentOrchestrator(
         IStockDataService dataService,
@@ -39,8 +38,7 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         IStockAgentHistoryService agentHistoryService,
         IQueryLocalFactDatabaseTool queryLocalFactDatabaseTool,
         IStockAgentFeatureEngineeringService featureEngineeringService,
-        IPortfolioSnapshotService portfolioSnapshotService,
-        IGpuTaskQueue gpuQueue)
+        IPortfolioSnapshotService portfolioSnapshotService)
     {
         _dataService = dataService;
         _llmService = llmService;
@@ -49,7 +47,6 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         _queryLocalFactDatabaseTool = queryLocalFactDatabaseTool;
         _featureEngineeringService = featureEngineeringService;
         _portfolioSnapshotService = portfolioSnapshotService;
-        _gpuQueue = gpuQueue;
     }
 
     public async Task<StockAgentResponseDto> RunAsync(StockAgentRequestDto request, CancellationToken cancellationToken = default)
@@ -60,13 +57,6 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             throw new ArgumentException("symbol 不能为空", nameof(request.Symbol));
         }
 
-        await using var gpuLease = await _gpuQueue.AcquireAsync(
-            $"AI分析: {symbol}", GpuTaskPriority.High, cancellationToken);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
-        cancellationToken = linkedCts.Token;
-
-        try
-        {
         var interval = string.IsNullOrWhiteSpace(request.Interval) ? "day" : request.Interval.Trim();
         var count = Math.Clamp(request.Count ?? 60, 10, 120);
 
@@ -99,12 +89,6 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
         results.AddRange(subResults);
 
         return new StockAgentResponseDto(quote.Symbol, quote.Name, quote.Timestamp, results);
-        }
-        catch
-        {
-            gpuLease.MarkFailed();
-            throw;
-        }
     }
 
     public async Task<StockAgentResultDto> RunSingleAsync(StockAgentSingleRequestDto request, CancellationToken cancellationToken = default)
@@ -121,13 +105,6 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             throw new ArgumentException("agentId 无效", nameof(request.AgentId));
         }
 
-        await using var gpuLease = await _gpuQueue.AcquireAsync(
-            $"AI分析: {symbol}", GpuTaskPriority.High, cancellationToken);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, gpuLease.CancellationToken);
-        cancellationToken = linkedCts.Token;
-
-        try
-        {
         var interval = string.IsNullOrWhiteSpace(request.Interval) ? "day" : request.Interval.Trim();
         var count = Math.Clamp(request.Count ?? 60, 10, 120);
 
@@ -146,12 +123,6 @@ public sealed class StockAgentOrchestrator : IStockAgentOrchestrator
             request.Count,
             request.UseInternet,
             request.IsPro), dependencies, cancellationToken);
-        }
-        catch
-        {
-            gpuLease.MarkFailed();
-            throw;
-        }
     }
 
     private async Task<StockAgentContextDto> BuildContextAsync(
