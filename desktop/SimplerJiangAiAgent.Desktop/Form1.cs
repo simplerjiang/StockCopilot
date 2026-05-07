@@ -22,12 +22,16 @@ public partial class Form1 : Form
     private readonly WebView2 _webView;
     private readonly System.Windows.Forms.Timer _backendHealthTimer;
     private readonly object _backendLogSync = new();
+    private static readonly string SettingsFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "SimplerJiangAiAgent", "desktop-settings.json");
     private Process? _backendProcess;
     private Process? _financialWorkerProcess;
     private BackendLaunchCommand? _backendLaunchCommand;
     private BackendLaunchCommand? _financialWorkerLaunchCommand;
     private string? _backendBaseUrl;
     private string? _backendDataRoot;
+    private string? _logDirectory;
     private string? _financialWorkerBaseUrl;
     private bool _ownsBackendProcess;
     private bool _backendReady;
@@ -146,6 +150,9 @@ public partial class Form1 : Form
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "SimplerJiangAiAgent");
         Directory.CreateDirectory(_backendDataRoot);
+        _logDirectory = ResolveLogDirectory(_backendDataRoot);
+        var defaultLogDir = Path.Combine(_backendDataRoot, "logs");
+        MigrateLogsIfNeeded(defaultLogDir, _logDirectory);
 
         if (await IsHealthyAsync(existingUrl))
         {
@@ -361,7 +368,7 @@ public partial class Form1 : Form
             throw new InvalidOperationException("未找到后端启动命令。请检查打包后的 Backend 目录。");
         }
 
-        var process = CreateBackendProcess(_backendLaunchCommand, baseUrl, dataRoot);
+        var process = CreateBackendProcess(_backendLaunchCommand, baseUrl, dataRoot, _logDirectory);
         if (!process.Start())
         {
             process.Dispose();
@@ -396,7 +403,7 @@ public partial class Form1 : Form
             throw new InvalidOperationException("未找到 FinancialWorker 启动命令。请检查打包后的 FinancialWorker 目录。");
         }
 
-        var process = CreateBackendProcess(_financialWorkerLaunchCommand, baseUrl, dataRoot);
+        var process = CreateBackendProcess(_financialWorkerLaunchCommand, baseUrl, dataRoot, _logDirectory);
         if (!process.Start())
         {
             process.Dispose();
@@ -433,7 +440,7 @@ public partial class Form1 : Form
         await RecoverBackendAsync($"页面导航失败: {webErrorStatus}");
     }
 
-    private static Process CreateBackendProcess(BackendLaunchCommand launchCommand, string baseUrl, string dataRoot)
+    private static Process CreateBackendProcess(BackendLaunchCommand launchCommand, string baseUrl, string dataRoot, string? logRoot = null)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -451,6 +458,10 @@ public partial class Form1 : Form
         startInfo.Environment["DOTNET_ENVIRONMENT"] = "Production";
         startInfo.Environment["ASPNETCORE_URLS"] = baseUrl;
         startInfo.Environment["SJAI_DATA_ROOT"] = dataRoot;
+        if (!string.IsNullOrWhiteSpace(logRoot))
+        {
+            startInfo.Environment["SJAI_LOG_ROOT"] = logRoot;
+        }
 
         return new Process
         {
@@ -461,7 +472,7 @@ public partial class Form1 : Form
 
     private void AttachBackendProcessDiagnostics(Process process, string dataRoot)
     {
-        var logDirectory = Path.Combine(dataRoot, "logs");
+        var logDirectory = _logDirectory ?? Path.Combine(dataRoot, "logs");
         Directory.CreateDirectory(logDirectory);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
         var stdoutPath = Path.Combine(logDirectory, $"desktop-backend-{stamp}.stdout.log");
@@ -483,7 +494,7 @@ public partial class Form1 : Form
 
     private void AttachFinancialWorkerProcessDiagnostics(Process process, string dataRoot)
     {
-        var logDirectory = Path.Combine(dataRoot, "logs");
+        var logDirectory = _logDirectory ?? Path.Combine(dataRoot, "logs");
         Directory.CreateDirectory(logDirectory);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
         var stdoutPath = Path.Combine(logDirectory, $"desktop-financial-worker-{stamp}.stdout.log");
@@ -507,8 +518,67 @@ public partial class Form1 : Form
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {content}{Environment.NewLine}";
         lock (_backendLogSync)
         {
-            File.AppendAllText(logPath, line);
+            try
+            {
+                File.AppendAllText(logPath, line);
+            }
+            catch (IOException)
+            {
+                // Disk full or path unavailable – silently skip rather than crash the host
+            }
         }
+    }
+
+    private static string ResolveLogDirectory(string defaultDataRoot)
+    {
+        var defaultLogDir = Path.Combine(defaultDataRoot, "logs");
+        try
+        {
+            if (File.Exists(SettingsFilePath))
+            {
+                var json = File.ReadAllText(SettingsFilePath);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("logDirectory", out var prop) &&
+                    prop.ValueKind == JsonValueKind.String)
+                {
+                    var configured = prop.GetString();
+                    if (!string.IsNullOrWhiteSpace(configured))
+                    {
+                        Directory.CreateDirectory(configured);
+                        return configured;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to default if settings file is corrupt
+        }
+        return defaultLogDir;
+    }
+
+    private static void MigrateLogsIfNeeded(string oldLogDir, string newLogDir)
+    {
+        if (string.Equals(Path.GetFullPath(oldLogDir), Path.GetFullPath(newLogDir), StringComparison.OrdinalIgnoreCase))
+            return;
+        if (!Directory.Exists(oldLogDir))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(newLogDir);
+            foreach (var file in Directory.GetFiles(oldLogDir, "*.log"))
+            {
+                var dest = Path.Combine(newLogDir, Path.GetFileName(file));
+                try { File.Move(file, dest, overwrite: true); } catch { /* skip locked files */ }
+            }
+            foreach (var file in Directory.GetFiles(oldLogDir, "*.txt"))
+            {
+                var dest = Path.Combine(newLogDir, Path.GetFileName(file));
+                try { File.Move(file, dest, overwrite: true); } catch { }
+            }
+        }
+        catch { /* best effort */ }
     }
 
     private void StartBackendHealthMonitoring()

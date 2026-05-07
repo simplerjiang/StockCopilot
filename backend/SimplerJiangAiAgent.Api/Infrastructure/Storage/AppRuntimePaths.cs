@@ -13,7 +13,8 @@ public sealed class AppRuntimePaths
         ContentRootPath = environment.ContentRootPath;
         DataRootPath = ResolveDataRoot(configuration);
         AppDataPath = Path.Combine(DataRootPath, "App_Data");
-        LogsPath = Path.Combine(AppDataPath, "logs");
+        var logOverride = Environment.GetEnvironmentVariable("SJAI_LOG_ROOT");
+        LogsPath = !string.IsNullOrWhiteSpace(logOverride) ? logOverride : Path.Combine(AppDataPath, "logs");
         DatabaseDirectoryPath = Path.Combine(DataRootPath, "data");
         DatabaseFilePath = Path.Combine(DatabaseDirectoryPath, "SimplerJiangAiAgent.db");
         WritableLlmSettingsFilePath = Path.Combine(AppDataPath, "llm-settings.json");
