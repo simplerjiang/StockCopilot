@@ -15,9 +15,14 @@ const stubFetch = onboardingPayload => vi.fn(async url => {
   return makeResponse(onboardingPayload)
 })
 
+const keepAliveStub = {
+  props: ['include'],
+  template: '<slot />'
+}
+
 const mountOptions = {
   global: {
-    stubs: { KeepAlive: { template: '<slot />' } }
+    stubs: { KeepAlive: keepAliveStub }
   }
 }
 
@@ -159,7 +164,7 @@ describe('App', () => {
     const wrapper = shallowMount(App, {
       global: {
         stubs: {
-          KeepAlive: { template: '<slot />' },
+          KeepAlive: keepAliveStub,
           StockInfoTab: {
             name: 'StockInfoTab',
             template: '<div />',
