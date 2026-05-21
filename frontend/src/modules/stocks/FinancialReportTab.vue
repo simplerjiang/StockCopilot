@@ -618,8 +618,6 @@ function onComparePaneRefresh(detail) {
   // 否则用户看到 PDF 解析换了新版本但 Tab 上方表格还停留在旧值。这里重新拉
   // trend + summary，但保留采集结果横幅（preserveCollectState=true），避免把
   // 用户刚看到的「✅ 已通过 emweb 获取 X 期报表」给清掉。
-  // eslint-disable-next-line no-console
-  console.debug('[FinancialReportTab] ComparePane refresh', detail)
   // 失败不抛（避免 ComparePane 内部 emit 链路冒泡）。
   Promise.resolve(fetchData({ preserveCollectState: true })).catch((err) => {
     // eslint-disable-next-line no-console
