@@ -29,7 +29,7 @@ prepare the workspace and record state so Copilot can follow the prompts reliabl
 
 ## Windows Runtime Quick Path
 - Choose one Windows runtime mode before launch and keep it fixed for the whole validation round.
-- Source validation: launch the current source/backend-served app directly, read the active port from the source startup log, validate against `http://localhost:<port>`, do not assume `5119`, and do not use `start-all.bat`.
+- Source validation: launch the current source/backend-served app directly, read the active port from the source startup log, validate against `http://localhost:<port>`, do not assume `5119`, and do not use `start-all.bat`. For dynamic ports, bind Kestrel to `http://127.0.0.1:0` instead of `http://localhost:0`; the recommended helper is `.automation/scripts/start-source-backend.ps1`, which prints the browser-safe `http://localhost:<port>` URL after `/api/health` succeeds.
 - Packaged desktop validation: run `.\start-all.bat`. It stops repo-owned processes, runs `scripts\publish-windows-package.ps1`, launches `artifacts\windows-package\SimplerJiangAiAgent.Desktop.exe`, and waits for `http://localhost:5119/api/health`.
 - If you switch modes, stop old repo-owned processes first and re-read the active port from the new startup log before continuing.
 - If packaging fails because files are locked, stop any process under `artifacts\windows-package` before rerunning `scripts\publish-windows-package.ps1`.
