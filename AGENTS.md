@@ -44,7 +44,7 @@
 - 每次改动必须有相关测试或验证脚本覆盖。无直接测试时运行最近的验证脚本。
 - 未改后端代码则后端测试可选；未改前端代码则前端测试可选。
 - Windows 启动验证时，选定一种运行模式（source 或 packaged desktop），不要中途切换。
-  - **source 模式**：直接运行源码后端，从启动日志读取端口，不假设 5119，不用 `start-all.bat`。
+  - **source 模式**：直接运行源码后端，从启动日志读取端口，不假设 5119，不用 `start-all.bat`。动态端口必须绑定 `http://127.0.0.1:0`，不要用 `http://localhost:0`；推荐用 `.automation/scripts/start-source-backend.ps1` 启动并读取实际端口，浏览器验收仍使用脚本输出的 `http://localhost:<port>`。
   - **packaged desktop 模式**：用 `start-all.bat`，健康检查用 `http://localhost:5119/api/health`。
 - 推送到 GitHub 前，至少验证一次打包链：运行 `scripts\publish-windows-package.ps1`，确认 EXE 存在。
 - 测试通过后做 focused commit 并推送。推送后清理临时文件。
