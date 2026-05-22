@@ -17,6 +17,22 @@
 5. 新改动破坏旧行为时，必须同一任务内修复。
 6. **前后端同步**：浏览器验收前必须确认前端已构建且由后端托管。不要在 Vite dev server 和后端托管之间混用。
 
+## GitHub Issue 问题流程
+
+- 任何工作中发现的新问题、缺陷、回归或待确认风险，必须先记录到 GitHub Issue，再进入修复；如暂时无法访问 GitHub，先在本地记录完整 Issue 草稿并在恢复后补建。
+- **推送问题**：创建 Issue 时写清问题标题、现象、影响范围、复现步骤、期望行为、实际行为、日志/截图/错误信息、发现时间和相关分支/提交；不得只写笼统描述。
+- **领取问题**：开始处理前在 Issue 中留言领取，确认负责人、处理范围、计划验证方式，并按仓库约定添加 assignee、label、milestone 或项目状态。
+- **修复问题**：修复分支、commit、PR 和自动化任务记录必须引用 Issue 编号；实现时保持 focused change，不夹带无关重构。
+- **走测问题**：修复后按“测试与验证”和“浏览器验证”要求完成走测，在 Issue/PR 中写明执行的命令、浏览器验收步骤、结果、遗留风险和证据；确认通过后再关闭 Issue。
+- **Issue 推送失败处理**：若 `gh`、GitHub token 或网络不可用，必须把 Issue 草稿写入 `.automation/github-issue-drafts-*.md`，恢复访问后优先运行 `.automation/scripts/push-github-issue-drafts.ps1` 补建远端 Issue。
+- **标准领取-修复-推送-检查链路**：
+  1. 读取 GitHub Issue，确认未被领取；留言“领取”，写明负责人、修复范围、计划验证命令。
+  2. 从最新主分支创建修复分支，分支名包含 Issue 编号，例如 `fix/123-short-title`。
+  3. 修复时保持 focused change，commit message 和 PR 标题引用 `#123`。
+  4. 按影响面运行单元测试、前端构建、浏览器验收；涉及推送前必须按仓库规则验证打包链。
+  5. 推送分支并创建 PR；PR/Issue 评论中写明测试命令、浏览器步骤、结果和残余风险。
+  6. 合并或确认修复后关闭 Issue；未完成或验证失败不得关闭。
+
 ## 自动化与报告
 
 - 遵循 `.automation/README.md`，使用 `.automation/prompts` 中的流程模板。
